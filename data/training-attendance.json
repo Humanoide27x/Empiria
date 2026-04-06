@@ -1,0 +1,23 @@
+[
+  {
+    "trainingId": 1,
+    "personnelId": 1,
+    "status": "asistio",
+    "markedByRole": "gestores_auxiliares",
+    "markedAt": "2026-03-30T14:52:37.648Z"
+  },
+  {
+    "trainingId": 1,
+    "personnelId": 3,
+    "status": "pendiente",
+    "markedByRole": "calidad",
+    "markedAt": "2026-03-29T10:00:00.000Z"
+  },
+  {
+    "trainingId": 2,
+    "personnelId": 2,
+    "status": "pendiente",
+    "markedByRole": "administrador",
+    "markedAt": "2026-03-29T10:00:00.000Z"
+  }
+]

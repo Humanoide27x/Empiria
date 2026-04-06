@@ -1,0 +1,70 @@
+[
+  {
+    "id": 1,
+    "fullName": "Laura Jimenez",
+    "documentNumber": "10203040",
+    "position": "Manipuladora de alimentos",
+    "companyId": 10,
+    "contractId": 1001,
+    "municipality": "Bogota",
+    "site": "Sede Norte",
+    "institution": "IED La Esperanza",
+    "modality": "Regular",
+    "headOfHousehold": true,
+    "status": "activo"
+  },
+  {
+    "id": 2,
+    "fullName": "Marta Pardo",
+    "documentNumber": "40302010",
+    "position": "Auxiliar de cocina",
+    "companyId": 10,
+    "contractId": 1001,
+    "municipality": "Soacha",
+    "site": "Sede Centro",
+    "institution": "IED Nuevo Horizonte",
+    "modality": "Regular",
+    "headOfHousehold": false,
+    "status": "activo"
+  },
+  {
+    "id": 3,
+    "fullName": "Carlos Pineda",
+    "documentNumber": "88990011",
+    "position": "Supervisor operativo",
+    "companyId": 10,
+    "contractId": 1001,
+    "municipality": "Bogota",
+    "site": "Sede Sur",
+    "institution": "IED San Martin",
+    "modality": "Complementaria",
+    "headOfHousehold": true,
+    "status": "novedad"
+  },
+  {
+    "id": 4,
+    "fullName": "Rosa Marin",
+    "documentNumber": "55667788",
+    "position": "Manipuladora de alimentos",
+    "companyId": 20,
+    "contractId": 2001,
+    "municipality": "Cali",
+    "site": "Sede Oeste",
+    "institution": "IED Senderos",
+    "modality": "Regular",
+    "headOfHousehold": false,
+    "status": "activo"
+  },
+  {
+    "id": 5,
+    "fullName": "Prueba Frontend RRHH",
+    "documentNumber": "90000123",
+    "position": "Auxiliar de apoyo",
+    "companyId": 10,
+    "contractId": 1001,
+    "municipality": "Bogota",
+    "institution": "IED Prueba",
+    "modality": "Regular",
+    "status": "activo"
+  }
+]

@@ -1,0 +1,41 @@
+[
+  {
+    "id": 1,
+    "title": "Manipulacion segura de alimentos",
+    "date": "2026-04-05",
+    "municipality": "Bogota",
+    "site": "Sede Norte",
+    "institution": "IED La Esperanza",
+    "modality": "Regular",
+    "companyId": 10,
+    "contractId": 1001,
+    "status": "programada",
+    "createdByRole": "calidad"
+  },
+  {
+    "id": 2,
+    "title": "Induccion de novedades de nomina",
+    "date": "2026-04-08",
+    "municipality": "Soacha",
+    "site": "Sede Centro",
+    "institution": "IED Nuevo Horizonte",
+    "modality": "Regular",
+    "companyId": 10,
+    "contractId": 1001,
+    "status": "programada",
+    "createdByRole": "administrador"
+  },
+  {
+    "id": 3,
+    "title": "Capacitacion de prueba calidad",
+    "date": "2026-04-12",
+    "municipality": "Bogota",
+    "site": "Sede Norte",
+    "institution": "IED La Esperanza",
+    "modality": "Regular",
+    "companyId": 10,
+    "contractId": 1001,
+    "status": "programada",
+    "createdByRole": "calidad"
+  }
+]

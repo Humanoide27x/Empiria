@@ -1,0 +1,96 @@
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+    "name": "Administrador General",
+    "role": "administrador",
+    "companyId": null,
+    "contractId": null,
+    "assignedMunicipalities": [],
+    "mfaSecret": "PJYVK7LHNF6XS6KKHBLTSRZ7KQQTQQZEGRFWWMD5NRRFUZBIKJAQ",
+    "mfaEnabled": true,
+    "mfaConfirmedAt": "2026-04-03T01:37:05.327Z"
+  },
+  {
+    "id": 2,
+    "username": "TH01",
+    "passwordHash": "ea678026ab97101b456ba7cb4c47ae6a0b35871c2446c9b8092c78e75a6cb4cb",
+    "name": "Leidy Esguerra",
+    "role": "talento_humano",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": [
+      "Acacias",
+      "Barranca de upia",
+      "Puerto Gaitan"
+    ],
+    "mfaEnabled": false,
+    "mfaSecret": null
+  },
+  {
+    "id": 3,
+    "username": "operacion1",
+    "passwordHash": "9ab858fd611bfd99d1b3ba79bfea07644e6d4d033d8377f14cb152f6e6dc620b",
+    "name": "Coordinacion Operacion",
+    "role": "operacion",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": []
+  },
+  {
+    "id": 4,
+    "username": "calidad1",
+    "passwordHash": "ae205b694639a22bd1ec14d00dba03388c419701ee5e7d6a0506c7002f00f4cd",
+    "name": "Analista Calidad",
+    "role": "calidad",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": []
+  },
+  {
+    "id": 5,
+    "username": "gestor1",
+    "passwordHash": "18f2b94d784d03c222cb7c47148cdb8457f1ef3eaf3e317711f25d55747f6a35",
+    "name": "Gestor Territorial",
+    "role": "gestores_auxiliares",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": [
+      "Bogota",
+      "Soacha"
+    ]
+  },
+  {
+    "id": 6,
+    "username": "auditor1",
+    "passwordHash": "5b92db4dfb561dc69c949f34d36f5db0f8b30811be3a2949d85c5001279e9b1a",
+    "name": "Auditor Interno",
+    "role": "auditores_internos",
+    "companyId": null,
+    "contractId": null,
+    "assignedMunicipalities": []
+  },
+  {
+    "id": 7,
+    "username": "interventoria1",
+    "passwordHash": "2b8bda954f32a92fb8a5ba2887129932595ed76805c009442a9593f674342fe8",
+    "name": "Usuario Interventoria",
+    "role": "interventoria",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": []
+  },
+  {
+    "id": 8,
+    "username": "auxnuevo",
+    "passwordHash": "68ba28fb581de8c708e71262b1a098601f24e4020c5b259077a688abe44dbdf8",
+    "name": "Auxiliar Nuevo",
+    "role": "gestores_auxiliares",
+    "companyId": 10,
+    "contractId": 1001,
+    "assignedMunicipalities": [
+      "Bogota"
+    ]
+  }
+]

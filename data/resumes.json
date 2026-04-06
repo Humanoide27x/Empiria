@@ -1,0 +1,42 @@
+[
+  {
+    "personnelId": 1,
+    "hoja_de_vida": "Hoja de vida completa cargada",
+    "cedula": "Cedula validada",
+    "examenes_manipulacion_alimentos": "Examen vigente hasta 2026-12-31",
+    "acta_entrega_dotacion": "Acta firmada",
+    "documentos_contratacion": "Documentos completos",
+    "formatos_afiliacion": "Formatos completos",
+    "soportes": "Soportes archivados"
+  },
+  {
+    "personnelId": 2,
+    "hoja_de_vida": "Hoja de vida completa cargada",
+    "cedula": "Cedula validada",
+    "examenes_manipulacion_alimentos": "Examen vigente hasta 2026-10-15",
+    "acta_entrega_dotacion": "Acta firmada",
+    "documentos_contratacion": "Documentos completos",
+    "formatos_afiliacion": "Formatos completos",
+    "soportes": "Soportes archivados"
+  },
+  {
+    "personnelId": 3,
+    "hoja_de_vida": "Hoja de vida pendiente de ajuste",
+    "cedula": "Cedula validada",
+    "examenes_manipulacion_alimentos": "Examen pendiente",
+    "acta_entrega_dotacion": "Acta en proceso",
+    "documentos_contratacion": "Falta firma en anexo",
+    "formatos_afiliacion": "Formatos incompletos",
+    "soportes": "Soportes parciales"
+  },
+  {
+    "personnelId": 4,
+    "hoja_de_vida": "Hoja de vida completa cargada",
+    "cedula": "Cedula validada",
+    "examenes_manipulacion_alimentos": "Examen vigente hasta 2026-08-20",
+    "acta_entrega_dotacion": "Acta firmada",
+    "documentos_contratacion": "Documentos completos",
+    "formatos_afiliacion": "Formatos completos",
+    "soportes": "Soportes archivados"
+  }
+]

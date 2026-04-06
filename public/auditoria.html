@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Empiria | Auditoría de accesos</title>
+  <link rel="stylesheet" href="/auditoria.css" />
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">E</div>
+        <div>
+          <h1>Empiria</h1>
+          <p>Panel de auditoría</p>
+        </div>
+      </div>
+
+      <nav class="menu">
+        <a href="/">Inicio</a>
+        <a href="/auditoria.html" class="active">Auditoría</a>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <div>
+          <h2>Auditoría de accesos</h2>
+          <p>Control de ingresos, fallos y MFA de Empiria</p>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <div style="display:flex; gap:10px;">
+            <button id="reloadBtn">Actualizar</button>
+            <button id="logoutBtn" class="secondary">Cerrar sesión</button>
+          </div>
+          <button id="logoutBtn" class="secondary">Cerrar sesión</button>
+        </div>
+      </header>
+
+      <section class="summary-grid">
+        <div class="card summary-card">
+          <span>Total</span>
+          <strong id="totalLogs">0</strong>
+        </div>
+        <div class="card summary-card">
+          <span>Éxitos</span>
+          <strong id="totalSuccess">0</strong>
+        </div>
+        <div class="card summary-card">
+          <span>Fallos</span>
+          <strong id="totalFailed">0</strong>
+        </div>
+        <div class="card summary-card">
+          <span>Pendiente MFA</span>
+          <strong id="totalPendingMfa">0</strong>
+        </div>
+        <div class="card summary-card">
+          <span>Bloqueos</span>
+          <strong id="totalBlocked">0</strong>
+        </div>
+      </section>
+
+      <section class="card filters">
+        <h3>Filtros</h3>
+        <div class="filters-grid">
+          <input type="text" id="filterUsername" placeholder="Usuario" />
+          <select id="filterStatus">
+            <option value="">Todos los estados</option>
+            <option value="success">Éxito</option>
+            <option value="failed">Fallo</option>
+            <option value="pending_mfa">Pendiente MFA</option>
+          </select>
+          <input type="text" id="filterReason" placeholder="Motivo" />
+          <input type="text" id="filterIp" placeholder="IP" />
+          <input type="datetime-local" id="filterFrom" />
+          <input type="datetime-local" id="filterTo" />
+          <input type="number" id="filterLimit" placeholder="Límite" value="100" min="1" max="500" />
+        </div>
+
+        <div class="filters-actions">
+          <button id="applyFiltersBtn">Aplicar filtros</button>
+          <button id="clearFiltersBtn" class="secondary">Limpiar</button>
+        </div>
+      </section>
+
+      <section class="card table-card">
+        <div class="table-header">
+          <h3>Registros</h3>
+          <span id="tableCount">0 registros</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Usuario</th>
+                <th>Rol</th>
+                <th>Estado</th>
+                <th>Motivo</th>
+                <th>IP</th>
+                <th>Fecha</th>
+                <th>User Agent</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody">
+              <tr>
+                <td colspan="8" class="empty">Cargando registros...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/auth-guard.js"></script>
+  <script src="/auditoria.js"></script>
+</body>
+</html>

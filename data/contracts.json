@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1001,
+    "companyId": 10,
+    "name": "Contrato Principal 2026"
+  },
+  {
+    "id": 2001,
+    "companyId": 20,
+    "name": "Contrato Secundario 2026"
+  }
+]

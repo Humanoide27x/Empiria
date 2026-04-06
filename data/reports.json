@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "title": "Resumen general inicial",
+    "template": "resumen_general",
+    "createdAt": "2026-03-30T10:00:00.000Z",
+    "createdByRole": "administrador",
+    "companyId": 10,
+    "contractId": 1001,
+    "content": {
+      "summary": "Reporte general del contrato principal.",
+      "metrics": {
+        "totalPersonnel": 4,
+        "activePersonnel": 3,
+        "noveltyPersonnel": 1
+      },
+      "notes": [
+        "Primer corte de seguimiento cargado en el sistema."
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "title": "Cambio de personal abril",
+    "template": "cambio_personal",
+    "createdAt": "2026-03-30T14:59:18.533Z",
+    "createdByRole": "operacion",
+    "companyId": 10,
+    "contractId": 1001,
+    "content": {
+      "summary": "Reporte de novedades y cambios de personal.",
+      "metrics": {
+        "totalPersonnel": 4,
+        "noveltyPersonnel": 1
+      },
+      "notes": [
+        "Adjuntar carta de solicitud cuando aplique.",
+        "Adjuntar PDF con hoja de vida del reemplazo cuando corresponda."
+      ],
+      "people": [
+        {
+          "fullName": "Carlos Pineda",
+          "position": "Supervisor operativo",
+          "municipality": "Bogota",
+          "status": "novedad"
+        }
+      ]
+    }
+  }
+]
