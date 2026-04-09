@@ -193,7 +193,7 @@ async function apiFetch(path, options = {}) {
     payload = { ok: false, message: "Respuesta inválida del servidor" };
   }
 
-  if (!response.ok || payload.ok === false) {
+  if (!response.ok) {
     throw new Error(payload.message || "Ocurrió un error");
   }
 
@@ -602,12 +602,24 @@ async function handleCreatePersonnel(event) {
 }
 
 async function loadPersonnelModule(moduleConfig, submoduleKey) {
-  const payload = await apiFetch("/personnel");
+  let payload;
+
+  try {
+    payload = await apiFetch("/personnel");
+  } catch (error) {
+    return `
+      <article class="info-card">
+        <h3>Error en Gestión del Personal</h3>
+        <p>${error.message}</p>
+      </article>
+    `;
+  }
 
   const showCreateForm = payload.canCreate && submoduleKey === "crear_empleado";
   const showEditHelp = submoduleKey === "editar_empleado";
   const showStatusHelp = submoduleKey === "cambiar_estado";
-  const showList = submoduleKey === "consultar_empleados" || showEditHelp || showStatusHelp;
+  const showList =
+    submoduleKey === "consultar_empleados" || showEditHelp || showStatusHelp;
 
   const formHtml = showCreateForm
     ? `
@@ -636,11 +648,11 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
           </label>
           <label>
             Empresa
-            <input name="companyId" type="number" value="${state.currentUser?.companyId ?? ""}" ${state.currentUser?.companyId ? "readonly" : ""} />
+            <input name="companyId" type="number" value="${state.currentUser.companyId ?? ""}" ${state.currentUser.companyId ? "readonly" : ""} />
           </label>
           <label>
             Contrato
-            <input name="contractId" type="number" value="${state.currentUser?.contractId ?? ""}" ${state.currentUser?.contractId ? "readonly" : ""} />
+            <input name="contractId" type="number" value="${state.currentUser.contractId ?? ""}" ${state.currentUser.contractId ? "readonly" : ""} />
           </label>
           <label>
             Institución
@@ -688,7 +700,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         <h3>Personal visible</h3>
         <div class="personnel-list">
           ${
-            payload.personnel.length
+            payload.personnel?.length
               ? payload.personnel
                   .map(
                     (item) => `
@@ -736,9 +748,20 @@ async function loadResumeModule() {
   if (institution) query.set("institution", institution);
   if (modality) query.set("modality", modality);
 
-  const payload = await apiFetch(
-    query.toString() ? `/resume-view?${query.toString()}` : "/resume-view"
-  );
+  let payload;
+
+  try {
+    payload = await apiFetch(
+      query.toString() ? `/resume-view?${query.toString()}` : "/resume-view"
+    );
+  } catch (error) {
+    return `
+      <article class="info-card">
+        <h3>Error en Hoja de Vida</h3>
+        <p>${error.message}</p>
+      </article>
+    `;
+  }
 
   setTimeout(() => {
     const form = document.getElementById("resumeFilterForm");
@@ -776,10 +799,10 @@ async function loadResumeModule() {
           Sede
           <select name="site">
             <option value="">Todas</option>
-            ${payload.availableFilters.sites
+            ${(payload.availableFilters?.sites || [])
               .map(
                 (value) =>
-                  `<option value="${value}" ${value === payload.filters.site ? "selected" : ""}>${value}</option>`
+                  `<option value="${value}" ${value === payload.filters?.site ? "selected" : ""}>${value}</option>`
               )
               .join("")}
           </select>
@@ -788,10 +811,10 @@ async function loadResumeModule() {
           Institución
           <select name="institution">
             <option value="">Todas</option>
-            ${payload.availableFilters.institutions
+            ${(payload.availableFilters?.institutions || [])
               .map(
                 (value) =>
-                  `<option value="${value}" ${value === payload.filters.institution ? "selected" : ""}>${value}</option>`
+                  `<option value="${value}" ${value === payload.filters?.institution ? "selected" : ""}>${value}</option>`
               )
               .join("")}
           </select>
@@ -800,10 +823,10 @@ async function loadResumeModule() {
           Modalidad
           <select name="modality">
             <option value="">Todas</option>
-            ${payload.availableFilters.modalities
+            ${(payload.availableFilters?.modalities || [])
               .map(
                 (value) =>
-                  `<option value="${value}" ${value === payload.filters.modality ? "selected" : ""}>${value}</option>`
+                  `<option value="${value}" ${value === payload.filters?.modality ? "selected" : ""}>${value}</option>`
               )
               .join("")}
           </select>
@@ -816,7 +839,7 @@ async function loadResumeModule() {
 
     <div class="resume-list">
       ${
-        payload.records.length
+        payload.records?.length
           ? payload.records
               .map(
                 (record) => `
@@ -826,7 +849,7 @@ async function loadResumeModule() {
                     <p>${record.site} | ${record.institution} | ${record.modality}</p>
                     <p>${record.municipality}</p>
                     <div class="resume-docs">
-                      ${Object.entries(record.documents)
+                      ${Object.entries(record.documents || {})
                         .map(
                           ([key, value]) => `
                             <div class="personnel-item">
@@ -1406,20 +1429,47 @@ async function openModule(moduleKey) {
     (item) => item.key === state.activeSubmodule
   );
 
-  const submoduleContentHtml = await renderSubmoduleContent(
-    moduleKey,
-    state.activeSubmodule,
-    moduleConfig
-  );
-
   if (elements.workspace) {
     elements.workspace.innerHTML = `
       <h2 class="workspace-title">${view.title}</h2>
       ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
       <section class="submodule-content">
-        ${submoduleContentHtml}
+        <article class="info-card">
+          <p>Cargando módulo...</p>
+        </article>
       </section>
     `;
+  }
+
+  try {
+    const submoduleContentHtml = await renderSubmoduleContent(
+      moduleKey,
+      state.activeSubmodule,
+      moduleConfig
+    );
+
+    if (elements.workspace) {
+      elements.workspace.innerHTML = `
+        <h2 class="workspace-title">${view.title}</h2>
+        ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+        <section class="submodule-content">
+          ${submoduleContentHtml}
+        </section>
+      `;
+    }
+  } catch (error) {
+    if (elements.workspace) {
+      elements.workspace.innerHTML = `
+        <h2 class="workspace-title">${view.title}</h2>
+        ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+        <section class="submodule-content">
+          <article class="info-card">
+            <h3>No fue posible cargar este módulo</h3>
+            <p>${error.message}</p>
+          </article>
+        </section>
+      `;
+    }
   }
 }
 
@@ -1750,11 +1800,16 @@ if (elements.loginForm) {
       password = state.tempPassword;
     }
 
-    const mfaCode = elements.mfaCode ? String(elements.mfaCode.value || "").trim() : "";
+    const mfaCode = elements.mfaCode
+      ? String(elements.mfaCode.value || "").trim()
+      : "";
 
     try {
-      const payload = await apiFetch("/login", {
+      const response = await fetch("/login", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           username,
           password,
@@ -1762,13 +1817,31 @@ if (elements.loginForm) {
         }),
       });
 
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = { ok: false, message: "Respuesta inválida del servidor" };
+      }
+
       if (payload.requiresMfa) {
         state.requiresMfa = true;
         state.tempUsername = username;
         state.tempPassword = password;
 
         showMfaField(true);
-        showLoginMessage(payload.message || "Debes ingresar el código MFA", true);
+        showLoginMessage(
+          payload.message || "Debes ingresar el código MFA",
+          true
+        );
+        return;
+      }
+
+      if (!response.ok || !payload.ok) {
+        showLoginMessage(
+          payload.message || "No fue posible iniciar sesión",
+          true
+        );
         return;
       }
 
