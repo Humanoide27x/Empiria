@@ -50,7 +50,58 @@ function createPersonnel(payload) {
   return record;
 }
 
+function updatePersonnel(personnelId, changes) {
+  const personnel = getPersonnel();
+  const index = personnel.findIndex((item) => item.id === Number(personnelId));
+
+  if (index === -1) {
+    throw new Error("Empleado no encontrado");
+  }
+
+  const current = personnel[index];
+
+  const updated = {
+    ...current,
+    ...changes,
+  };
+
+  if (updated.companyId != null) {
+    updated.companyId = Number(updated.companyId);
+  }
+
+  if (updated.contractId != null) {
+    updated.contractId = Number(updated.contractId);
+  }
+
+  if (updated.documentNumber != null) {
+    updated.documentNumber = String(updated.documentNumber);
+  }
+
+  updated.headOfHousehold = Boolean(updated.headOfHousehold);
+
+  personnel[index] = updated;
+  savePersonnel(personnel);
+
+  return updated;
+}
+
+function removePersonnel(personnelId) {
+  const personnel = getPersonnel();
+  const index = personnel.findIndex((item) => item.id === Number(personnelId));
+
+  if (index === -1) {
+    throw new Error("Empleado no encontrado");
+  }
+
+  const [removed] = personnel.splice(index, 1);
+  savePersonnel(personnel);
+
+  return removed;
+}
+
 module.exports = {
   createPersonnel,
   getPersonnel,
+  updatePersonnel,
+  removePersonnel,
 };

@@ -5,5 +5,12 @@
     "firstFailedAt": "2026-04-03T23:57:14.350Z",
     "lastFailedAt": "2026-04-03T23:57:25.589Z",
     "blockedUntil": "2026-04-04T00:12:25.589Z"
+  },
+  {
+    "username": "tu_usuario",
+    "failedCount": 1,
+    "firstFailedAt": "2026-04-09T13:28:54.895Z",
+    "lastFailedAt": "2026-04-09T13:28:54.895Z",
+    "blockedUntil": null
   }
 ]

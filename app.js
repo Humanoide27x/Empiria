@@ -1,16 +1,18 @@
-const { createServer } = require("./src/server");
-const { testConnection } = require("./src/db/pool");
+require("dotenv").config();
 
-const PORT = process.env.PORT || 3000;
+const { createServer } = require("./src/server");
+const pool = require("./src/db/pool");
 
 async function start() {
   try {
-    await testConnection();
+    const result = await pool.query("SELECT NOW() AS current_time");
+    console.log("PostgreSQL conectado:", result.rows[0].current_time);
 
+    const PORT = process.env.PORT || 3000;
     const server = createServer();
 
     server.listen(PORT, () => {
-      console.log(`EMPIRIA backend activo en http://localhost:${PORT}`);
+      console.log(`EMPIRIA ejecutándose en http://localhost:${PORT}`);
     });
   } catch (error) {
     console.error("No fue posible iniciar EMPIRIA:", error);

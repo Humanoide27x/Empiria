@@ -19,7 +19,9 @@ function readJsonBody(req) {
       }
     });
 
-    req.on("error", reject);
+    req.on("error", (err) => {
+      reject(err);
+    });
   });
 }
 
@@ -33,7 +35,32 @@ function getBearerToken(req) {
   return authHeader.slice("Bearer ".length).trim();
 }
 
+/**
+ * Extrae los parámetros de alcance desde la URL
+ * (empresa, contrato, municipio)
+ */
+function parseResourceFromRequest(url) {
+  if (!url || !url.searchParams) {
+    return {
+      companyId: null,
+      contractId: null,
+      municipality: null,
+    };
+  }
+
+  const companyId = url.searchParams.get("companyId");
+  const contractId = url.searchParams.get("contractId");
+  const municipality = url.searchParams.get("municipality");
+
+  return {
+    companyId: companyId ? Number(companyId) : null,
+    contractId: contractId ? Number(contractId) : null,
+    municipality: municipality || null,
+  };
+}
+
 module.exports = {
-  getBearerToken,
   readJsonBody,
+  getBearerToken,
+  parseResourceFromRequest,
 };

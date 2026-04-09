@@ -167,23 +167,33 @@ const moduleViews = {
 };
 
 async function apiFetch(path, options = {}) {
+  const token = state.token || localStorage.getItem("empiria_token") || "";
+
+  const headers = {
+    ...(options.headers || {}),
+  };
+
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(path, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers,
   });
 
   let payload;
   try {
     payload = await response.json();
   } catch {
-    payload = { message: "Respuesta inválida del servidor" };
+    payload = { ok: false, message: "Respuesta inválida del servidor" };
   }
 
-  if (!response.ok) {
+  if (!response.ok || payload.ok === false) {
     throw new Error(payload.message || "Ocurrió un error");
   }
 
@@ -191,7 +201,9 @@ async function apiFetch(path, options = {}) {
 }
 
 function prettyLabel(text) {
-  return String(text || "").replaceAll("_", " ");
+  return String(text || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function iconSvg(pathMarkup) {
@@ -302,13 +314,13 @@ function getModuleMeta(moduleKey) {
 
 function showLoginMessage(message, isError = true) {
   if (!elements.loginMessage) return;
-  elements.loginMessage.textContent = message;
+  elements.loginMessage.textContent = message || "";
   elements.loginMessage.style.color = isError ? "#9d2f2f" : "#0d6b5b";
 }
 
 function showAdminCreateMessage(message, isError = true) {
   if (!elements.adminCreateMessage) return;
-  elements.adminCreateMessage.textContent = message;
+  elements.adminCreateMessage.textContent = message || "";
   elements.adminCreateMessage.style.color = isError ? "#9d2f2f" : "#0d6b5b";
 }
 
@@ -339,7 +351,7 @@ function toMunicipalityArray(text) {
 }
 
 function formatCompany(companyId) {
-  if (companyId === null || companyId === undefined) {
+  if (companyId === null || companyId === undefined || companyId === "") {
     return "Sin asignar";
   }
 
@@ -348,7 +360,7 @@ function formatCompany(companyId) {
 }
 
 function formatContract(contractId) {
-  if (contractId === null || contractId === undefined) {
+  if (contractId === null || contractId === undefined || contractId === "") {
     return "Sin asignar";
   }
 
@@ -358,16 +370,23 @@ function formatContract(contractId) {
 
 function ensureMfaField() {
   if (!elements.mfaFieldWrap || !elements.mfaCode) return;
+
+  elements.mfaFieldWrap.classList.add("hidden");
+  elements.mfaCode.value = "";
+  elements.mfaCode.removeAttribute("required");
 }
 
 function showMfaField(show = true) {
-  ensureMfaField();
+  if (!elements.mfaFieldWrap || !elements.mfaCode) return;
 
-  if (!elements.mfaFieldWrap) return;
-  elements.mfaFieldWrap.classList.toggle("hidden", !show);
-
-  if (show && elements.mfaCode) {
-    elements.mfaCode.focus();
+  if (show) {
+    elements.mfaFieldWrap.classList.remove("hidden");
+    elements.mfaCode.setAttribute("required", "required");
+    setTimeout(() => elements.mfaCode.focus(), 0);
+  } else {
+    elements.mfaFieldWrap.classList.add("hidden");
+    elements.mfaCode.removeAttribute("required");
+    elements.mfaCode.value = "";
   }
 }
 
@@ -375,18 +394,11 @@ function resetMfaState() {
   state.requiresMfa = false;
   state.tempUsername = "";
   state.tempPassword = "";
-
-  if (elements.mfaCode) {
-    elements.mfaCode.value = "";
-  }
-
   showMfaField(false);
 }
 
 function renderModuleNav(modules = []) {
-  if (!elements.moduleNav) {
-    return;
-  }
+  if (!elements.moduleNav) return;
 
   if (!Array.isArray(modules) || !modules.length) {
     elements.moduleNav.innerHTML = `
@@ -565,10 +577,13 @@ async function handleCreatePersonnel(event) {
         position: formData.get("position"),
         companyId: formData.get("companyId")
           ? Number(formData.get("companyId"))
-          : state.currentUser.companyId,
+          : state.currentUser?.companyId,
         contractId: formData.get("contractId")
           ? Number(formData.get("contractId"))
-          : state.currentUser.contractId,
+          : state.currentUser?.contractId,
+        municipalityId: formData.get("municipalityId")
+          ? Number(formData.get("municipalityId"))
+          : null,
         municipality: formData.get("municipality"),
         institution: formData.get("institution"),
         modality: formData.get("modality"),
@@ -612,16 +627,20 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <input name="position" type="text" required />
           </label>
           <label>
+            Municipio ID
+            <input name="municipalityId" type="number" />
+          </label>
+          <label>
             Municipio
-            <input name="municipality" type="text" required />
+            <input name="municipality" type="text" />
           </label>
           <label>
             Empresa
-            <input name="companyId" type="number" value="${state.currentUser.companyId ?? ""}" ${state.currentUser.companyId ? "readonly" : ""} />
+            <input name="companyId" type="number" value="${state.currentUser?.companyId ?? ""}" ${state.currentUser?.companyId ? "readonly" : ""} />
           </label>
           <label>
             Contrato
-            <input name="contractId" type="number" value="${state.currentUser.contractId ?? ""}" ${state.currentUser.contractId ? "readonly" : ""} />
+            <input name="contractId" type="number" value="${state.currentUser?.contractId ?? ""}" ${state.currentUser?.contractId ? "readonly" : ""} />
           </label>
           <label>
             Institución
@@ -678,7 +697,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
                         <p>${item.position}</p>
                         <p>Documento: ${item.documentNumber}</p>
                         <p>${formatCompany(item.companyId)} | ${formatContract(item.contractId)}</p>
-                        <p>${item.municipality} | ${item.institution || "Sin institución"} | ${item.status}</p>
+                        <p>${item.municipality || "Sin municipio"} | ${item.institution || "Sin institución"} | ${item.status}</p>
                       </div>
                     `
                   )
@@ -846,10 +865,10 @@ async function handleCreateTraining(event) {
         modality: formData.get("modality"),
         companyId: formData.get("companyId")
           ? Number(formData.get("companyId"))
-          : state.currentUser.companyId,
+          : state.currentUser?.companyId,
         contractId: formData.get("contractId")
           ? Number(formData.get("contractId"))
-          : state.currentUser.contractId,
+          : state.currentUser?.contractId,
         status: formData.get("status"),
       }),
     });
@@ -905,11 +924,11 @@ async function loadTrainingsModule() {
           </label>
           <label>
             Empresa
-            <input name="companyId" type="number" value="${state.currentUser.companyId ?? ""}" ${state.currentUser.companyId ? "readonly" : ""} />
+            <input name="companyId" type="number" value="${state.currentUser?.companyId ?? ""}" ${state.currentUser?.companyId ? "readonly" : ""} />
           </label>
           <label>
             Contrato
-            <input name="contractId" type="number" value="${state.currentUser.contractId ?? ""}" ${state.currentUser.contractId ? "readonly" : ""} />
+            <input name="contractId" type="number" value="${state.currentUser?.contractId ?? ""}" ${state.currentUser?.contractId ? "readonly" : ""} />
           </label>
           <label class="wide">
             Estado
@@ -1066,10 +1085,10 @@ async function handleCreateReport(event) {
         template: formData.get("template"),
         companyId: formData.get("companyId")
           ? Number(formData.get("companyId"))
-          : state.currentUser.companyId,
+          : state.currentUser?.companyId,
         contractId: formData.get("contractId")
           ? Number(formData.get("contractId"))
-          : state.currentUser.contractId,
+          : state.currentUser?.contractId,
       }),
     });
 
@@ -1393,13 +1412,15 @@ async function openModule(moduleKey) {
     moduleConfig
   );
 
-  elements.workspace.innerHTML = `
-    <h2 class="workspace-title">${view.title}</h2>
-    ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
-    <section class="submodule-content">
-      ${submoduleContentHtml}
-    </section>
-  `;
+  if (elements.workspace) {
+    elements.workspace.innerHTML = `
+      <h2 class="workspace-title">${view.title}</h2>
+      ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+      <section class="submodule-content">
+        ${submoduleContentHtml}
+      </section>
+    `;
+  }
 }
 
 function renderAdminUsers() {
@@ -1580,11 +1601,11 @@ async function renderDashboard(user, access) {
   state.expandedModule = null;
   state.activeSubmodule = null;
 
-  renderModuleNav(access.modules);
+  renderModuleNav(access.modules || []);
 
   fillSelect(
     elements.moduleSelect,
-    access.modules.map((item) => item.module)
+    (access.modules || []).map((item) => item.module)
   );
 
   const isAdministrator = user.role === "administrador";
@@ -1604,6 +1625,7 @@ function resetDashboard() {
   state.expandedModule = null;
   state.activeSubmodule = null;
   state.token = "";
+  state.users = [];
 
   localStorage.removeItem("empiria_token");
   localStorage.removeItem("empiria_user");
@@ -1618,28 +1640,26 @@ function resetDashboard() {
   toggleAdminPanel(false);
   toggleAccessPanel(false);
 
-  state.users = [];
-
   if (elements.adminUsersList) elements.adminUsersList.innerHTML = "";
   if (elements.adminCount) elements.adminCount.textContent = "0 usuarios";
   if (elements.moduleNav) elements.moduleNav.innerHTML = "";
 
   renderEmptyWorkspace();
 
-    if (elements.topUser) elements.topUser.textContent = "Usuario · Rol";
+  if (elements.topUser) elements.topUser.textContent = "Usuario · Rol";
   if (elements.topCompany) elements.topCompany.textContent = "-";
   if (elements.topContract) elements.topContract.textContent = "-";
   if (elements.topMunicipality) elements.topMunicipality.textContent = "Sin restricción";
 
-  showAdminCreateMessage("");
-  showLoginMessage("");
+  showAdminCreateMessage("", false);
+  showLoginMessage("", false);
 }
 
 async function loadModulesCatalog() {
   const payload = await apiFetch("/modules");
-  state.availableModules = payload.modules;
-  state.availableActions = payload.actions;
-  fillSelect(elements.actionSelect, payload.actions);
+  state.availableModules = payload.modules || [];
+  state.availableActions = payload.actions || [];
+  fillSelect(elements.actionSelect, state.availableActions);
 }
 
 async function tryRestoreSession() {
@@ -1752,13 +1772,8 @@ if (elements.loginForm) {
         return;
       }
 
-      if (!payload.ok) {
-        showLoginMessage(payload.message || "No fue posible iniciar sesión", true);
-        return;
-      }
-
-      state.token = payload.token;
-      localStorage.setItem("empiria_token", payload.token);
+      state.token = payload.token || "";
+      localStorage.setItem("empiria_token", state.token);
       localStorage.setItem("empiria_user", JSON.stringify(payload.user || {}));
       localStorage.setItem("empiria_access", JSON.stringify(payload.access || {}));
 

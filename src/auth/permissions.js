@@ -1,11 +1,25 @@
 const MODULES = Object.freeze({
   DASHBOARD: "dashboard",
+
   EMPLOYEE_MANAGEMENT: "gestion_personal",
+  PERSONNEL: "gestion_personal",
+
   EMPLOYEE_FILES: "hoja_vida_documentos",
+  RESUME_VIEW: "hoja_vida_documentos",
+  DOCUMENT_MANAGEMENT: "hoja_vida_documentos",
+
   CONTRACTS: "contratos_vinculacion",
+
   COVERAGE: "cobertura_calculadora",
+  COVERAGE_VERIFICATION: "cobertura_calculadora",
+
   PAYROLL: "nomina_novedades",
+  PAYROLL_CHANGES_REGISTRATION: "nomina_novedades",
+
   TRAINING: "capacitaciones_asistencia",
+  TRAININGS: "capacitaciones_asistencia",
+  TRAINING_ATTENDANCE: "capacitaciones_asistencia",
+
   REPORTS: "informes_reportes",
   EMPLOYEE_REQUESTS: "solicitudes_empleados",
   ADMIN_SETTINGS: "administracion_configuraciones",
@@ -15,6 +29,7 @@ const ACTIONS = Object.freeze({
   VIEW: "view",
   CREATE: "create",
   UPDATE: "update",
+  EDIT: "update",
   DELETE: "delete",
   UPLOAD: "upload",
   EXPORT: "export",
@@ -70,6 +85,7 @@ const EMPLOYEE_MANAGEMENT_PERMISSIONS = Object.freeze({
     "crear_empleado",
     "editar_empleado",
     "consultar_empleado",
+    "consultar_empleados",
     "asignar_empresa",
     "asignar_contrato",
     "asignar_municipio",
@@ -180,7 +196,9 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.ALL,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_MANAGEMENT]: EMPLOYEE_MANAGEMENT_PERMISSIONS,
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.UPLOAD, ACTIONS.EXPORT],
         fields: FULL_EMPLOYEE_FILE_FIELDS,
@@ -190,8 +208,10 @@ const ROLE_PERMISSIONS = Object.freeze({
           "validar_documentos",
           "documentos_pendientes",
           "descarga_documental",
+          "historial_documental",
         ]),
       },
+
       [MODULES.CONTRACTS]: CONTRACTS_PERMISSIONS,
       [MODULES.COVERAGE]: COVERAGE_PERMISSIONS,
       [MODULES.PAYROLL]: PAYROLL_PERMISSIONS,
@@ -206,7 +226,9 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_MANAGEMENT]: EMPLOYEE_MANAGEMENT_PERMISSIONS,
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.UPLOAD],
         fields: FULL_EMPLOYEE_FILE_FIELDS,
@@ -215,9 +237,12 @@ const ROLE_PERMISSIONS = Object.freeze({
           "cargar_documentos",
           "validar_documentos",
           "documentos_pendientes",
+          "historial_documental",
         ]),
       },
+
       [MODULES.CONTRACTS]: CONTRACTS_PERMISSIONS,
+
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -228,7 +253,9 @@ const ROLE_PERMISSIONS = Object.freeze({
           "comparativo_requerido_vs_contratado",
         ]),
       },
+
       [MODULES.PAYROLL]: PAYROLL_PERMISSIONS,
+
       [MODULES.REPORTS]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -238,6 +265,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "indicadores",
         ]),
       },
+
       [MODULES.EMPLOYEE_REQUESTS]: EMPLOYEE_REQUESTS_PERMISSIONS,
     },
   },
@@ -246,6 +274,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
         fields: LIMITED_EMPLOYEE_FILE_FIELDS,
@@ -254,6 +283,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "consultar_documentos_operativos",
         ]),
       },
+
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -267,6 +297,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "analisis_por_sede",
         ]),
       },
+
       [MODULES.REPORTS]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -284,6 +315,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
         fields: LIMITED_EMPLOYEE_FILE_FIELDS,
@@ -292,6 +324,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "consultar_documentos_operativos",
         ]),
       },
+
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -301,7 +334,9 @@ const ROLE_PERMISSIONS = Object.freeze({
           "verificacion_cobertura",
         ]),
       },
+
       [MODULES.TRAINING]: TRAINING_PERMISSIONS,
+
       [MODULES.REPORTS]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -318,6 +353,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     linkedScope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE],
         features: Object.freeze([
@@ -328,6 +364,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "analisis_por_municipio",
         ]),
       },
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
         fields: LIMITED_EMPLOYEE_FILE_FIELDS,
@@ -336,6 +373,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "consultar_documentos_operativos",
         ]),
       },
+
       [MODULES.PAYROLL]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.REGISTER],
         requiresSupportDocuments: true,
@@ -344,6 +382,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "consultar_novedades",
         ]),
       },
+
       [MODULES.TRAINING]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.TRACE, ACTIONS.ATTENDANCE],
         features: Object.freeze([
@@ -358,6 +397,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.ALL_COMPANIES,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
         fields: FULL_EMPLOYEE_FILE_FIELDS,
@@ -367,6 +407,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "consulta_auditoria_documental",
         ]),
       },
+
       [MODULES.REPORTS]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.EXPORT],
         features: Object.freeze([
@@ -383,6 +424,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.FILTER],
         fields: LIMITED_EMPLOYEE_FILE_FIELDS,
@@ -392,6 +434,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "filtrar_documentos_operativos",
         ]),
       },
+
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW],
         features: Object.freeze([
@@ -399,6 +442,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "comparativo_requerido_vs_contratado",
         ]),
       },
+
       [MODULES.REPORTS]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.EXPORT],
         features: Object.freeze([
