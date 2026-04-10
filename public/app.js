@@ -16,6 +16,8 @@ const state = {
   tempPassword: "",
   personnelCreateTab: "identificacion",
   personnelDraft: {},
+  personnelViewMode: "table", // "table" | "create" | "edit"
+  personnelEditingId: null,
 };
 
 const elements = {
@@ -58,6 +60,7 @@ const elements = {
   topCompany: document.getElementById("topCompany"),
   topContract: document.getElementById("topContract"),
   topMunicipality: document.getElementById("topMunicipality"),
+  bootScreen: document.getElementById("bootScreen"),
 };
 
 const moduleViews = {
@@ -66,15 +69,11 @@ const moduleViews = {
     route: "/dashboard-summary",
     submodules: [{ key: "resumen_general", title: "Resumen general" }],
   },
+  
   gestion_personal: {
     title: "Gestión del Personal",
     route: "/personnel",
-    submodules: [
-      { key: "crear_empleado", title: "Crear empleado" },
-      { key: "editar_empleado", title: "Editar empleado" },
-      { key: "consultar_empleados", title: "Consultar empleados" },
-      { key: "cambiar_estado", title: "Cambiar estado" },
-    ],
+    submodules: [],
   },
   hoja_vida_documentos: {
     title: "Hoja de Vida y Documentos",
@@ -214,6 +213,169 @@ const DOC_TYPE_LABELS = {
   PPT: "PPT",
   PA: "PA",
   NIT: "NIT",
+};
+
+const MUNICIPALITIES_BY_DEPARTMENT = {
+  "Amazonas": ["Leticia", "Puerto Nariño"],
+  "Antioquia": [
+    "Abejorral","Abriaquí","Alejandría","Amagá","Amalfi","Andes","Angelópolis","Angostura","Anorí","Santa Fe de Antioquia",
+    "Anzá","Apartadó","Arboletes","Argelia","Armenia","Barbosa","Belmira","Bello","Betania","Betulia","Ciudad Bolívar",
+    "Briceño","Buriticá","Cáceres","Caicedo","Caldas","Campamento","Cañasgordas","Caracolí","Caramanta","Carepa",
+    "El Carmen de Viboral","Carolina","Caucasia","Chigorodó","Cisneros","Cocorná","Concepción","Concordia","Copacabana",
+    "Dabeiba","Donmatías","Ebéjico","El Bagre","Entrerríos","Envigado","Fredonia","Frontino","Giraldo","Girardota",
+    "Gómez Plata","Granada","Guadalupe","Guarne","Guatapé","Heliconia","Hispania","Itagüí","Ituango","Jardín","Jericó",
+    "La Ceja","La Estrella","La Pintada","La Unión","Liborina","Maceo","Marinilla","Medellín","Montebello","Murindó",
+    "Mutatá","Nariño","Necoclí","Nechí","Olaya","Peñol","Peque","Pueblorrico","Puerto Berrío","Puerto Nare","Puerto Triunfo",
+    "Remedios","Retiro","Rionegro","Sabanalarga","Sabaneta","Salgar","San Andrés de Cuerquia","San Carlos","San Francisco",
+    "San Jerónimo","San José de la Montaña","San Juan de Urabá","San Luis","San Pedro de los Milagros","San Pedro de Urabá",
+    "San Rafael","San Roque","San Vicente Ferrer","Santa Bárbara","Santuario","Segovia","Sonsón","Sopetrán","Támesis",
+    "Tarazá","Tarso","Titiribí","Toledo","Turbo","Uramita","Urrao","Valdivia","Valparaíso","Vegachí","Venecia","Vigía del Fuerte",
+    "Yalí","Yarumal","Yolombó","Yondó","Zaragoza"
+  ],
+  "Arauca": ["Arauca","Arauquita","Cravo Norte","Fortul","Puerto Rondón","Saravena","Tame"],
+  "Atlántico": [
+    "Barranquilla","Baranoa","Campo de la Cruz","Candelaria","Galapa","Juan de Acosta","Luruaco","Malambo","Manatí",
+    "Palmar de Varela","Piojó","Polonuevo","Ponedera","Puerto Colombia","Repelón","Sabanagrande","Sabanalarga",
+    "Santa Lucía","Santo Tomás","Soledad","Suan","Tubará","Usiacurí"
+  ],
+  "Bogotá D.C.": ["Bogotá D.C."],
+  "Bolívar": [
+    "Achí","Altos del Rosario","Arenal","Arjona","Arroyohondo","Barranco de Loba","Calamar","Cantagallo","Cartagena de Indias",
+    "Cicuco","Clemencia","Córdoba","El Guamo","El Carmen de Bolívar","El Peñón","Hatillo de Loba","Magangué","Mahates",
+    "Margarita","María la Baja","Montecristo","Mompós","Morales","Norosí","Pinillos","Regidor","Río Viejo","San Cristóbal",
+    "San Estanislao","San Fernando","San Jacinto","San Jacinto del Cauca","San Juan Nepomuceno","San Martín de Loba",
+    "Santa Catalina","Santa Rosa","Santa Rosa del Sur","Simití","Soplaviento","Talaigua Nuevo","Tiquisio","Turbaco","Turbaná",
+    "Villanueva","Zambrano"
+  ],
+  "Boyacá": [
+    "Tunja","Almeida","Aquitania","Arcabuco","Belén","Berbeo","Betéitiva","Boavita","Boyacá","Briceño","Buenavista","Busbanzá",
+    "Caldas","Campohermoso","Cerinza","Chinavita","Chiquinquirá","Chíquiza","Chiscas","Chita","Chitaraque","Chivatá","Ciénega",
+    "Cómbita","Coper","Corrales","Covarachía","Cubará","Cucaita","Cuítiva","Chitaraque","Duitama","El Cocuy","El Espino","Firavitoba",
+    "Floresta","Gachantivá","Gámeza","Garagoa","Guacamayas","Guateque","Guayatá","Güicán","Iza","Jenesano","Jericó","Labranzagrande",
+    "La Capilla","La Victoria","La Uvita","Villa de Leyva","Macanal","Maripí","Miraflores","Mongua","Monguí","Moniquirá","Motavita",
+    "Muzo","Nobsa","Nuevo Colón","Oicatá","Otanche","Pachavita","Páez","Paipa","Pajarito","Panqueba","Pauna","Paya","Paz de Río",
+    "Pesca","Pisba","Puerto Boyacá","Quípama","Ramiriquí","Ráquira","Rondón","Saboyá","Sáchica","Samacá","San Eduardo","San José de Pare",
+    "San Luis de Gaceno","San Mateo","San Miguel de Sema","San Pablo de Borbur","Santa María","Santa Rosa de Viterbo","Santa Sofía",
+    "Santana","Sativanorte","Sativasur","Siachoque","Soatá","Socha","Socotá","Sogamoso","Somondoco","Sora","Sotaquirá","Soracá",
+    "Susacón","Sutamarchán","Sutatenza","Tasco","Tenza","Tibaná","Tibasosa","Tinjacá","Tipacoque","Toca","Togüí","Tópaga","Tota",
+    "Tununguá","Turmequé","Tuta","Tutazá","Úmbita","Ventaquemada","Viracachá","Zetaquira"
+  ],
+  "Caldas": [
+    "Manizales","Aguadas","Anserma","Aranzazu","Belalcázar","Chinchiná","Filadelfia","La Dorada","La Merced","Manzanares","Marmato",
+    "Marquetalia","Marulanda","Neira","Norcasia","Pácora","Palestina","Pensilvania","Riosucio","Risaralda","Salamina","Samaná",
+    "San José","Supía","Victoria","Villamaría","Viterbo"
+  ],
+  "Caquetá": [
+    "Florencia","Albania","Belén de los Andaquíes","Cartagena del Chairá","Curillo","El Doncello","El Paujil","La Montañita","Milán",
+    "Morelia","Puerto Rico","San José del Fragua","San Vicente del Caguán","Solano","Solita","Valparaíso"
+  ],
+  "Casanare": [
+    "Yopal","Aguazul","Chámeza","Hato Corozal","La Salina","Maní","Monterrey","Nunchía","Orocué","Paz de Ariporo","Pore",
+    "Recetor","Sabanalarga","Sácama","San Luis de Palenque","Támara","Tauramena","Trinidad","Villanueva"
+  ],
+  "Cauca": [
+    "Popayán","Almaguer","Argelia","Balboa","Bolívar","Buenos Aires","Cajibío","Caldono","Caloto","Corinto","El Tambo","Florencia",
+    "Guachené","Guapi","Inzá","Jambaló","La Sierra","La Vega","López de Micay","Mercaderes","Miranda","Morales","Padilla","Páez",
+    "Patía","Piamonte","Piendamó","Puerto Tejada","Puracé","Rosas","San Sebastián","Santa Rosa","Santander de Quilichao","Silvia",
+    "Sotará","Suárez","Sucre","Timbío","Timbiquí","Toribío","Totoró","Villa Rica"
+  ],
+  "Cesar": [
+    "Valledupar","Aguachica","Agustín Codazzi","Astrea","Becerril","Bosconia","Chimichagua","Chiriguaná","Curumaní","El Copey",
+    "El Paso","Gamarra","González","La Gloria","La Jagua de Ibirico","Manaure Balcón del Cesar","Pailitas","Pelaya","Pueblo Bello",
+    "Río de Oro","San Alberto","San Diego","San Martín","Tamalameque"
+  ],
+  "Chocó": [
+    "Quibdó","Acandí","Alto Baudó","Atrato","Bagadó","Bahía Solano","Bajo Baudó","Belén de Bajirá","Bojayá","Cantón de San Pablo",
+    "Carmen del Darién","Cértegui","Condoto","El Carmen de Atrato","El Litoral del San Juan","Istmina","Juradó","Lloró","Medio Atrato",
+    "Medio Baudó","Medio San Juan","Nóvita","Nuquí","Río Iró","Río Quito","Riosucio","San José del Palmar","Sipí","Tadó","Unguía","Unión Panamericana"
+  ],
+  "Córdoba": [
+    "Montería","Ayapel","Buenavista","Canalete","Cereté","Chimá","Chinú","Ciénaga de Oro","Cotorra","La Apartada","Lorica","Los Córdobas",
+    "Momil","Montelíbano","Moñitos","Planeta Rica","Pueblo Nuevo","Puerto Escondido","Puerto Libertador","Purísima","Sahagún",
+    "San Andrés de Sotavento","San Antero","San Bernardo del Viento","San Carlos","San José de Uré","San Pelayo","Tierralta",
+    "Tuchín","Valencia"
+  ],
+  "Cundinamarca": [
+    "Agua de Dios","Albán","Anapoima","Anolaima","Apulo","Arbeláez","Beltrán","Bituima","Bojacá","Cabrera","Cachipay","Cajicá",
+    "Caparrapí","Cáqueza","Carmen de Carupa","Chaguaní","Chía","Chipaque","Choachí","Chocontá","Cogua","Cota","Cucunubá",
+    "El Colegio","El Peñón","El Rosal","Facatativá","Fómeque","Fosca","Funza","Fúquene","Fusagasugá","Gachalá","Gachancipá",
+    "Gachetá","Gama","Girardot","Granada","Guachetá","Guaduas","Guasca","Guataquí","Guatavita","Guayabal de Síquima","Guayabetal",
+    "Gutiérrez","Jerusalén","Junín","La Calera","La Mesa","La Palma","La Peña","La Vega","Lenguazaque","Machetá","Madrid","Manta",
+    "Medina","Mosquera","Nariño","Nemocón","Nilo","Nimaima","Nocaima","Pacho","Paime","Pandi","Paratebueno","Pasca","Puerto Salgar",
+    "Pulí","Quebradanegra","Quetame","Quipile","Ricaurte","San Antonio del Tequendama","San Bernardo","San Cayetano","San Francisco",
+    "San Juan de Rioseco","Sasaima","Sesquilé","Sibaté","Silvania","Simijaca","Soacha","Sopó","Subachoque","Suesca","Supatá","Susa",
+    "Sutatausa","Tabio","Tausa","Tena","Tenjo","Tibacuy","Tibirita","Tocaima","Tocancipá","Topaipí","Ubalá","Ubaque","Villa de San Diego de Ubaté",
+    "Une","Útica","Venecia","Vergara","Vianí","Villagómez","Villapinzón","Villeta","Viotá","Yacopí","Zipacón","Zipaquirá"
+  ],
+  "Guainía": ["Inírida"],
+  "Guaviare": ["San José del Guaviare","Calamar","El Retorno","Miraflores"],
+  "Huila": [
+    "Neiva","Acevedo","Agrado","Aipe","Algeciras","Altamira","Baraya","Campoalegre","Colombia","Elías","Garzón","Gigante","Guadalupe",
+    "Hobo","Íquira","Isnos","La Argentina","La Plata","Nátaga","Oporapa","Paicol","Palermo","Palestina","Pital","Pitalito","Rivera",
+    "Saladoblanco","San Agustín","Santa María","Suaza","Tarqui","Tello","Teruel","Tesalia","Timaná","Villavieja","Yaguará"
+  ],
+  "La Guajira": [
+    "Riohacha","Albania","Barrancas","Dibulla","Distracción","El Molino","Fonseca","Hatonuevo","La Jagua del Pilar","Maicao",
+    "Manaure","San Juan del Cesar","Uribia","Urumita","Villanueva"
+  ],
+  "Magdalena": [
+    "Santa Marta","Algarrobo","Aracataca","Ariguaní","Cerro de San Antonio","Chivolo","Ciénaga","Concordia","El Banco","El Piñón",
+    "El Retén","Fundación","Guamal","Nueva Granada","Pedraza","Pijiño del Carmen","Pivijay","Plato","Puebloviejo","Remolino","Sabanas de San Ángel",
+    "Salamina","San Sebastián de Buenavista","San Zenón","Santa Ana","Santa Bárbara de Pinto","Sitionuevo","Tenerife","Zapayán","Zona Bananera"
+  ],
+  "Meta": META_MUNICIPALITIES,
+  "Nariño": [
+    "Pasto","Albán","Aldana","Ancuyá","Arboleda","Barbacoas","Belén","Buesaco","Colón","Consacá","Contadero","Córdoba","Cuaspud",
+    "Cumbal","Cumbitara","Chachagüí","El Charco","El Peñol","El Rosario","El Tablón de Gómez","El Tambo","Francisco Pizarro","Funes",
+    "Guachucal","Guaitarilla","Gualmatán","Iles","Imués","Ipiales","La Cruz","La Florida","La Llanada","La Tola","La Unión","Leiva",
+    "Linares","Los Andes","Magüí","Mallama","Mosquera","Nariño","Olaya Herrera","Ospina","Policarpa","Potosí","Providencia","Puerres",
+    "Pupiales","Ricaurte","Roberto Payán","Samaniego","Sandoná","San Bernardo","San Lorenzo","San Pablo","San Pedro de Cartago","Santa Bárbara",
+    "Santacruz","Sapuyes","Taminango","Tangua","Tumaco","Túquerres","Yacuanquer"
+  ],
+  "Norte de Santander": [
+    "Cúcuta","Abrego","Arboledas","Bochalema","Bucarasica","Cácota","Cachirá","Chinácota","Chitagá","Convención","Cucutilla","Durania",
+    "El Carmen","El Tarra","El Zulia","Gramalote","Hacarí","Herrán","Labateca","La Esperanza","La Playa","Los Patios","Lourdes","Mutiscua",
+    "Ocaña","Pamplona","Pamplonita","Puerto Santander","Ragonvalia","Salazar","San Calixto","San Cayetano","Santiago","Sardinata",
+    "Silos","Teorama","Tibú","Toledo","Villa Caro","Villa del Rosario"
+  ],
+  "Putumayo": [
+    "Mocoa","Colón","Orito","Puerto Asís","Puerto Caicedo","Puerto Guzmán","Puerto Leguízamo","Sibundoy","San Francisco",
+    "San Miguel","Santiago","Valle del Guamuez","Villagarzón"
+  ],
+  "Quindío": ["Armenia","Buenavista","Calarcá","Circasia","Córdoba","Filandia","Génova","La Tebaida","Montenegro","Pijao","Quimbaya","Salento"],
+  "Risaralda": [
+    "Pereira","Apía","Balboa","Belén de Umbría","Dosquebradas","Guática","La Celia","La Virginia","Marsella","Mistrató","Pueblo Rico",
+    "Quinchía","Santa Rosa de Cabal","Santuario"
+  ],
+  "San Andrés y Providencia": ["San Andrés","Providencia y Santa Catalina"],
+  "Santander": [
+    "Bucaramanga","Aguada","Albania","Aratoca","Barbosa","Barichara","Barrancabermeja","Betulia","Bolívar","Cabrera","California","Capitanejo",
+    "Carcasí","Cepitá","Cerrito","Charalá","Charta","Chipatá","Cimitarra","Concepción","Confines","Contratación","Coromoro","Curití",
+    "El Carmen de Chucurí","El Guacamayo","El Peñón","El Playón","Encino","Enciso","Florián","Floridablanca","Galán","Gámbita","Girón",
+    "Guaca","Guadalupe","Guapotá","Guavatá","Güepsa","Hato","Jesús María","Jordán","La Belleza","Landázuri","La Paz","Lebrija","Los Santos",
+    "Macaravita","Málaga","Matanza","Mogotes","Molagavita","Ocamonte","Oiba","Onzaga","Palmar","Palmas del Socorro","Páramo","Piedecuesta",
+    "Pinchote","Puente Nacional","Puerto Parra","Puerto Wilches","Rionegro","Sabana de Torres","San Andrés","San Benito","San Gil","San Joaquín",
+    "San José de Miranda","San Miguel","San Vicente de Chucurí","Santa Bárbara","Santa Helena del Opón","Simacota","Socorro","Suaita","Sucre",
+    "Suratá","Tona","Valle de San José","Vélez","Vetas","Villanueva","Zapatoca"
+  ],
+  "Sucre": [
+    "Sincelejo","Buenavista","Caimito","Colosó","Corozal","Coveñas","Chalán","El Roble","Galeras","Guaranda","La Unión","Los Palmitos",
+    "Majagual","Morroa","Ovejas","Palmito","Sampués","San Benito Abad","San Juan de Betulia","San Marcos","San Onofre","San Pedro","Sincé",
+    "Sucre","Tolú","Toluviejo"
+  ],
+  "Tolima": [
+    "Ibagué","Alpujarra","Alvarado","Ambalema","Anzoátegui","Armero","Ataco","Cajamarca","Carmen de Apicalá","Casabianca","Chaparral",
+    "Coello","Coyaima","Cunday","Dolores","Espinal","Falán","Flandes","Fresno","Guamo","Herveo","Honda","Icononzo","Lérida","Líbano","Mariquita",
+    "Melgar","Murillo","Natagaima","Ortega","Palocabildo","Piedras","Planadas","Prado","Purificación","Rioblanco","Roncesvalles","Rovira","Saldaña",
+    "San Antonio","San Luis","Santa Isabel","Suárez","Valle de San Juan","Venadillo","Villahermosa","Villarrica"
+  ],
+  "Valle del Cauca": [
+    "Cali","Alcalá","Andalucía","Ansermanuevo","Argelia","Bolívar","Buenaventura","Buga","Bugalagrande","Caicedonia","Calima","Candelaria",
+    "Cartago","Dagua","El Águila","El Cairo","El Cerrito","El Dovio","Florida","Ginebra","Guacarí","Jamundí","La Cumbre","La Unión","La Victoria",
+    "Obando","Palmira","Pradera","Restrepo","Riofrío","Roldanillo","San Pedro","Sevilla","Toro","Trujillo","Tuluá","Ulloa","Versalles","Vijes","Yotoco","Yumbo","Zarzal"
+  ],
+  "Vaupés": ["Mitú","Carurú","Pacoa","Taraira","Papunahua","Yavaraté"],
+  "Vichada": ["Puerto Carreño","La Primavera","Santa Rosalía","Cumaribo"],
 };
 
 async function apiFetch(path, options = {}) {
@@ -473,8 +635,7 @@ function getContractOptionsHtml(companyId, currentValue = "") {
 }
 
 function getDepartmentMunicipalities(departmentName) {
-  if (departmentName === "Meta") return META_MUNICIPALITIES;
-  return [];
+  return MUNICIPALITIES_BY_DEPARTMENT[departmentName] || [];
 }
 
 function isInstitutionalTabEnabled(cargoReal) {
@@ -620,7 +781,10 @@ function renderModuleNav(modules = []) {
       const isActive = state.activeModule === moduleKey;
       const isExpanded = state.expandedModule === moduleKey;
       const view = moduleViews[moduleKey];
-      const submodules = view?.submodules || [];
+      const submodules =
+        moduleKey === "gestion_personal"
+          ? []
+          : (view?.submodules || []);
 
       return `
         <div class="module-group">
@@ -634,7 +798,11 @@ function renderModuleNav(modules = []) {
               <span class="module-nav-icon">${meta.icon}</span>
               <span class="module-nav-title">${meta.label}</span>
             </span>
-            <span class="module-nav-caret ${isExpanded ? "open" : ""}">⌄</span>
+            ${
+              submodules.length
+                ? `<span class="module-nav-caret ${isExpanded ? "open" : ""}">⌄</span>`
+                : ""
+            }
           </button>
 
           ${
@@ -669,9 +837,12 @@ function renderModuleNav(modules = []) {
   moduleButtons.forEach((button) => {
     button.addEventListener("click", async () => {
       const moduleKey = button.dataset.module;
+      const hasSubmodules =
+        moduleKey !== "gestion_personal" &&
+        Boolean(moduleViews[moduleKey]?.submodules?.length);
       const isSameExpanded = state.expandedModule === moduleKey;
 
-      if (isSameExpanded) {
+      if (isSameExpanded && hasSubmodules) {
         state.expandedModule = null;
         if (state.activeModule === moduleKey) {
           state.activeModule = null;
@@ -684,7 +855,14 @@ function renderModuleNav(modules = []) {
       } else {
         state.expandedModule = moduleKey;
         state.activeModule = moduleKey;
-        state.activeSubmodule = null;
+
+        if (moduleKey === "gestion_personal") {
+          state.activeSubmodule = null;
+          state.personnelViewMode = "table";
+          state.personnelEditingId = null;
+        } else {
+          state.activeSubmodule = null;
+        }
       }
 
       renderModuleNav(modules);
@@ -702,12 +880,10 @@ function renderModuleNav(modules = []) {
       state.activeModule = moduleKey;
       state.activeSubmodule = submoduleKey;
 
-      if (moduleKey !== "gestion_personal" || submoduleKey !== "crear_empleado") {
-        state.personnelCreateTab = "identificacion";
+      if (moduleKey !== "gestion_personal") {
+        renderModuleNav(modules);
+        await openModule(moduleKey);
       }
-
-      renderModuleNav(modules);
-      await openModule(moduleKey);
     });
   });
 }
@@ -719,7 +895,7 @@ function renderEmptyWorkspace() {
     <div class="workspace-empty">
       <div>
         <h3>Selecciona un módulo del menú izquierdo</h3>
-        <p class="subtitle">Al abrir un módulo verás sus acciones disponibles.</p>
+        <p class="subtitle">Al abrir un módulo verás su contenido aquí.</p>
       </div>
     </div>
   `;
@@ -770,7 +946,192 @@ async function loadDashboardModule() {
   `;
 }
 
-async function loadPersonnelModule(moduleConfig, submoduleKey) {
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getPersonnelFullName(item) {
+  if (item.fullName) return item.fullName;
+
+  return [
+    item.primer_nombre,
+    item.segundo_nombre,
+    item.primer_apellido,
+    item.segundo_apellido,
+    item.firstName,
+    item.secondName,
+    item.firstLastName,
+    item.secondLastName,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim() || "Sin nombre";
+}
+
+function getPersonnelWorkStatus(item) {
+  return (
+    item.estado ||
+    item.status ||
+    item.estado_laboral ||
+    "Sin estado"
+  );
+}
+
+function getPersonnelRole(item) {
+  return (
+    item.cargo_real ||
+    item.position ||
+    item.cargo ||
+    "Sin cargo"
+  );
+}
+
+function getPersonnelMunicipality(item) {
+  return (
+    item.municipio ||
+    item.municipality ||
+    item.municipio_residencia ||
+    "-"
+  );
+}
+
+function getPersonnelDocument(item) {
+  return (
+    item.numero_documento ||
+    item.documentNumber ||
+    "-"
+  );
+}
+
+function getPersonnelDocumentChecklist(item) {
+  const docs = item.documents || item.documentos || {};
+
+  const hasDoc = (keys) =>
+    keys.some((key) => {
+      const value = docs[key];
+      if (Array.isArray(value)) return value.length > 0;
+      return Boolean(value);
+    });
+
+  return {
+    cedula: hasDoc(["cedula", "cc", "documento_identidad"]),
+    hojaVida: hasDoc(["hoja_vida", "hv", "curriculum"]),
+    eps: hasDoc(["eps", "certificado_eps", "afiliacion_eps"]),
+    pension: hasDoc(["pension", "afp", "certificado_pension"]),
+    examenes: hasDoc(["examen_medico", "examenes", "manipulacion_alimentos"]),
+  };
+}
+
+function getPersonnelHvStatus(item) {
+  const checklist = getPersonnelDocumentChecklist(item);
+  const values = Object.values(checklist);
+  const completed = values.filter(Boolean).length;
+
+  if (completed === values.length && values.length) {
+    return {
+      label: "Completa",
+      className: "status-complete",
+    };
+  }
+
+  if (completed > 0) {
+    return {
+      label: "En revisión",
+      className: "status-review",
+    };
+  }
+
+  return {
+    label: "Incompleta",
+    className: "status-incomplete",
+  };
+}
+
+function getPersonnelFilterValue(id) {
+  const el = document.getElementById(id);
+  return el ? String(el.value || "").trim() : "";
+}
+
+function filterPersonnelRows(rows) {
+  const search = normalizeText(getPersonnelFilterValue("personnelSearch"));
+  const workStatus = normalizeText(getPersonnelFilterValue("personnelFilterStatus"));
+  const hvStatus = normalizeText(getPersonnelFilterValue("personnelFilterHvStatus"));
+  const municipality = normalizeText(getPersonnelFilterValue("personnelFilterMunicipality"));
+
+  return rows.filter((item) => {
+    const fullName = normalizeText(getPersonnelFullName(item));
+    const documentNumber = normalizeText(getPersonnelDocument(item));
+    const currentWorkStatus = normalizeText(getPersonnelWorkStatus(item));
+    const currentHvStatus = normalizeText(getPersonnelHvStatus(item).label);
+    const currentMunicipality = normalizeText(getPersonnelMunicipality(item));
+    const currentRole = normalizeText(getPersonnelRole(item));
+
+    const matchesSearch =
+      !search ||
+      fullName.includes(search) ||
+      documentNumber.includes(search) ||
+      currentRole.includes(search);
+
+    const matchesWorkStatus = !workStatus || currentWorkStatus === workStatus;
+    const matchesHvStatus = !hvStatus || currentHvStatus === hvStatus;
+    const matchesMunicipality = !municipality || currentMunicipality === municipality;
+
+    return (
+      matchesSearch &&
+      matchesWorkStatus &&
+      matchesHvStatus &&
+      matchesMunicipality
+    );
+  });
+}
+
+function getVisibleMunicipalityOptions(rows) {
+  return Array.from(
+    new Set(
+      rows
+        .map((item) => getPersonnelMunicipality(item))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function validatePersonnelForm(form) {
+  let isValid = true;
+
+  form.querySelectorAll("[required]").forEach((field) => {
+    field.classList.remove("input-error");
+
+    const value = String(field.value || "").trim();
+
+    if (!value) {
+      field.classList.add("input-error");
+      isValid = false;
+    }
+  });
+
+  return isValid;
+}
+
+function attachPersonnelFormValidation(form) {
+  if (!form) return;
+
+  form.querySelectorAll("[required]").forEach((field) => {
+    const clearError = () => {
+      if (String(field.value || "").trim()) {
+        field.classList.remove("input-error");
+      }
+    };
+
+    field.addEventListener("input", clearError);
+    field.addEventListener("change", clearError);
+  });
+}
+
+async function renderPersonnelTableModule() {
   let payload;
 
   try {
@@ -784,11 +1145,247 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     `;
   }
 
-  const showCreateForm = submoduleKey === "crear_empleado";
-  const showEditHelp = submoduleKey === "editar_empleado";
-  const showStatusHelp = submoduleKey === "cambiar_estado";
-  const showList =
-    submoduleKey === "consultar_empleados" || showEditHelp || showStatusHelp;
+  const rows = Array.isArray(payload.personnel) ? payload.personnel : [];
+  const filteredRows = filterPersonnelRows(rows);
+  const municipalityOptions = getVisibleMunicipalityOptions(rows);
+
+  setTimeout(() => {
+    const searchInput = document.getElementById("personnelSearch");
+    const statusInput = document.getElementById("personnelFilterStatus");
+    const hvStatusInput = document.getElementById("personnelFilterHvStatus");
+    const municipalityInput = document.getElementById("personnelFilterMunicipality");
+    const clearFiltersBtn = document.getElementById("clearPersonnelFilters");
+    const newBtn = document.getElementById("btnNewEmployee");
+    const exportBtn = document.getElementById("btnExportPersonnel");
+
+    [searchInput, statusInput, hvStatusInput, municipalityInput].forEach((el) => {
+      if (!el) return;
+      el.addEventListener("input", async () => {
+        await openModule("gestion_personal");
+      });
+      el.addEventListener("change", async () => {
+        await openModule("gestion_personal");
+      });
+    });
+
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener("click", async () => {
+        if (searchInput) searchInput.value = "";
+        if (statusInput) statusInput.value = "";
+        if (hvStatusInput) hvStatusInput.value = "";
+        if (municipalityInput) municipalityInput.value = "";
+        await openModule("gestion_personal");
+      });
+    }
+
+    if (newBtn) {
+      newBtn.addEventListener("click", async () => {
+        state.personnelDraft = {};
+        state.personnelCreateTab = "identificacion";
+        state.personnelViewMode = "create";
+        state.personnelEditingId = null;
+        await openModule("gestion_personal");
+      });
+    }
+
+    if (exportBtn) {
+      exportBtn.addEventListener("click", () => {
+        alert("La exportación se conectará en la siguiente fase.");
+      });
+    }
+
+    document.querySelectorAll("[data-edit-personnel-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = button.dataset.editPersonnelId;
+        const found = rows.find((item) => String(item.id) === String(id));
+
+        if (!found) return;
+
+        state.personnelDraft = {
+          firstName: found.primer_nombre || "",
+          secondName: found.segundo_nombre || "",
+          firstLastName: found.primer_apellido || "",
+          secondLastName: found.segundo_apellido || "",
+          documentType: found.tipo_documento || "",
+          documentNumber: found.numero_documento || "",
+          expeditionDay: found.fecha_expedicion_dia || "",
+          expeditionMonth: found.fecha_expedicion_mes || "",
+          expeditionYear: found.fecha_expedicion_anio || "",
+          expeditionDepartment: found.departamento_expedicion || "",
+          expeditionMunicipality: found.municipio_expedicion || "",
+          birthDay: found.fecha_nacimiento_dia || "",
+          birthMonth: found.fecha_nacimiento_mes || "",
+          birthYear: found.fecha_nacimiento_anio || "",
+          birthCountry: found.pais_nacimiento || "Colombia",
+          birthDepartment: found.departamento_nacimiento || "",
+          birthMunicipality: found.municipio_nacimiento || "",
+          bloodType: found.grupo_sanguineo || "",
+          biologicalSex: found.sexo_biologico || "",
+          companyId: found.empresa || found.companyId || "",
+          contractId: found.contrato || found.contractId || "",
+          municipalityId: found.municipio || "",
+          presentedInOffer: found.presentacion_en_licitacion ? "true" : "false",
+          offerPosition: found.cargo_presentado_en_licitacion || "",
+          cargo_real: found.cargo_real || "",
+          status: found.estado || "",
+          phone: found.celular || "",
+          email: found.correo_electronico || "",
+          address: found.direccion_residencia || "",
+          neighborhood: found.barrio_residencia || "",
+          residenceMunicipality: found.municipio_residencia || "",
+          civilStatus: found.estado_civil || "",
+          residenceZone: found.zona_residencia || "",
+          institution: found.institucion_educativa || "",
+          site: found.sede_educativa || "",
+          educationalModality: found.modalidad || "",
+          contractType: found.tipo_contrato || "",
+          startDate: found.fecha_inicio_real || "",
+          eps: found.eps || "",
+          pensionFund: found.fondo_pensiones || "",
+          compensationBox: found.caja_compensacion || "",
+          arl: found.arl || "",
+          sisben: found.sisben_tiene || "",
+          sisbenCategory: found.sisben_categoria || "",
+          internalNotes: found.observaciones_internas || "",
+        };
+
+        state.personnelCreateTab = "identificacion";
+        state.personnelViewMode = "edit";
+        state.personnelEditingId = found.id || null;
+        await openModule("gestion_personal");
+      });
+    });
+  }, 0);
+
+  return `
+    <div class="personnel-master-module">
+      <article class="info-card personnel-master-card">
+        <div class="personnel-master-header">
+          <div>
+            <h3>Gestión del Personal</h3>
+            <p class="soft">Administra, filtra y revisa el estado documental del personal visible.</p>
+          </div>
+
+          <div class="personnel-master-actions">
+            <button type="button" id="btnNewEmployee" class="btn btn-primary">Nuevo empleado</button>
+            <button type="button" id="btnExportPersonnel" class="btn btn-secondary">Exportar</button>
+          </div>
+        </div>
+
+        <div class="personnel-toolbar">
+          <input
+            id="personnelSearch"
+            type="text"
+            class="personnel-toolbar-search"
+            placeholder="Buscar por nombre, documento o cargo"
+          />
+
+          <select id="personnelFilterStatus">
+            <option value="">Estado laboral</option>
+            ${renderOptions(ESTADOS_PERSONAL, "", "Estado laboral")}
+          </select>
+
+          <select id="personnelFilterHvStatus">
+            <option value="">Hoja de vida</option>
+            <option value="Completa">Completa</option>
+            <option value="Incompleta">Incompleta</option>
+            <option value="En revisión">En revisión</option>
+          </select>
+
+          <select id="personnelFilterMunicipality">
+            <option value="">Municipio</option>
+            ${municipalityOptions
+              .map((value) => `<option value="${escapeAttr(value)}">${value}</option>`)
+              .join("")}
+          </select>
+
+          <button type="button" id="clearPersonnelFilters" class="btn btn-secondary">
+            Limpiar filtros
+          </button>
+        </div>
+
+        <div class="personnel-table-meta">
+          <span>Total visibles: <strong>${filteredRows.length}</strong></span>
+        </div>
+
+        <div class="personnel-table-wrap">
+          <table class="personnel-table">
+            <thead>
+              <tr>
+                <th>Documento</th>
+                <th>Nombre completo</th>
+                <th>Cargo</th>
+                <th>Estado laboral</th>
+                <th>Hoja de vida</th>
+                <th>Municipio</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                filteredRows.length
+                  ? filteredRows
+                      .map((item) => {
+                        const hvStatus = getPersonnelHvStatus(item);
+
+                        return `
+                          <tr>
+                            <td>${getPersonnelDocument(item)}</td>
+                            <td>${getPersonnelFullName(item)}</td>
+                            <td>${getPersonnelRole(item)}</td>
+                            <td>${getPersonnelWorkStatus(item)}</td>
+                            <td>
+                              <span class="status-chip ${hvStatus.className}">
+                                ${hvStatus.label}
+                              </span>
+                            </td>
+                            <td>${getPersonnelMunicipality(item)}</td>
+                            <td>
+                              <div class="personnel-row-actions">
+                                <button
+                                  type="button"
+                                  class="btn btn-secondary btn-row"
+                                  data-edit-personnel-id="${item.id}"
+                                >
+                                  Editar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        `;
+                      })
+                      .join("")
+                  : `
+                    <tr>
+                      <td colspan="7">
+                        <div class="personnel-table-empty">
+                          No hay registros que coincidan con los filtros.
+                        </div>
+                      </td>
+                    </tr>
+                  `
+              }
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+async function loadPersonnelModule(moduleConfig, submoduleKey) {
+  let payload;
+
+  try {
+    payload = await apiFetch("/personnel");
+  } catch (error) {
+    return `
+      <article class="info-card">
+        <h3>Error en Gestión del Personal</h3>
+        <p>${error.message}</p>
+      </article>
+    `;
+  }
 
   if (!state.personnelDraft) state.personnelDraft = {};
   if (!state.personnelCreateTab) state.personnelCreateTab = "identificacion";
@@ -805,8 +1402,6 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
   const selected = (name, value) =>
     String(draftValue(name, "")) === String(value) ? "selected" : "";
-
-  const checked = (name) => (String(draftValue(name, "")) === "true" ? "checked" : "");
 
   const expeditionDepartment = draftValue("expeditionDepartment", "");
   const birthDepartment = draftValue("birthDepartment", "");
@@ -826,6 +1421,8 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
   const selectedSede = draftValue("site", "");
   const modalidadCatalog = sedeCatalog[selectedSede] || [];
   const managerRole = ["GESTOR DE ZONA", "AUXILIAR DE GESTOR DE ZONA"].includes(currentCargoReal);
+
+  const isEditMode = state.personnelViewMode === "edit";
 
   const tabButtons = `
     <div class="employee-steps">
@@ -1060,15 +1657,6 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             </select>
           </label>
         </div>
-
-        <div class="personnel-note-box">
-          <strong>Fase del proceso:</strong><br />
-          ACTIVO: personal contratado y trabajando.<br />
-          INACTIVO: personal que renuncia o se retira por periodo de prueba.<br />
-          SUSPENDIDO: sale por reducción de cobertura.<br />
-          EN PROCESO A: personal verificado pero no ingresa por cobertura.<br />
-          EN PROCESO B: personal pendiente de verificación, antecedentes, EPS y AFP.
-        </div>
       </section>
     `;
   }
@@ -1147,7 +1735,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
           <div class="section-title-wrap">
             <div>
               <h4>Institucional</h4>
-              <p class="section-helper-text">Esta pestaña solo se habilita para cargos operativos permitidos</p>
+              <p class="section-helper-text">Esta pestaña solo se habilita para cargos permitidos</p>
             </div>
           </div>
 
@@ -1333,7 +1921,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         <div class="section-title-wrap">
           <div>
             <h4>Estudios</h4>
-            <p class="section-helper-text">Solo registro básico. La verificación va en Documentos.</p>
+            <p class="section-helper-text">Registro básico del perfil académico.</p>
           </div>
         </div>
 
@@ -1370,7 +1958,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         <div class="section-title-wrap">
           <div>
             <h4>Observaciones</h4>
-            <p class="section-helper-text">Registro exclusivo de novedades y observaciones</p>
+            <p class="section-helper-text">Registro interno del empleado</p>
           </div>
         </div>
 
@@ -1386,80 +1974,19 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     `;
   }
 
-  const formHtml = showCreateForm
-    ? `
-      <article class="info-card personnel-form-card employee-form-shell">
-        <div class="employee-form-title-block">
-          <h3>Formulario de Empleado</h3>
-          <p>Complete todos los datos del empleado en el sistema</p>
-        </div>
-
-        <div class="employee-header-card">
-          <h2 id="employeeHeaderName">NOMBRE COMPLETO DE LA PERSONA</h2>
-          <p id="employeeHeaderDocument">Tipo de documento y número de documento</p>
-        </div>
-
-        ${tabButtons}
-
-        <form id="personnelForm" class="personnel-form-v2">
-          ${activeSectionHtml}
-
-          <div class="personnel-form-actions">
-            <button type="submit" class="primary-soft-btn">
-              Guardar cambios de esta pestaña
-            </button>
-          </div>
-        </form>
-      </article>
-    `
-    : "";
-
-  const helperHtml = showEditHelp
-    ? `
-      <article class="info-card">
-        <h3>Editar empleado</h3>
-        <p>En la siguiente fase este espacio tendrá edición individual y trazabilidad por historial.</p>
-      </article>
-    `
-    : showStatusHelp
-      ? `
-        <article class="info-card">
-          <h3>Cambiar estado</h3>
-          <p>Aquí podrás cambiar estado y guardar historial de motivos y fechas.</p>
-        </article>
-      `
-      : "";
-
-  const listHtml = showList
-    ? `
-      <article class="info-card">
-        <h3>Personal visible</h3>
-        <div class="personnel-list">
-          ${
-            payload.personnel?.length
-              ? payload.personnel
-                  .map(
-                    (item) => `
-                      <div class="personnel-item">
-                        <strong>${item.fullName || "Sin nombre"}</strong>
-                        <p>${item.position || ""}</p>
-                        <p>Documento: ${item.documentNumber || ""}</p>
-                        <p>${formatCompany(item.companyId)} | ${formatContract(item.contractId)}</p>
-                        <p>${item.municipality || "Sin municipio"} | ${item.modality || "Sin modalidad"} | ${item.status || ""}</p>
-                      </div>
-                    `
-                  )
-                  .join("")
-              : "<p>No hay registros visibles para este usuario.</p>"
-          }
-        </div>
-      </article>
-    `
-    : "";
-
   setTimeout(() => {
     const form = document.getElementById("personnelForm");
+    const backBtn = document.getElementById("backToPersonnelTable");
     if (!form) return;
+
+    if (backBtn) {
+      backBtn.addEventListener("click", async () => {
+        state.personnelViewMode = "table";
+        state.personnelEditingId = null;
+        state.personnelCreateTab = "identificacion";
+        await openModule("gestion_personal");
+      });
+    }
 
     document.querySelectorAll("[data-step-tab]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -1549,25 +2076,77 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     }
 
     enforceInputRestrictions(form);
+    attachPersonnelFormValidation(form);
     syncEmployeeHeaderFromDraft();
 
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      alert("Cambios de la pestaña guardados temporalmente.");
-    });
+    form.addEventListener("submit", handleCreatePersonnel);
   }, 0);
 
   return `
     <div class="personnel-grid">
-      ${formHtml}
-      ${helperHtml}
-      ${listHtml}
+      <article class="info-card personnel-form-card employee-form-shell">
+        <div class="personnel-master-header personnel-form-topbar">
+          <div>
+            <h3>${isEditMode ? "Editar empleado" : "Nuevo empleado"}</h3>
+            <p class="soft">${isEditMode ? "Actualiza la información del empleado seleccionado." : "Diligencia la información básica del nuevo empleado."}</p>
+          </div>
+
+          <div class="personnel-master-actions">
+            <button type="button" id="backToPersonnelTable" class="btn btn-secondary">
+              Volver al listado
+            </button>
+          </div>
+        </div>
+
+        <div class="employee-header-card">
+          <h2 id="employeeHeaderName">NOMBRE COMPLETO DE LA PERSONA</h2>
+          <p id="employeeHeaderDocument">Tipo de documento y número de documento</p>
+        </div>
+
+        ${tabButtons}
+
+        <form id="personnelForm" class="personnel-form-v2" novalidate>
+          ${activeSectionHtml}
+
+          <div class="personnel-form-actions">
+            <button type="submit" class="primary-soft-btn">
+              ${isEditMode ? "Guardar cambios" : "Crear empleado"}
+            </button>
+          </div>
+        </form>
+      </article>
     </div>
   `;
 }
 
 async function handleCreatePersonnel(event) {
   event.preventDefault();
+
+  const form = event.currentTarget;
+
+  if (!validatePersonnelForm(form)) {
+    alert("Faltan campos obligatorios por diligenciar.");
+    return;
+  }
+
+  if (
+    !String(state.personnelDraft.firstName || "").trim() ||
+    !String(state.personnelDraft.firstLastName || "").trim()
+  ) {
+    const firstNameField = form.querySelector('[name="firstName"]');
+    const firstLastNameField = form.querySelector('[name="firstLastName"]');
+
+    if (firstNameField && !String(firstNameField.value || "").trim()) {
+      firstNameField.classList.add("input-error");
+    }
+
+    if (firstLastNameField && !String(firstLastNameField.value || "").trim()) {
+      firstLastNameField.classList.add("input-error");
+    }
+
+    alert("El nombre y el apellido son obligatorios.");
+    return;
+  }
 
   const payload = {
     primer_nombre: state.personnelDraft.firstName || "",
@@ -1601,10 +2180,6 @@ async function handleCreatePersonnel(event) {
     cargo_presentado_en_licitacion: state.personnelDraft.offerPosition || "",
     cargo_real: state.personnelDraft.cargo_real || "",
     estado: state.personnelDraft.status || "",
-    motivo_inactividad: state.personnelDraft.inactiveReason || "",
-    autorizado: state.personnelDraft.authorized === "true",
-    autorizado_por: state.personnelDraft.authorizedBy || "",
-    autorizado_fecha: state.personnelDraft.authorizedDate || "",
 
     celular: state.personnelDraft.phone || "",
     correo_electronico: state.personnelDraft.email || "",
@@ -1626,12 +2201,9 @@ async function handleCreatePersonnel(event) {
     fondo_pensiones: state.personnelDraft.pensionFund || "",
     caja_compensacion: state.personnelDraft.compensationBox || "",
     arl: state.personnelDraft.arl || "",
-    dotacion: state.personnelDraft.uniformSize || "",
 
     sisben_tiene: state.personnelDraft.sisben || "",
     sisben_categoria: state.personnelDraft.sisbenCategory || "",
-    contacto_emergencia_nombre: state.personnelDraft.emergencyContactName || "",
-    contacto_emergencia_telefono: state.personnelDraft.emergencyContactPhone || "",
     observaciones_internas: state.personnelDraft.internalNotes || "",
   };
 
@@ -1641,14 +2213,598 @@ async function handleCreatePersonnel(event) {
       body: JSON.stringify(payload),
     });
 
-    alert("Empleado creado correctamente");
+    alert(state.personnelViewMode === "edit" ? "Empleado actualizado correctamente" : "Empleado creado correctamente");
 
     state.personnelDraft = {};
     state.personnelCreateTab = "identificacion";
-    state.activeSubmodule = "consultar_empleados";
+    state.personnelViewMode = "table";
+    state.personnelEditingId = null;
+
+    state.activeModule = "gestion_personal";
+    state.expandedModule = "gestion_personal";
+    state.activeSubmodule = null;
+
     await openModule("gestion_personal");
   } catch (error) {
     alert(error.message);
+  }
+}
+
+async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
+  if (moduleKey === "gestion_personal") {
+    if (state.personnelViewMode === "table") {
+      return await renderPersonnelTableModule();
+    }
+
+    return await loadPersonnelModule(
+      moduleConfig,
+      state.personnelViewMode === "edit" ? "editar_empleado" : "crear_empleado"
+    );
+  }
+
+  if (!submoduleKey) {
+    return `
+      <article class="info-card">
+        <p>Selecciona una acción del menú izquierdo.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "dashboard") {
+    return await loadDashboardModule();
+  }
+
+  if (moduleKey === "hoja_vida_documentos") {
+    if (submoduleKey === "ver_hoja_vida") {
+      return await loadResumeModule();
+    }
+
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio quedó reservado dentro de Hoja de Vida y Documentos.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "contratos_vinculacion") {
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio pertenece al proceso contractual y de vinculación.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "cobertura_calculadora") {
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio concentrará la lógica operativa de cobertura y cálculo de personal.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "nomina_novedades") {
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio organizará el proceso específico dentro de Nómina y Novedades.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "capacitaciones_asistencia") {
+    if (submoduleKey === "programar_capacitacion") {
+      return await loadTrainingsModule();
+    }
+
+    if (submoduleKey === "registrar_asistencia") {
+      return await loadTrainingAttendanceModule();
+    }
+
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio quedará enfocado en la gestión de capacitación y trazabilidad.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "informes_reportes") {
+    return await loadReportsModule();
+  }
+
+  if (moduleKey === "solicitudes_empleados") {
+    return `
+      <article class="info-card">
+        <h3>${prettyLabel(submoduleKey)}</h3>
+        <p>Este espacio quedará dedicado a la atención de solicitudes del empleado.</p>
+      </article>
+    `;
+  }
+
+  if (moduleKey === "administracion_configuraciones") {
+    if (submoduleKey === "gestion_usuarios") {
+      return `
+        <article class="info-card">
+          <h3>Gestión de usuarios</h3>
+          <p>Usa los paneles administrativos para crear, editar y administrar usuarios del sistema.</p>
+        </article>
+      `;
+    }
+
+    if (submoduleKey === "roles_permisos") {
+      return `
+        <article class="info-card">
+          <h3>Roles y permisos</h3>
+          <p>Este espacio quedará dedicado a la configuración fina de accesos por rol y módulo.</p>
+        </article>
+      `;
+    }
+
+    if (submoduleKey === "probar_acceso") {
+      return `
+        <article class="info-card">
+          <h3>Probar acceso</h3>
+          <p>Usa el panel de validación de acceso para simular permisos y verificar restricciones.</p>
+        </article>
+      `;
+    }
+
+    if (submoduleKey === "auditoria") {
+      return `
+        <article class="info-card">
+          <h3>Auditoría</h3>
+          <p>Este espacio quedará reservado para la trazabilidad de acciones sensibles del sistema.</p>
+        </article>
+      `;
+    }
+
+    if (submoduleKey === "bloqueos") {
+      return `
+        <article class="info-card">
+          <h3>Bloqueos</h3>
+          <p>Este espacio quedará dedicado a revisar bloqueos, intentos fallidos y desbloqueos manuales.</p>
+        </article>
+      `;
+    }
+  }
+
+  return `
+    <article class="info-card">
+      <h3>${prettyLabel(submoduleKey)}</h3>
+      <p>Espacio disponible para desarrollo.</p>
+    </article>
+  `;
+}
+
+async function openModule(moduleKey) {
+  state.activeModule = moduleKey;
+  state.expandedModule = moduleKey;
+
+  if (!state.access) {
+    renderEmptyWorkspace();
+    return;
+  }
+
+  const moduleConfig = state.access.modules.find((item) => item.module === moduleKey);
+  if (!moduleConfig) {
+    renderEmptyWorkspace();
+    return;
+  }
+
+  const view = moduleViews[moduleKey] || {
+    title: prettyLabel(moduleKey),
+    submodules: [],
+  };
+
+  if (
+    moduleKey !== "gestion_personal" &&
+    !state.activeSubmodule &&
+    view.submodules?.length
+  ) {
+    state.activeSubmodule = view.submodules[0].key;
+  }
+
+  syncAdminPanelsVisibility();
+  renderModuleNav(state.access.modules);
+
+  const activeSubmodule = view.submodules?.find(
+    (item) => item.key === state.activeSubmodule
+  );
+
+  const hideWorkspaceHeader = moduleKey === "gestion_personal";
+
+  if (elements.workspace) {
+    elements.workspace.innerHTML = hideWorkspaceHeader
+      ? `
+        <section class="submodule-content">
+          <article class="info-card">
+            <p>Cargando módulo...</p>
+          </article>
+        </section>
+      `
+      : `
+        <h2 class="workspace-title">${view.title}</h2>
+        ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+        <section class="submodule-content">
+          <article class="info-card">
+            <p>Cargando módulo...</p>
+          </article>
+        </section>
+      `;
+  }
+
+  try {
+    const submoduleContentHtml = await renderSubmoduleContent(
+      moduleKey,
+      state.activeSubmodule,
+      moduleConfig
+    );
+
+    if (elements.workspace) {
+      elements.workspace.innerHTML = hideWorkspaceHeader
+        ? `
+          <section class="submodule-content">
+            ${submoduleContentHtml}
+          </section>
+        `
+        : `
+          <h2 class="workspace-title">${view.title}</h2>
+          ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+          <section class="submodule-content">
+            ${submoduleContentHtml}
+          </section>
+        `;
+    }
+  } catch (error) {
+    if (elements.workspace) {
+      elements.workspace.innerHTML = hideWorkspaceHeader
+        ? `
+          <section class="submodule-content">
+            <article class="info-card">
+              <h3>No fue posible cargar este módulo</h3>
+              <p>${error.message}</p>
+            </article>
+          </section>
+        `
+        : `
+          <h2 class="workspace-title">${view.title}</h2>
+          ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
+          <section class="submodule-content">
+            <article class="info-card">
+              <h3>No fue posible cargar este módulo</h3>
+              <p>${error.message}</p>
+            </article>
+          </section>
+        `;
+    }
+  }
+}
+
+function renderAdminUsers() {
+  if (!elements.adminUsersList || !elements.adminCount) return;
+
+  elements.adminCount.textContent = `${state.users.length} usuarios`;
+  elements.adminUsersList.innerHTML = state.users
+    .map(
+      (user) => `
+        <article class="admin-user-card">
+          <div class="admin-user-head">
+            <div>
+              <strong>${user.name}</strong>
+              <p class="soft tiny">Usuario: ${user.username} | Rol: ${prettyLabel(user.role)}</p>
+            </div>
+            <span class="pill">ID ${user.id}</span>
+          </div>
+
+          <form class="admin-user-form" data-user-id="${user.id}">
+            <label>
+              Nombre completo
+              <input name="name" type="text" value="${user.name}" required />
+            </label>
+
+            <label>
+              Usuario
+              <input name="username" type="text" value="${user.username}" required />
+            </label>
+
+            <label>
+              Rol
+              <select name="role">
+                ${state.availableRoles
+                  .map(
+                    (role) =>
+                      `<option value="${role}" ${role === user.role ? "selected" : ""}>${prettyLabel(role)}</option>`
+                  )
+                  .join("")}
+              </select>
+            </label>
+
+            <label>
+              Empresa
+              <select name="companyId">
+                <option value="">Sin asignar</option>
+                ${state.companies
+                  .map(
+                    (company) =>
+                      `<option value="${company.id}" ${company.id === user.companyId ? "selected" : ""}>${company.name} (${company.id})</option>`
+                  )
+                  .join("")}
+              </select>
+            </label>
+
+            <label>
+              Contrato
+              <select name="contractId">
+                <option value="">Sin asignar</option>
+                ${state.contracts
+                  .map(
+                    (contract) =>
+                      `<option value="${contract.id}" ${contract.id === user.contractId ? "selected" : ""}>${contract.name} (${contract.id})</option>`
+                  )
+                  .join("")}
+              </select>
+            </label>
+
+            <label>
+              Nueva clave
+              <input name="password" type="password" placeholder="Solo si la quieres cambiar" />
+            </label>
+
+            <label class="wide">
+              Municipios asignados
+              <input
+                name="assignedMunicipalities"
+                type="text"
+                value="${(user.assignedMunicipalities || []).join(", ")}"
+                placeholder="Ejemplo: Bogotá, Soacha"
+              />
+            </label>
+
+            <div class="admin-actions wide">
+              <button type="submit" class="btn btn-primary">Guardar cambios</button>
+            </div>
+          </form>
+        </article>
+      `
+    )
+    .join("");
+
+  elements.adminUsersList
+    .querySelectorAll(".admin-user-form")
+    .forEach((form) => form.addEventListener("submit", handleUpdateUser));
+}
+
+async function loadAdminData() {
+  const [rolesPayload, usersPayload] = await Promise.all([
+    apiFetch("/roles"),
+    apiFetch("/users"),
+  ]);
+
+  state.availableRoles = rolesPayload.roles;
+  state.users = usersPayload.users;
+
+  fillSelect(elements.createRole, state.availableRoles);
+  renderAdminUsers();
+}
+
+async function loadReferenceData() {
+  const [companiesPayload, contractsPayload] = await Promise.all([
+    apiFetch("/companies"),
+    apiFetch("/contracts"),
+  ]);
+
+  state.companies = companiesPayload.companies;
+  state.contracts = contractsPayload.contracts;
+
+  fillOptionSelect(elements.createCompanyId, state.companies, {
+    valueKey: "id",
+    labelBuilder: (company) => `${company.name} (${company.id})`,
+    includeEmpty: true,
+  });
+
+  fillOptionSelect(elements.createContractId, state.contracts, {
+    valueKey: "id",
+    labelBuilder: (contract) => `${contract.name} (${contract.id})`,
+    includeEmpty: true,
+  });
+}
+
+async function renderDashboard(user, access) {
+  state.currentUser = user;
+  state.access = access;
+  await loadReferenceData();
+
+  elements.loginWrap?.classList.add("hidden");
+  elements.dashboard?.classList.remove("hidden");
+
+  if (elements.welcomeName) elements.welcomeName.textContent = user.name || "Usuario";
+  if (elements.welcomeRole) elements.welcomeRole.textContent = prettyLabel(user.role);
+
+  if (elements.companyValue) {
+    elements.companyValue.textContent = formatCompany(user.companyId);
+  }
+
+  if (elements.contractValue) {
+    elements.contractValue.textContent = formatContract(user.contractId);
+  }
+
+  if (elements.municipalityValue) {
+    elements.municipalityValue.textContent =
+      user.assignedMunicipalities && user.assignedMunicipalities.length
+        ? user.assignedMunicipalities.join(", ")
+        : "Sin restricción";
+  }
+
+  if (elements.topUser) {
+    elements.topUser.textContent = user.name || "Usuario";
+    elements.topUser.title = `${user.name || "Usuario"} · ${prettyLabel(user.role)}`;
+  }
+
+  if (elements.topCompany) {
+    elements.topCompany.textContent = formatCompany(user.companyId);
+  }
+
+  if (elements.topContract) {
+    elements.topContract.textContent = formatContract(user.contractId);
+  }
+
+  if (elements.topMunicipality) {
+    const municipalitiesText =
+      user.assignedMunicipalities && user.assignedMunicipalities.length
+        ? user.assignedMunicipalities.join(", ")
+        : "Sin restricción";
+
+    elements.topMunicipality.textContent = municipalitiesText;
+    elements.topMunicipality.title = municipalitiesText;
+  }
+
+  state.activeModule = null;
+  state.expandedModule = null;
+  state.activeSubmodule = null;
+
+  renderModuleNav(access.modules || []);
+
+  fillSelect(
+    elements.moduleSelect,
+    (access.modules || []).map((item) => item.module)
+  );
+
+  const isAdministrator = user.role === "administrador";
+
+  if (isAdministrator) {
+    await loadAdminData();
+  }
+
+  renderEmptyWorkspace();
+  syncAdminPanelsVisibility();
+}
+
+function resetDashboard() {
+  state.currentUser = null;
+  state.access = null;
+  state.activeModule = null;
+  state.expandedModule = null;
+  state.activeSubmodule = null;
+  state.token = "";
+  state.users = [];
+  state.personnelCreateTab = "identificacion";
+  state.personnelDraft = {};
+
+  localStorage.removeItem("empiria_token");
+  localStorage.removeItem("empiria_user");
+  localStorage.removeItem("empiria_access");
+
+  resetMfaState();
+
+  elements.dashboard?.classList.add("hidden");
+  elements.loginWrap?.classList.remove("hidden");
+  elements.accessResult?.classList.add("hidden");
+
+  toggleAdminPanel(false);
+  toggleAccessPanel(false);
+
+  if (elements.adminUsersList) elements.adminUsersList.innerHTML = "";
+  if (elements.adminCount) elements.adminCount.textContent = "0 usuarios";
+  if (elements.moduleNav) elements.moduleNav.innerHTML = "";
+
+  renderEmptyWorkspace();
+
+  if (elements.topUser) elements.topUser.textContent = "Usuario";
+  if (elements.topCompany) elements.topCompany.textContent = "-";
+  if (elements.topContract) elements.topContract.textContent = "-";
+  if (elements.topMunicipality) elements.topMunicipality.textContent = "Sin restricción";
+
+  showAdminCreateMessage("", false);
+  showLoginMessage("", false);
+}
+
+async function loadModulesCatalog() {
+  const payload = await apiFetch("/modules");
+  state.availableModules = payload.modules || [];
+  state.availableActions = payload.actions || [];
+  fillSelect(elements.actionSelect, state.availableActions);
+}
+
+async function tryRestoreSession() {
+  if (!state.token) {
+    elements.bootScreen?.classList.add("hidden");
+    elements.loginWrap?.classList.remove("hidden");
+    elements.dashboard?.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const payload = await apiFetch("/me");
+    await renderDashboard(payload.user, payload.access);
+  } catch (error) {
+    console.error("Error restaurando sesión:", error);
+    resetDashboard();
+  } finally {
+    elements.bootScreen?.classList.add("hidden");
+  }
+}
+
+async function handleCreateUser(event) {
+  event.preventDefault();
+
+  const formData = new FormData(elements.createUserForm);
+  const payload = {
+    name: formData.get("name"),
+    username: formData.get("username"),
+    password: formData.get("password"),
+    role: formData.get("role"),
+    companyId: formData.get("companyId") ? Number(formData.get("companyId")) : null,
+    contractId: formData.get("contractId") ? Number(formData.get("contractId")) : null,
+    assignedMunicipalities: toMunicipalityArray(formData.get("assignedMunicipalities")),
+  };
+
+  try {
+    await apiFetch("/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    elements.createUserForm.reset();
+    showAdminCreateMessage("Usuario creado correctamente", false);
+    await loadAdminData();
+  } catch (error) {
+    showAdminCreateMessage(error.message, true);
+  }
+}
+
+async function handleUpdateUser(event) {
+  event.preventDefault();
+
+  const form = event.currentTarget;
+  const userId = Number(form.dataset.userId);
+  const formData = new FormData(form);
+
+  const payload = {
+    name: formData.get("name"),
+    username: formData.get("username"),
+    role: formData.get("role"),
+    companyId: formData.get("companyId") ? Number(formData.get("companyId")) : null,
+    contractId: formData.get("contractId") ? Number(formData.get("contractId")) : null,
+    assignedMunicipalities: toMunicipalityArray(formData.get("assignedMunicipalities")),
+  };
+
+  if (formData.get("password")) {
+    payload.password = formData.get("password");
+  }
+
+  try {
+    await apiFetch(`/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+
+    showAdminCreateMessage("Cambios guardados correctamente", false);
+    await loadAdminData();
+  } catch (error) {
+    showAdminCreateMessage(error.message, true);
   }
 }
 
@@ -2164,553 +3320,17 @@ function syncAdminPanelsVisibility() {
   toggleAccessPanel(Boolean(isAdministrator && isAdminModuleActive));
 }
 
-async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
-  if (!submoduleKey) {
-    return `
-      <article class="info-card">
-        <p>Selecciona una acción del menú izquierdo.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "dashboard") {
-    return await loadDashboardModule();
-  }
-
-  if (moduleKey === "gestion_personal") {
-    if (
-      submoduleKey === "consultar_empleados" ||
-      submoduleKey === "editar_empleado" ||
-      submoduleKey === "crear_empleado" ||
-      submoduleKey === "cambiar_estado"
-    ) {
-      return await loadPersonnelModule(moduleConfig, submoduleKey);
-    }
-  }
-
-  if (moduleKey === "hoja_vida_documentos") {
-    if (submoduleKey === "ver_hoja_vida") {
-      return await loadResumeModule();
-    }
-
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio quedó reservado dentro de Hoja de Vida y Documentos.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "contratos_vinculacion") {
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio pertenece al proceso contractual y de vinculación.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "cobertura_calculadora") {
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio concentrará la lógica operativa de cobertura y cálculo de personal.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "nomina_novedades") {
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio organizará el proceso específico dentro de Nómina y Novedades.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "capacitaciones_asistencia") {
-    if (submoduleKey === "programar_capacitacion") {
-      return await loadTrainingsModule();
-    }
-
-    if (submoduleKey === "registrar_asistencia") {
-      return await loadTrainingAttendanceModule();
-    }
-
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio quedará enfocado en la gestión de capacitación y trazabilidad.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "informes_reportes") {
-    return await loadReportsModule();
-  }
-
-  if (moduleKey === "solicitudes_empleados") {
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio quedará dedicado a la atención de solicitudes del empleado.</p>
-      </article>
-    `;
-  }
-
-  if (moduleKey === "administracion_configuraciones") {
-    if (submoduleKey === "gestion_usuarios") {
-      return `
-        <article class="info-card">
-          <h3>Gestión de usuarios</h3>
-          <p>Usa los paneles administrativos para crear, editar y administrar usuarios del sistema.</p>
-        </article>
-      `;
-    }
-
-    if (submoduleKey === "roles_permisos") {
-      return `
-        <article class="info-card">
-          <h3>Roles y permisos</h3>
-          <p>Este espacio quedará dedicado a la configuración fina de accesos por rol y módulo.</p>
-        </article>
-      `;
-    }
-
-    if (submoduleKey === "probar_acceso") {
-      return `
-        <article class="info-card">
-          <h3>Probar acceso</h3>
-          <p>Usa el panel de validación de acceso para simular permisos y verificar restricciones.</p>
-        </article>
-      `;
-    }
-
-    if (submoduleKey === "auditoria") {
-      return `
-        <article class="info-card">
-          <h3>Auditoría</h3>
-          <p>Este espacio quedará reservado para la trazabilidad de acciones sensibles del sistema.</p>
-        </article>
-      `;
-    }
-
-    if (submoduleKey === "bloqueos") {
-      return `
-        <article class="info-card">
-          <h3>Bloqueos</h3>
-          <p>Este espacio quedará dedicado a revisar bloqueos, intentos fallidos y desbloqueos manuales.</p>
-        </article>
-      `;
-    }
-  }
-
-  return `
-    <article class="info-card">
-      <h3>${prettyLabel(submoduleKey)}</h3>
-      <p>Espacio disponible para desarrollo.</p>
-    </article>
-  `;
-}
-
-async function openModule(moduleKey) {
-  state.activeModule = moduleKey;
-  state.expandedModule = moduleKey;
-
-  if (!state.access) {
-    renderEmptyWorkspace();
-    return;
-  }
-
-  const moduleConfig = state.access.modules.find((item) => item.module === moduleKey);
-  if (!moduleConfig) {
-    renderEmptyWorkspace();
-    return;
-  }
-
-  const view = moduleViews[moduleKey] || {
-    title: prettyLabel(moduleKey),
-    submodules: [],
-  };
-
-  if (!state.activeSubmodule && view.submodules?.length) {
-    state.activeSubmodule = view.submodules[0].key;
-  }
-
-  syncAdminPanelsVisibility();
-  renderModuleNav(state.access.modules);
-
-  const activeSubmodule = view.submodules?.find(
-    (item) => item.key === state.activeSubmodule
-  );
-
-  if (elements.workspace) {
-    elements.workspace.innerHTML = `
-      <h2 class="workspace-title">${view.title}</h2>
-      ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
-      <section class="submodule-content">
-        <article class="info-card">
-          <p>Cargando módulo...</p>
-        </article>
-      </section>
-    `;
-  }
-
-  try {
-    const submoduleContentHtml = await renderSubmoduleContent(
-      moduleKey,
-      state.activeSubmodule,
-      moduleConfig
-    );
-
-    if (elements.workspace) {
-      elements.workspace.innerHTML = `
-        <h2 class="workspace-title">${view.title}</h2>
-        ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
-        <section class="submodule-content">
-          ${submoduleContentHtml}
-        </section>
-      `;
-    }
-  } catch (error) {
-    if (elements.workspace) {
-      elements.workspace.innerHTML = `
-        <h2 class="workspace-title">${view.title}</h2>
-        ${activeSubmodule ? `<p class="subtitle workspace-subtitle">${activeSubmodule.title}</p>` : ""}
-        <section class="submodule-content">
-          <article class="info-card">
-            <h3>No fue posible cargar este módulo</h3>
-            <p>${error.message}</p>
-          </article>
-        </section>
-      `;
-    }
-  }
-}
-
-function renderAdminUsers() {
-  if (!elements.adminUsersList || !elements.adminCount) return;
-
-  elements.adminCount.textContent = `${state.users.length} usuarios`;
-  elements.adminUsersList.innerHTML = state.users
-    .map(
-      (user) => `
-        <article class="admin-user-card">
-          <div class="admin-user-head">
-            <div>
-              <strong>${user.name}</strong>
-              <p class="soft tiny">Usuario: ${user.username} | Rol: ${prettyLabel(user.role)}</p>
-            </div>
-            <span class="pill">ID ${user.id}</span>
-          </div>
-
-          <form class="admin-user-form" data-user-id="${user.id}">
-            <label>
-              Nombre completo
-              <input name="name" type="text" value="${user.name}" required />
-            </label>
-
-            <label>
-              Usuario
-              <input name="username" type="text" value="${user.username}" required />
-            </label>
-
-            <label>
-              Rol
-              <select name="role">
-                ${state.availableRoles
-                  .map(
-                    (role) =>
-                      `<option value="${role}" ${role === user.role ? "selected" : ""}>${prettyLabel(role)}</option>`
-                  )
-                  .join("")}
-              </select>
-            </label>
-
-            <label>
-              Empresa
-              <select name="companyId">
-                <option value="">Sin asignar</option>
-                ${state.companies
-                  .map(
-                    (company) =>
-                      `<option value="${company.id}" ${company.id === user.companyId ? "selected" : ""}>${company.name} (${company.id})</option>`
-                  )
-                  .join("")}
-              </select>
-            </label>
-
-            <label>
-              Contrato
-              <select name="contractId">
-                <option value="">Sin asignar</option>
-                ${state.contracts
-                  .map(
-                    (contract) =>
-                      `<option value="${contract.id}" ${contract.id === user.contractId ? "selected" : ""}>${contract.name} (${contract.id})</option>`
-                  )
-                  .join("")}
-              </select>
-            </label>
-
-            <label>
-              Nueva clave
-              <input name="password" type="password" placeholder="Solo si la quieres cambiar" />
-            </label>
-
-            <label class="wide">
-              Municipios asignados
-              <input
-                name="assignedMunicipalities"
-                type="text"
-                value="${(user.assignedMunicipalities || []).join(", ")}"
-                placeholder="Ejemplo: Bogotá, Soacha"
-              />
-            </label>
-
-            <div class="admin-actions wide">
-              <button type="submit" class="btn btn-primary">Guardar cambios</button>
-            </div>
-          </form>
-        </article>
-      `
-    )
-    .join("");
-
-  elements.adminUsersList
-    .querySelectorAll(".admin-user-form")
-    .forEach((form) => form.addEventListener("submit", handleUpdateUser));
-}
-
-async function loadAdminData() {
-  const [rolesPayload, usersPayload] = await Promise.all([
-    apiFetch("/roles"),
-    apiFetch("/users"),
-  ]);
-
-  state.availableRoles = rolesPayload.roles;
-  state.users = usersPayload.users;
-
-  fillSelect(elements.createRole, state.availableRoles);
-  renderAdminUsers();
-}
-
-async function loadReferenceData() {
-  const [companiesPayload, contractsPayload] = await Promise.all([
-    apiFetch("/companies"),
-    apiFetch("/contracts"),
-  ]);
-
-  state.companies = companiesPayload.companies;
-  state.contracts = contractsPayload.contracts;
-
-  fillOptionSelect(elements.createCompanyId, state.companies, {
-    valueKey: "id",
-    labelBuilder: (company) => `${company.name} (${company.id})`,
-    includeEmpty: true,
-  });
-
-  fillOptionSelect(elements.createContractId, state.contracts, {
-    valueKey: "id",
-    labelBuilder: (contract) => `${contract.name} (${contract.id})`,
-    includeEmpty: true,
-  });
-}
-
-async function renderDashboard(user, access) {
-  state.currentUser = user;
-  state.access = access;
-  await loadReferenceData();
-
-  elements.loginWrap?.classList.add("hidden");
-  elements.dashboard?.classList.remove("hidden");
-
-  if (elements.welcomeName) elements.welcomeName.textContent = user.name || "Usuario";
-  if (elements.welcomeRole) elements.welcomeRole.textContent = prettyLabel(user.role);
-
-  if (elements.companyValue) {
-    elements.companyValue.textContent = formatCompany(user.companyId);
-  }
-
-  if (elements.contractValue) {
-    elements.contractValue.textContent = formatContract(user.contractId);
-  }
-
-  if (elements.municipalityValue) {
-    elements.municipalityValue.textContent =
-      user.assignedMunicipalities && user.assignedMunicipalities.length
-        ? user.assignedMunicipalities.join(", ")
-        : "Sin restricción";
-  }
-
-  if (elements.topUser) {
-    elements.topUser.textContent = `${user.name} · ${prettyLabel(user.role)}`;
-  }
-
-  if (elements.topCompany) {
-    elements.topCompany.textContent = formatCompany(user.companyId);
-  }
-
-  if (elements.topContract) {
-    elements.topContract.textContent = formatContract(user.contractId);
-  }
-
-  if (elements.topMunicipality) {
-    elements.topMunicipality.textContent =
-      user.assignedMunicipalities && user.assignedMunicipalities.length
-        ? user.assignedMunicipalities.join(", ")
-        : "Sin restricción";
-  }
-
-  state.activeModule = null;
-  state.expandedModule = null;
-  state.activeSubmodule = null;
-
-  renderModuleNav(access.modules || []);
-
-  fillSelect(
-    elements.moduleSelect,
-    (access.modules || []).map((item) => item.module)
-  );
-
-  const isAdministrator = user.role === "administrador";
-
-  if (isAdministrator) {
-    await loadAdminData();
-  }
-
-  renderEmptyWorkspace();
-  syncAdminPanelsVisibility();
-}
-
-function resetDashboard() {
-  state.currentUser = null;
-  state.access = null;
-  state.activeModule = null;
-  state.expandedModule = null;
-  state.activeSubmodule = null;
-  state.token = "";
-  state.users = [];
-  state.personnelCreateTab = "identificacion";
-  state.personnelDraft = {};
-
-  localStorage.removeItem("empiria_token");
-  localStorage.removeItem("empiria_user");
-  localStorage.removeItem("empiria_access");
-
-  resetMfaState();
-
-  elements.dashboard?.classList.add("hidden");
-  elements.loginWrap?.classList.remove("hidden");
-  elements.accessResult?.classList.add("hidden");
-
-  toggleAdminPanel(false);
-  toggleAccessPanel(false);
-
-  if (elements.adminUsersList) elements.adminUsersList.innerHTML = "";
-  if (elements.adminCount) elements.adminCount.textContent = "0 usuarios";
-  if (elements.moduleNav) elements.moduleNav.innerHTML = "";
-
-  renderEmptyWorkspace();
-
-  if (elements.topUser) elements.topUser.textContent = "Usuario · Rol";
-  if (elements.topCompany) elements.topCompany.textContent = "-";
-  if (elements.topContract) elements.topContract.textContent = "-";
-  if (elements.topMunicipality) elements.topMunicipality.textContent = "Sin restricción";
-
-  showAdminCreateMessage("", false);
-  showLoginMessage("", false);
-}
-
-async function loadModulesCatalog() {
-  const payload = await apiFetch("/modules");
-  state.availableModules = payload.modules || [];
-  state.availableActions = payload.actions || [];
-  fillSelect(elements.actionSelect, state.availableActions);
-}
-
-async function tryRestoreSession() {
-  if (!state.token) return;
-
-  try {
-    const payload = await apiFetch("/me");
-    await renderDashboard(payload.user, payload.access);
-  } catch {
-    resetDashboard();
-  }
-}
-
-async function handleCreateUser(event) {
-  event.preventDefault();
-
-  const formData = new FormData(elements.createUserForm);
-  const payload = {
-    name: formData.get("name"),
-    username: formData.get("username"),
-    password: formData.get("password"),
-    role: formData.get("role"),
-    companyId: formData.get("companyId") ? Number(formData.get("companyId")) : null,
-    contractId: formData.get("contractId") ? Number(formData.get("contractId")) : null,
-    assignedMunicipalities: toMunicipalityArray(formData.get("assignedMunicipalities")),
-  };
-
-  try {
-    await apiFetch("/users", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-
-    elements.createUserForm.reset();
-    showAdminCreateMessage("Usuario creado correctamente", false);
-    await loadAdminData();
-  } catch (error) {
-    showAdminCreateMessage(error.message, true);
-  }
-}
-
-async function handleUpdateUser(event) {
-  event.preventDefault();
-
-  const form = event.currentTarget;
-  const userId = Number(form.dataset.userId);
-  const formData = new FormData(form);
-
-  const payload = {
-    name: formData.get("name"),
-    username: formData.get("username"),
-    role: formData.get("role"),
-    companyId: formData.get("companyId") ? Number(formData.get("companyId")) : null,
-    contractId: formData.get("contractId") ? Number(formData.get("contractId")) : null,
-    assignedMunicipalities: toMunicipalityArray(formData.get("assignedMunicipalities")),
-  };
-
-  if (formData.get("password")) {
-    payload.password = formData.get("password");
-  }
-
-  try {
-    await apiFetch(`/users/${userId}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-
-    showAdminCreateMessage("Cambios guardados correctamente", false);
-    await loadAdminData();
-  } catch (error) {
-    showAdminCreateMessage(error.message, true);
-  }
-}
-
 if (elements.loginForm) {
   ensureMfaField();
 
-  elements.loginForm.addEventListener("submit", async (event) => {
+  elements.loginForm.onsubmit = async (event) => {
     event.preventDefault();
 
-    const formData = new FormData(elements.loginForm);
+    const usernameInput = document.getElementById("username");
+    const passwordInput = document.getElementById("password");
 
-    let username = formData.get("username");
-    let password = formData.get("password");
+    let username = usernameInput ? String(usernameInput.value || "").trim() : "";
+    let password = passwordInput ? String(passwordInput.value || "") : "";
 
     if (state.requiresMfa) {
       username = state.tempUsername;
@@ -2767,7 +3387,7 @@ if (elements.loginForm) {
     } catch (error) {
       showLoginMessage(error.message, true);
     }
-  });
+  };
 }
 
 if (elements.logoutButton) {

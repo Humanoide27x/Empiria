@@ -1,6 +1,5 @@
 <!doctype html>
 <html lang="es">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,48 +7,76 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
+    rel="stylesheet"
+  />
 
   <link rel="stylesheet" href="/styles.css" />
 </head>
-
 <body>
   <div class="bg-blur blur-a"></div>
   <div class="bg-blur blur-b"></div>
 
   <main class="app-shell">
     <!-- LOGIN -->
-    <section id="loginWrap" class="login-screen">
+    <section id="loginWrap" class="login-screen hidden">
       <div class="login-card">
         <div class="login-brand">
           <img src="/logoempiria.png" class="logo-login" alt="Logo Empiria" />
         </div>
 
+      <div id="bootScreen" class="boot-screen">
+        <div class="boot-card">
+          <img src="/logoempiria.png" alt="Empiria" class="boot-logo" />
+          <p class="boot-text">Cargando EMPIRIA...</p>
+        </div>
+      </div>
+
         <div class="login-header">
           <p class="eyebrow">Acceso seguro</p>
           <h1>Iniciar sesión</h1>
           <p class="subtitle">
-            Accede a tu panel operativo y visualiza únicamente los módulos
-            habilitados según tu rol.
+            Accede a tu panel operativo y visualiza únicamente los módulos habilitados según tu rol.
           </p>
         </div>
 
         <form id="loginForm" class="form-grid">
-          <label>
+          <label for="username">
             Usuario
-            <input id="username" name="username" type="text" placeholder="Ingresa tu usuario" required />
+            <input
+              id="username"
+              name="username"
+              type="text"
+              placeholder="Ingresa tu usuario"
+              autocomplete="username"
+              required
+            />
           </label>
 
-          <label>
+          <label for="password">
             Contraseña
-            <input id="password" name="password" type="password" placeholder="Ingresa tu contraseña" required />
+            <input
+              id="password"
+              name="password"
+              type="password"
+              placeholder="Ingresa tu contraseña"
+              autocomplete="current-password"
+              required
+            />
           </label>
 
-          <!-- MFA -->
-          <label id="mfaFieldWrap" class="hidden">
+          <label id="mfaFieldWrap" class="hidden" for="mfaCode">
             Código MFA
-            <input id="mfaCode" name="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code"
-              placeholder="Ingresa el código de 6 dígitos" maxlength="6" />
+            <input
+              id="mfaCode"
+              name="mfaCode"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="Ingresa el código de 6 dígitos"
+              maxlength="6"
+            />
           </label>
 
           <button type="submit" class="btn btn-primary">
@@ -72,6 +99,7 @@
 
           <div>
             <p class="brand-title">EMPIRIA</p>
+            <p class="brand-subtitle">Gestión integral</p>
           </div>
         </div>
 
@@ -84,7 +112,7 @@
         <nav id="moduleNav" class="sidebar-nav"></nav>
 
         <div class="sidebar-footer">
-          <button id="logoutButton" class="btn btn-secondary btn-full">
+          <button id="logoutButton" class="btn btn-secondary btn-full" type="button">
             Cerrar sesión
           </button>
         </div>
@@ -94,32 +122,46 @@
       <section class="main-panel">
         <!-- TOPBAR -->
         <header class="topbar-pro">
-          <input class="search" type="text" placeholder="Buscar personal, documentos..." />
-
           <div class="topbar-center topbar-inline">
             <div class="topbar-item topbar-item-company">
               <span>Empresa:</span>
-              <strong id="topCompany">-</strong>
+              <strong id="topCompany" title="-">-</strong>
             </div>
 
-            <div class="topbar-separator">|</div>
+            <div class="topbar-separator" aria-hidden="true">|</div>
 
             <div class="topbar-item topbar-item-contract">
               <span>Contrato:</span>
-              <strong id="topContract">-</strong>
+              <strong id="topContract" title="-">-</strong>
             </div>
 
-            <div class="topbar-separator">|</div>
+            <div class="topbar-separator" aria-hidden="true">|</div>
 
             <div class="topbar-item topbar-item-municipality">
               <span>Municipios:</span>
-              <strong id="topMunicipality">Sin restricción</strong>
+              <strong id="topMunicipality" title="Sin restricción">Sin restricción</strong>
+            </div>
+          </div>
+
+          <div class="topbar-actions">
+            <input
+              class="search"
+              type="text"
+              placeholder="Buscar personal, documentos..."
+              aria-label="Buscar"
+            />
+
+            <div class="notif" aria-hidden="true">🔔</div>
+
+            <div class="user-menu" title="Usuario actual">
+              <span>Usuario:</span>
+              <strong id="topUser">-</strong>
             </div>
           </div>
         </header>
 
         <!-- RESUMEN -->
-        <section class="summary-grid hidden"></section>
+        <section class="summary-grid hidden" aria-hidden="true"></section>
 
         <!-- WORKSPACE -->
         <section class="workspace">
@@ -147,29 +189,33 @@
           </div>
 
           <form id="accessForm" class="form-grid two-cols">
-            <label>
+            <label for="moduleSelect">
               Módulo
               <select id="moduleSelect" required></select>
             </label>
 
-            <label>
+            <label for="actionSelect">
               Acción
               <select id="actionSelect" required></select>
             </label>
 
-            <label>
+            <label for="companyInput">
               Empresa
               <input id="companyInput" type="number" placeholder="Ej: 10" />
             </label>
 
-            <label>
+            <label for="contractInput">
               Contrato
               <input id="contractInput" type="number" placeholder="Ej: 1001" />
             </label>
 
-            <label class="full">
+            <label class="full" for="municipalityInput">
               Municipio
-              <input id="municipalityInput" type="text" placeholder="Ej: Acacías" />
+              <input
+                id="municipalityInput"
+                type="text"
+                placeholder="Ej: Acacías"
+              />
             </label>
 
             <button type="submit" class="btn btn-primary full">
@@ -187,7 +233,8 @@
               <p class="eyebrow">Administrador</p>
               <h3>Gestión de usuarios</h3>
             </div>
-            <button id="refreshUsersButton" class="btn btn-secondary">
+
+            <button id="refreshUsersButton" class="btn btn-secondary" type="button">
               Actualizar lista
             </button>
           </div>
@@ -197,41 +244,62 @@
               <h3>Crear usuario</h3>
 
               <form id="createUserForm" class="form-grid two-cols">
-                <label>
+                <label for="createName">
                   Nombre completo
-                  <input id="createName" name="name" type="text" placeholder="Ej: Ana Pérez" required />
+                  <input
+                    id="createName"
+                    name="name"
+                    type="text"
+                    placeholder="Ej: Ana Pérez"
+                    required
+                  />
                 </label>
 
-                <label>
+                <label for="createUsername">
                   Usuario
-                  <input id="createUsername" name="username" type="text" placeholder="Ej: ana.perez" required />
+                  <input
+                    id="createUsername"
+                    name="username"
+                    type="text"
+                    placeholder="Ej: ana.perez"
+                    required
+                  />
                 </label>
 
-                <label>
+                <label for="createPassword">
                   Contraseña
-                  <input id="createPassword" name="password" type="password" placeholder="Crea una contraseña"
-                    required />
+                  <input
+                    id="createPassword"
+                    name="password"
+                    type="password"
+                    placeholder="Crea una contraseña"
+                    required
+                  />
                 </label>
 
-                <label>
+                <label for="createRole">
                   Rol
                   <select id="createRole" name="role" required></select>
                 </label>
 
-                <label>
+                <label for="createCompanyId">
                   Empresa
                   <select id="createCompanyId" name="companyId"></select>
                 </label>
 
-                <label>
+                <label for="createContractId">
                   Contrato
                   <select id="createContractId" name="contractId"></select>
                 </label>
 
-                <label class="full">
+                <label class="full" for="createMunicipalities">
                   Municipios asignados
-                  <input id="createMunicipalities" name="assignedMunicipalities" type="text"
-                    placeholder="Ej: Acacías, Villavicencio" />
+                  <input
+                    id="createMunicipalities"
+                    name="assignedMunicipalities"
+                    type="text"
+                    placeholder="Ej: Acacías, Villavicencio"
+                  />
                 </label>
 
                 <button type="submit" class="btn btn-primary">
@@ -258,5 +326,4 @@
 
   <script src="/app.js"></script>
 </body>
-
 </html>

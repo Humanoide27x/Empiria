@@ -1,2 +1,5 @@
 node_modules
 .env
+empiria_db.sql
+data/access_logs.json
+data/login_attempts.json

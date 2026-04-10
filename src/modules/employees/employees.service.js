@@ -83,6 +83,7 @@ function buildFullName(payload = {}) {
   const firstName = firstNonEmpty(
     payload.firstName,
     payload.primerNombre,
+    payload.primer_nombre,
     payload.nombre1,
     payload.nombrePrimero
   );
@@ -90,6 +91,7 @@ function buildFullName(payload = {}) {
   const secondName = firstNonEmpty(
     payload.secondName,
     payload.segundoNombre,
+    payload.segundo_nombre,
     payload.nombre2
   );
 
@@ -98,12 +100,14 @@ function buildFullName(payload = {}) {
     payload.apellido,
     payload.apellidos,
     payload.primerApellido,
+    payload.primer_apellido,
     payload.apellido1
   );
 
   const secondLastName = firstNonEmpty(
     payload.secondLastName,
     payload.segundoApellido,
+    payload.segundo_apellido,
     payload.apellido2
   );
 
@@ -117,11 +121,49 @@ function normalizeEmployeePayload(payload = {}) {
   const now = new Date().toISOString();
   const fullName = buildFullName(payload);
 
+  const firstName = firstNonEmpty(
+    payload.firstName,
+    payload.primerNombre,
+    payload.primer_nombre,
+    payload.nombre1,
+    payload.nombrePrimero
+  );
+
+  const secondName = firstNonEmpty(
+    payload.secondName,
+    payload.segundoNombre,
+    payload.segundo_nombre,
+    payload.nombre2
+  );
+
+  const firstLastName = firstNonEmpty(
+    payload.lastName,
+    payload.apellido,
+    payload.apellidos,
+    payload.primerApellido,
+    payload.primer_apellido,
+    payload.apellido1
+  );
+
+  const secondLastName = firstNonEmpty(
+    payload.secondLastName,
+    payload.segundoApellido,
+    payload.segundo_apellido,
+    payload.apellido2
+  );
+
+  const documentType = firstNonEmpty(
+    payload.documentType,
+    payload.tipo_documento,
+    payload.tipoDocumento
+  );
+
   const documentNumber = firstNonEmpty(
     payload.document,
     payload.documentNumber,
     payload.documento,
     payload.numeroDocumento,
+    payload.numero_documento,
     payload.identification,
     payload.identificationNumber,
     payload.cedula,
@@ -133,12 +175,14 @@ function normalizeEmployeePayload(payload = {}) {
   const municipality = firstNonEmpty(
     payload.municipality,
     payload.municipio,
+    payload.municipio_residencia,
     payload.assignedMunicipality
   );
 
   const companyId = firstNonEmpty(
     payload.companyId,
     payload.company,
+    payload.empresa,
     payload.empresaId,
     payload.company_id
   );
@@ -146,6 +190,7 @@ function normalizeEmployeePayload(payload = {}) {
   const contractId = firstNonEmpty(
     payload.contractId,
     payload.contract,
+    payload.contrato,
     payload.contratoId,
     payload.contract_id
   );
@@ -154,6 +199,7 @@ function normalizeEmployeePayload(payload = {}) {
     payload.email,
     payload.correo,
     payload.correoElectronico,
+    payload.correo_electronico,
     payload.emailAddress
   );
 
@@ -167,6 +213,7 @@ function normalizeEmployeePayload(payload = {}) {
   const position = firstNonEmpty(
     payload.position,
     payload.cargo,
+    payload.cargo_real,
     payload.jobTitle,
     payload.rolCargo
   );
@@ -189,9 +236,17 @@ function normalizeEmployeePayload(payload = {}) {
     nombre: fullName,
     nombreCompleto: fullName,
 
+    primer_nombre: String(firstName || "").trim(),
+    segundo_nombre: String(secondName || "").trim(),
+    primer_apellido: String(firstLastName || "").trim(),
+    segundo_apellido: String(secondLastName || "").trim(),
+
+    tipo_documento: documentType ? String(documentType).trim() : "",
+
     document: documentNumber ? String(documentNumber).trim() : "",
     documentNumber: documentNumber ? String(documentNumber).trim() : "",
     documento: documentNumber ? String(documentNumber).trim() : "",
+    numero_documento: documentNumber ? String(documentNumber).trim() : "",
     cedula: documentNumber ? String(documentNumber).trim() : "",
 
     municipality: municipality ? String(municipality).trim() : "",
@@ -202,15 +257,38 @@ function normalizeEmployeePayload(payload = {}) {
 
     company: payload.company ?? companyId ?? "",
     contract: payload.contract ?? contractId ?? "",
+    empresa: payload.empresa ?? companyId ?? "",
+    contrato: payload.contrato ?? contractId ?? "",
 
     email: email ? String(email).trim() : "",
     correo: email ? String(email).trim() : "",
+    correo_electronico: email ? String(email).trim() : "",
 
     phone: phone ? String(phone).trim() : "",
     telefono: phone ? String(phone).trim() : "",
+    celular: phone ? String(phone).trim() : "",
 
     position: position ? String(position).trim() : "",
     cargo: position ? String(position).trim() : "",
+    cargo_real: firstNonEmpty(payload.cargo_real, payload.cargo, payload.position),
+
+    direccion_residencia: firstNonEmpty(
+      payload.direccion_residencia,
+      payload.address
+    ),
+    barrio_residencia: firstNonEmpty(
+      payload.barrio_residencia,
+      payload.neighborhood
+    ),
+    municipio_residencia: firstNonEmpty(
+      payload.municipio_residencia,
+      payload.residenceMunicipality
+    ),
+
+    eps: firstNonEmpty(payload.eps),
+    fondo_pensiones: firstNonEmpty(payload.fondo_pensiones, payload.pensionFund),
+    caja_compensacion: firstNonEmpty(payload.caja_compensacion, payload.compensationBox),
+    arl: firstNonEmpty(payload.arl),
 
     status: firstNonEmpty(
       payload.status,
@@ -259,6 +337,14 @@ function createEmployee(payload = {}) {
     throw new Error("El nombre del empleado es obligatorio");
   }
 
+  if (!String(newEmployee.primer_nombre || "").trim()) {
+    throw new Error("El primer nombre del empleado es obligatorio");
+  }
+
+  if (!String(newEmployee.primer_apellido || "").trim()) {
+    throw new Error("El primer apellido del empleado es obligatorio");
+  }
+
   const duplicateByDocument =
     newEmployee.document &&
     employees.find(
@@ -267,6 +353,7 @@ function createEmployee(payload = {}) {
           item.document ||
             item.documentNumber ||
             item.documento ||
+            item.numero_documento ||
             item.cedula ||
             ""
         ) === String(newEmployee.document)
@@ -312,6 +399,10 @@ function updateEmployee(id, payload = {}) {
       current.personnelId || current.id || current.employeeId || id,
     createdAt: current.createdAt,
   });
+
+  if (!String(merged.name || "").trim()) {
+    throw new Error("El nombre del empleado es obligatorio");
+  }
 
   employees[index] = merged;
   saveAllPersonnel(employees);
