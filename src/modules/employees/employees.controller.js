@@ -1,237 +1,310 @@
-const { withModuleProtection, getDefaultResourceForUser } = require("../../http/protection");
-const { readJsonBody } = require("../../http/request");
 const {
-  sendJson,
-  sendMethodNotAllowed,
-} = require("../../http/response");
+  listEmployees,
+  getEmployeeById,
+  createEmployee,
+  updateEmployee,
+  deleteEmployee,
+} = require("./employees.service");
 
-const { ACTIONS, MODULES } = require("../../auth/permissions");
-const { evaluateModuleAccess, matchesUserScope } = require("../../auth/access");
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(payload));
+}
 
-const {
-  getPersonnel,
-  createPersonnel,
-  updatePersonnel,
-  removePersonnel,
-} = require("./service");
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
 
-function getScopedPersonnel(user) {
-  return getPersonnel().filter((record) =>
-    matchesUserScope(user, {
-      companyId: record.companyId,
-      contractId: record.contractId,
-      municipality: record.municipality,
-    }),
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+
+    req.on("end", () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(body));
+      } catch (error) {
+        reject(new Error("JSON inválido"));
+      }
+    });
+
+    req.on("error", reject);
+  });
+}
+
+function normalizePathname(req) {
+  const baseUrl = `http://${req.headers.host || "localhost"}`;
+  const url = new URL(req.url, baseUrl);
+  return url.pathname.replace(/\/+$/, "") || "/";
+}
+
+function getEmployeeIdFromPath(pathname) {
+  const parts = pathname.split("/").filter(Boolean);
+
+  if (parts.length < 2) {
+    return null;
+  }
+
+  if (parts[0] !== "personnel" && parts[0] !== "employees") {
+    return null;
+  }
+
+  return parts[1] || null;
+}
+
+function getCurrentUser(req) {
+  return req.user || req.authUser || req.currentUser || null;
+}
+
+function isAdministrator(user) {
+  if (!user) {
+    return false;
+  }
+
+  const role = String(user.role || "").toLowerCase();
+  return role === "administrador" || role === "admin";
+}
+
+function sameValue(a, b) {
+  if (a === undefined || a === null || a === "") {
+    return true;
+  }
+
+  if (b === undefined || b === null || b === "") {
+    return true;
+  }
+
+  return String(a) === String(b);
+}
+
+function normalizeMunicipalities(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function employeeBelongsToScope(employee, user) {
+  if (!user || isAdministrator(user)) {
+    return true;
+  }
+
+  const userCompanyId = user.companyId ?? user.company ?? null;
+  const userContractId = user.contractId ?? user.contract ?? null;
+  const userMunicipalities = normalizeMunicipalities(
+    user.assignedMunicipalities || user.municipalities
   );
+
+  const employeeCompanyId = employee.companyId ?? employee.company ?? null;
+  const employeeContractId = employee.contractId ?? employee.contract ?? null;
+  const employeeMunicipality =
+    employee.municipality ||
+    employee.municipio ||
+    employee.assignedMunicipality ||
+    null;
+
+  const companyOk = sameValue(userCompanyId, employeeCompanyId);
+  const contractOk = sameValue(userContractId, employeeContractId);
+
+  let municipalityOk = true;
+
+  if (userMunicipalities.length > 0) {
+    municipalityOk = userMunicipalities.some(
+      (item) =>
+        String(item).toLowerCase() ===
+        String(employeeMunicipality || "").toLowerCase()
+    );
+  }
+
+  return companyOk && contractOk && municipalityOk;
 }
 
-function getPersonnelIdFromPath(pathname) {
-  const match = pathname.match(/^\/personnel\/(\d+)$/);
-  return match ? Number(match[1]) : null;
+function applyScope(employees, user) {
+  if (!Array.isArray(employees)) {
+    return [];
+  }
+
+  return employees.filter((employee) => employeeBelongsToScope(employee, user));
 }
 
-function getPersonnelStatusPathId(pathname) {
-  const match = pathname.match(/^\/personnel\/(\d+)\/status$/);
-  return match ? Number(match[1]) : null;
-}
+async function handlePersonnel(req, res) {
+  const pathname = normalizePathname(req);
+  const method = String(req.method || "GET").toUpperCase();
+  const currentUser = getCurrentUser(req);
+  const employeeId = getEmployeeIdFromPath(pathname);
 
-async function handlePersonnel(req, res, url) {
-  const personnelId = getPersonnelIdFromPath(url.pathname);
-  const statusPersonnelId = getPersonnelStatusPathId(url.pathname);
+  try {
+    if (
+      method === "GET" &&
+      (pathname === "/personnel" || pathname === "/employees")
+    ) {
+      const employees = listEmployees();
+      const scopedEmployees = applyScope(employees, currentUser);
 
-  if (req.method === "GET" && url.pathname === "/personnel") {
-    withModuleProtection(
-      MODULES.PERSONNEL,
-      ACTIONS.VIEW,
-      async (innerReq, innerRes, innerUrl, user) => {
-        sendJson(innerRes, 200, {
-          ok: true,
-          personnel: getScopedPersonnel(user),
-          canCreate: evaluateModuleAccess(
-            user,
-            MODULES.PERSONNEL,
-            ACTIONS.CREATE,
-            getDefaultResourceForUser(user),
-          ).allowed,
+      return sendJson(res, 200, {
+        ok: true,
+        data: scopedEmployees,
+      });
+    }
+
+    if (
+      method === "GET" &&
+      employeeId &&
+      (pathname.startsWith("/personnel/") || pathname.startsWith("/employees/"))
+    ) {
+      const employee = getEmployeeById(employeeId);
+
+      if (!employee) {
+        return sendJson(res, 404, {
+          ok: false,
+          message: "Empleado no encontrado",
         });
-      },
-    )(req, res, url);
-    return;
-  }
+      }
 
-  if (req.method === "POST" && url.pathname === "/personnel") {
-    withModuleProtection(
-      MODULES.PERSONNEL,
-      ACTIONS.CREATE,
-      async (innerReq, innerRes, innerUrl, user) => {
-        try {
-          const body = await readJsonBody(innerReq);
+      if (!employeeBelongsToScope(employee, currentUser)) {
+        return sendJson(res, 403, {
+          ok: false,
+          message: "No tienes permiso para ver este empleado",
+        });
+      }
 
-          const record = {
-            ...body,
-            companyId: body.companyId ?? user.companyId,
-            contractId: body.contractId ?? user.contractId,
-          };
+      return sendJson(res, 200, {
+        ok: true,
+        data: employee,
+      });
+    }
 
-          const inScope = matchesUserScope(user, {
-            companyId: Number(record.companyId),
-            contractId: Number(record.contractId),
-            municipality: record.municipality,
-          });
+    if (
+      method === "POST" &&
+      (pathname === "/personnel" || pathname === "/employees")
+    ) {
+      const payload = await readJsonBody(req);
 
-          if (!inScope) {
-            sendJson(innerRes, 403, {
-              ok: false,
-              message: "No puedes crear personal fuera de tu alcance",
-            });
-            return;
-          }
-
-          const created = createPersonnel(record);
-
-          sendJson(innerRes, 201, {
-            ok: true,
-            message: "Personal creado correctamente",
-            personnel: created,
-          });
-        } catch (error) {
-          sendJson(innerRes, 400, {
-            ok: false,
-            message: error.message,
-          });
+      if (!isAdministrator(currentUser)) {
+        if (currentUser?.companyId && !payload.companyId && !payload.company) {
+          payload.companyId = currentUser.companyId;
         }
-      },
-    )(req, res, url);
-    return;
-  }
 
-  if ((req.method === "PUT" || req.method === "PATCH") && personnelId) {
-    withModuleProtection(
-      MODULES.PERSONNEL,
-      ACTIONS.EDIT,
-      async (innerReq, innerRes, innerUrl, user) => {
-        try {
-          const body = await readJsonBody(innerReq);
-          const current = getScopedPersonnel(user).find((item) => item.id === personnelId);
-
-          if (!current) {
-            sendJson(innerRes, 404, {
-              ok: false,
-              message: "Empleado no encontrado o fuera de tu alcance",
-            });
-            return;
-          }
-
-          const nextRecord = {
-            ...current,
-            ...body,
-          };
-
-          const inScope = matchesUserScope(user, {
-            companyId: Number(nextRecord.companyId),
-            contractId: Number(nextRecord.contractId),
-            municipality: nextRecord.municipality,
-          });
-
-          if (!inScope) {
-            sendJson(innerRes, 403, {
-              ok: false,
-              message: "No puedes mover personal fuera de tu alcance",
-            });
-            return;
-          }
-
-          const updated = updatePersonnel(personnelId, body);
-
-          sendJson(innerRes, 200, {
-            ok: true,
-            message: "Empleado actualizado correctamente",
-            personnel: updated,
-          });
-        } catch (error) {
-          sendJson(innerRes, 400, {
-            ok: false,
-            message: error.message,
-          });
+        if (currentUser?.contractId && !payload.contractId && !payload.contract) {
+          payload.contractId = currentUser.contractId;
         }
-      },
-    )(req, res, url);
-    return;
-  }
 
-  if ((req.method === "PATCH" || req.method === "PUT") && statusPersonnelId) {
-    withModuleProtection(
-      MODULES.PERSONNEL,
-      ACTIONS.EDIT,
-      async (innerReq, innerRes, innerUrl, user) => {
-        try {
-          const body = await readJsonBody(innerReq);
-          const current = getScopedPersonnel(user).find((item) => item.id === statusPersonnelId);
-
-          if (!current) {
-            sendJson(innerRes, 404, {
-              ok: false,
-              message: "Empleado no encontrado o fuera de tu alcance",
-            });
-            return;
-          }
-
-          const updated = updatePersonnel(statusPersonnelId, {
-            status: body.status,
-          });
-
-          sendJson(innerRes, 200, {
-            ok: true,
-            message: "Estado actualizado correctamente",
-            personnel: updated,
-          });
-        } catch (error) {
-          sendJson(innerRes, 400, {
-            ok: false,
-            message: error.message,
-          });
+        if (
+          currentUser?.assignedMunicipalities &&
+          currentUser.assignedMunicipalities.length === 1 &&
+          !payload.municipality &&
+          !payload.municipio
+        ) {
+          payload.municipality = currentUser.assignedMunicipalities[0];
         }
-      },
-    )(req, res, url);
-    return;
+      }
+
+      const createdEmployee = createEmployee(payload);
+
+      return sendJson(res, 201, {
+        ok: true,
+        message: "Empleado creado correctamente",
+        data: createdEmployee,
+      });
+    }
+
+    if (
+      (method === "PUT" || method === "PATCH") &&
+      employeeId &&
+      (pathname.startsWith("/personnel/") || pathname.startsWith("/employees/"))
+    ) {
+      const existingEmployee = getEmployeeById(employeeId);
+
+      if (!existingEmployee) {
+        return sendJson(res, 404, {
+          ok: false,
+          message: "Empleado no encontrado",
+        });
+      }
+
+      if (!employeeBelongsToScope(existingEmployee, currentUser)) {
+        return sendJson(res, 403, {
+          ok: false,
+          message: "No tienes permiso para editar este empleado",
+        });
+      }
+
+      const payload = await readJsonBody(req);
+      const updatedEmployee = updateEmployee(employeeId, payload);
+
+      return sendJson(res, 200, {
+        ok: true,
+        message: "Empleado actualizado correctamente",
+        data: updatedEmployee,
+      });
+    }
+
+    if (
+      method === "DELETE" &&
+      employeeId &&
+      (pathname.startsWith("/personnel/") || pathname.startsWith("/employees/"))
+    ) {
+      const existingEmployee = getEmployeeById(employeeId);
+
+      if (!existingEmployee) {
+        return sendJson(res, 404, {
+          ok: false,
+          message: "Empleado no encontrado",
+        });
+      }
+
+      if (!employeeBelongsToScope(existingEmployee, currentUser)) {
+        return sendJson(res, 403, {
+          ok: false,
+          message: "No tienes permiso para eliminar este empleado",
+        });
+      }
+
+      const deleted = deleteEmployee(employeeId);
+
+      return sendJson(res, 200, {
+        ok: true,
+        message: deleted
+          ? "Empleado eliminado correctamente"
+          : "No fue posible eliminar el empleado",
+      });
+    }
+
+    return sendJson(res, 404, {
+      ok: false,
+      message: "Ruta de empleados no encontrada",
+    });
+  } catch (error) {
+    console.error("Error en módulo employees:", error);
+
+    return sendJson(res, 500, {
+      ok: false,
+      message: error.message || "Error interno en módulo employees",
+    });
   }
+}
 
-  if (req.method === "DELETE" && personnelId) {
-    withModuleProtection(
-      MODULES.PERSONNEL,
-      ACTIONS.DELETE,
-      async (innerReq, innerRes, innerUrl, user) => {
-        try {
-          const current = getScopedPersonnel(user).find((item) => item.id === personnelId);
-
-          if (!current) {
-            sendJson(innerRes, 404, {
-              ok: false,
-              message: "Empleado no encontrado o fuera de tu alcance",
-            });
-            return;
-          }
-
-          removePersonnel(personnelId);
-
-          sendJson(innerRes, 200, {
-            ok: true,
-            message: "Empleado eliminado correctamente",
-          });
-        } catch (error) {
-          sendJson(innerRes, 400, {
-            ok: false,
-            message: error.message,
-          });
-        }
-      },
-    )(req, res, url);
-    return;
-  }
-
-  sendMethodNotAllowed(res);
+async function handleEmployees(req, res) {
+  return handlePersonnel(req, res);
 }
 
 module.exports = {
   handlePersonnel,
+  handleEmployees,
 };

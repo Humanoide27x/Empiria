@@ -1,98 +1,208 @@
 const {
   ACTIONS,
-  ROLE_PERMISSIONS,
-  canAccessModule,
-  getAccessibleModules,
+  MODULES,
+  ROLES,
+  SCOPE_RULES,
   getRolePermissions,
+  getAccessibleModules,
+  normalizeRole,
 } = require("./permissions");
 
-function matchesLinkedScope(user, resource) {
-  if (!resource) {
+function safeString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeMunicipality(value) {
+  return safeString(value).toLowerCase();
+}
+
+function normalizeModuleKey(moduleKey) {
+  return safeString(moduleKey);
+}
+
+function getModuleConfig(roleConfig, moduleKey) {
+  if (!roleConfig || !roleConfig.modules) {
+    return null;
+  }
+
+  return roleConfig.modules[moduleKey] || null;
+}
+
+function matchesLinkedCompanyAndContract(user, resource = {}) {
+  if (!user) return false;
+
+  const userCompanyId = user.companyId ?? null;
+  const userContractId = user.contractId ?? null;
+
+  const resourceCompanyId = resource.companyId ?? null;
+  const resourceContractId = resource.contractId ?? null;
+
+  const companyMatches =
+    userCompanyId == null || resourceCompanyId == null
+      ? true
+      : Number(userCompanyId) === Number(resourceCompanyId);
+
+  const contractMatches =
+    userContractId == null || resourceContractId == null
+      ? true
+      : Number(userContractId) === Number(resourceContractId);
+
+  return companyMatches && contractMatches;
+}
+
+function matchesAssignedMunicipalities(user, resource = {}) {
+  if (!user) return false;
+
+  const assigned = Array.isArray(user.assignedMunicipalities)
+    ? user.assignedMunicipalities.map(normalizeMunicipality).filter(Boolean)
+    : [];
+
+  if (!assigned.length) {
     return true;
   }
 
-  return (
-    user.companyId === resource.companyId && user.contractId === resource.contractId
-  );
-}
-
-function matchesAssignedMunicipalities(user, resource) {
-  if (!resource || !resource.municipality) {
+  const resourceMunicipality = normalizeMunicipality(resource.municipality);
+  if (!resourceMunicipality) {
     return true;
   }
 
-  return user.assignedMunicipalities.includes(resource.municipality);
+  return assigned.includes(resourceMunicipality);
 }
 
-function evaluateScope(user, resource) {
-  const roleConfig = getRolePermissions(user.role);
+function matchesUserScope(user, resource = {}) {
+  const roleConfig = getRolePermissions(user?.role);
 
   if (!roleConfig) {
-    return {
-      allowed: false,
-      reason: "Rol no configurado",
-    };
+    return false;
   }
 
-  if (roleConfig.scope === "all" || roleConfig.scope === "all_companies") {
-    return { allowed: true, reason: "Acceso sin restriccion de empresa o contrato" };
+  switch (roleConfig.scope) {
+    case SCOPE_RULES.ALL:
+      return true;
+
+    case SCOPE_RULES.ALL_COMPANIES:
+      return true;
+
+    case SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT:
+      return matchesLinkedCompanyAndContract(user, resource);
+
+    case SCOPE_RULES.ASSIGNED_MUNICIPALITIES: {
+      const linkedScopeOk = roleConfig.linkedScope
+        ? roleConfig.linkedScope === SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT
+          ? matchesLinkedCompanyAndContract(user, resource)
+          : true
+        : true;
+
+      return linkedScopeOk && matchesAssignedMunicipalities(user, resource);
+    }
+
+    default:
+      return false;
   }
-
-  if (roleConfig.scope === "linked_company_and_contract") {
-    return {
-      allowed: matchesLinkedScope(user, resource),
-      reason: "Acceso restringido a empresa y contrato vinculados",
-    };
-  }
-
-  if (roleConfig.scope === "assigned_municipalities") {
-    const linkedOk = matchesLinkedScope(user, resource);
-    const municipalityOk = matchesAssignedMunicipalities(user, resource);
-
-    return {
-      allowed: linkedOk && municipalityOk,
-      reason: "Acceso restringido por empresa, contrato y municipios asignados",
-    };
-  }
-
-  return {
-    allowed: false,
-    reason: "Scope no soportado",
-  };
-}
-
-function matchesUserScope(user, resource) {
-  return evaluateScope(user, resource).allowed;
-}
-
-function describeUserAccess(user) {
-  const roleConfig = getRolePermissions(user.role);
-
-  return {
-    role: user.role,
-    scope: roleConfig ? roleConfig.scope : null,
-    linkedScope: roleConfig ? roleConfig.linkedScope || null : null,
-    modules: getAccessibleModules(user.role),
-  };
 }
 
 function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource = null) {
-  const hasModulePermission = canAccessModule(user.role, moduleKey, action);
+  try {
+    if (!user) {
+      return {
+        allowed: false,
+        reason: "Debes iniciar sesión",
+      };
+    }
 
-  if (!hasModulePermission) {
+    const normalizedRole = normalizeRole(user.role);
+    const roleConfig = getRolePermissions(normalizedRole);
+
+    if (!roleConfig) {
+      return {
+        allowed: false,
+        reason: "El rol no tiene configuración de permisos",
+      };
+    }
+
+    const resolvedModuleKey = normalizeModuleKey(moduleKey);
+    if (!resolvedModuleKey) {
+      return {
+        allowed: false,
+        reason: "No se indicó el módulo a validar",
+      };
+    }
+
+    const moduleConfig = getModuleConfig(roleConfig, resolvedModuleKey);
+    if (!moduleConfig) {
+      return {
+        allowed: false,
+        reason: "El rol no tiene permiso sobre este módulo",
+      };
+    }
+
+    const resolvedAction = safeString(action) || ACTIONS.VIEW;
+    const allowedActions = Array.isArray(moduleConfig.allowedActions)
+      ? moduleConfig.allowedActions
+      : [];
+
+    if (!allowedActions.includes(resolvedAction)) {
+      return {
+        allowed: false,
+        reason: "El rol no tiene permiso sobre esta acción",
+      };
+    }
+
+    const scopeOk = matchesUserScope(user, resource || {});
+    if (!scopeOk) {
+      return {
+        allowed: false,
+        reason: "El recurso está fuera del alcance del usuario",
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "Acceso permitido",
+    };
+  } catch (error) {
+    console.error("Error evaluando permisos:", error);
+
     return {
       allowed: false,
-      reason: "El rol no tiene permiso sobre este modulo o accion",
+      reason: "Error interno validando permisos",
     };
   }
+}
 
-  return evaluateScope(user, resource);
+function describeUserAccess(user) {
+  try {
+    const roleConfig = getRolePermissions(user?.role);
+
+    if (!roleConfig) {
+      return {
+        role: normalizeRole(user?.role),
+        scope: null,
+        linkedScope: null,
+        modules: [],
+      };
+    }
+
+    return {
+      role: normalizeRole(user?.role),
+      scope: roleConfig.scope || null,
+      linkedScope: roleConfig.linkedScope || null,
+      modules: getAccessibleModules(user.role),
+    };
+  } catch (error) {
+    console.error("Error describiendo acceso:", error);
+
+    return {
+      role: normalizeRole(user?.role),
+      scope: null,
+      linkedScope: null,
+      modules: [],
+    };
+  }
 }
 
 module.exports = {
-  describeUserAccess,
   evaluateModuleAccess,
-  evaluateScope,
   matchesUserScope,
-  ROLE_PERMISSIONS,
+  describeUserAccess,
 };

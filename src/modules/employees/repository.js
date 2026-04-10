@@ -1,45 +1,157 @@
 const pool = require("../../db/pool");
 
+// 🔥 Construir nombre completo automáticamente
+function buildFullName(data) {
+  return [
+    data.first_last_name,
+    data.second_last_name,
+    data.first_name,
+    data.second_name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+// 🔄 Mapear DB → Frontend
 function mapPersonnelRow(row) {
   return {
     id: row.id,
+
+    // 🔥 NUEVO MODELO
+    firstName: row.first_name,
+    secondName: row.second_name,
+    firstLastName: row.first_last_name,
+    secondLastName: row.second_last_name,
     fullName: row.full_name,
+
+    documentType: row.document_type,
     documentNumber: row.document_number,
+
+    birthDay: row.birth_day,
+    birthMonth: row.birth_month,
+    birthYear: row.birth_year,
+
+    expeditionDay: row.expedition_day,
+    expeditionMonth: row.expedition_month,
+    expeditionYear: row.expedition_year,
+
+    expeditionDepartment: row.expedition_department,
+    expeditionMunicipality: row.expedition_municipality,
+
+    nationality: row.nationality,
+    biologicalSex: row.biological_sex,
+    bloodType: row.blood_type,
+
+    phone: row.phone,
+    email: row.email,
+    address: row.address,
+    neighborhood: row.neighborhood,
+
+    residenceCountry: row.residence_country,
+    residenceDepartment: row.residence_department,
+    residenceMunicipality: row.residence_municipality,
+    residenceZone: row.residence_zone,
+
+    civilStatus: row.civil_status,
+
+    contractType: row.contract_type,
+    startDate: row.start_date,
+    eps: row.eps,
+    pensionFund: row.pension_fund,
+    compensationBox: row.compensation_box,
+    arl: row.arl,
+
+    educationLevel: row.education_level,
+    degree: row.degree,
+    degreeInstitution: row.degree_institution,
+    degreeDate: row.degree_date,
+
+    sisben: row.sisben,
+    sisbenCategory: row.sisben_category,
+
+    emergencyContactName: row.emergency_contact_name,
+    emergencyContactPhone: row.emergency_contact_phone,
+
     position: row.offered_position || "",
     companyId: row.company_id,
     contractId: row.contract_id,
-    municipality: String(row.municipality_id || ""),
     municipalityId: row.municipality_id,
-    modality: row.modality || "",
-    status: row.status || "activo",
+    modality: row.modality,
+    status: row.status,
   };
 }
 
+// 📥 LISTAR
 async function getPersonnelFromDb() {
   const result = await pool.query(`
-    SELECT
-      id,
-      full_name,
-      document_number,
-      offered_position,
-      company_id,
-      contract_id,
-      municipality_id,
-      modality,
-      status
-    FROM employees
+    SELECT * FROM employees
     ORDER BY id DESC
   `);
 
   return result.rows.map(mapPersonnelRow);
 }
 
+// ➕ CREAR
 async function createPersonnelInDb(payload) {
+  const fullName = buildFullName(payload);
+
   const result = await pool.query(
     `
     INSERT INTO employees (
       full_name,
+      first_name,
+      second_name,
+      first_last_name,
+      second_last_name,
+      document_type,
       document_number,
+
+      birth_day,
+      birth_month,
+      birth_year,
+
+      expedition_day,
+      expedition_month,
+      expedition_year,
+
+      expedition_department,
+      expedition_municipality,
+
+      nationality,
+      biological_sex,
+      blood_type,
+
+      phone,
+      email,
+      address,
+      neighborhood,
+
+      residence_country,
+      residence_department,
+      residence_municipality,
+      residence_zone,
+
+      civil_status,
+
+      contract_type,
+      start_date,
+      eps,
+      pension_fund,
+      compensation_box,
+      arl,
+
+      education_level,
+      degree,
+      degree_institution,
+      degree_date,
+
+      sisben,
+      sisben_category,
+
+      emergency_contact_name,
+      emergency_contact_phone,
+
       offered_position,
       company_id,
       contract_id,
@@ -47,147 +159,90 @@ async function createPersonnelInDb(payload) {
       modality,
       status
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING
-      id,
-      full_name,
-      document_number,
-      offered_position,
-      company_id,
-      contract_id,
-      municipality_id,
-      modality,
-      status
+    VALUES (
+      $1,$2,$3,$4,$5,$6,$7,
+      $8,$9,$10,
+      $11,$12,$13,
+      $14,$15,
+      $16,$17,$18,
+      $19,$20,$21,$22,
+      $23,$24,$25,$26,
+      $27,
+      $28,$29,$30,$31,$32,$33,
+      $34,$35,$36,$37,
+      $38,$39,
+      $40,$41,
+      $42,$43,$44,$45,$46,$47
+    )
+    RETURNING *
     `,
     [
-      payload.fullName,
-      String(payload.documentNumber),
-      payload.position || "",
-      Number(payload.companyId),
-      Number(payload.contractId),
-      payload.municipalityId ? Number(payload.municipalityId) : null,
-      payload.modality || "",
-      payload.status || "activo",
+      fullName,
+      payload.firstName,
+      payload.secondName,
+      payload.firstLastName,
+      payload.secondLastName,
+      payload.documentType,
+      payload.documentNumber,
+
+      payload.birthDay,
+      payload.birthMonth,
+      payload.birthYear,
+
+      payload.expeditionDay,
+      payload.expeditionMonth,
+      payload.expeditionYear,
+
+      payload.expeditionDepartment,
+      payload.expeditionMunicipality,
+
+      payload.nationality,
+      payload.biologicalSex,
+      payload.bloodType,
+
+      payload.phone,
+      payload.email,
+      payload.address,
+      payload.neighborhood,
+
+      payload.residenceCountry,
+      payload.residenceDepartment,
+      payload.residenceMunicipality,
+      payload.residenceZone,
+
+      payload.civilStatus,
+
+      payload.contractType,
+      payload.startDate,
+      payload.eps,
+      payload.pensionFund,
+      payload.compensationBox,
+      payload.arl,
+
+      payload.educationLevel,
+      payload.degree,
+      payload.degreeInstitution,
+      payload.degreeDate,
+
+      payload.sisben,
+      payload.sisbenCategory,
+
+      payload.emergencyContactName,
+      payload.emergencyContactPhone,
+
+      payload.position,
+      payload.companyId,
+      payload.contractId,
+      payload.municipalityId,
+      payload.modality,
+      payload.status || "preingreso",
     ]
   );
 
   return mapPersonnelRow(result.rows[0]);
-}
-
-async function updatePersonnelInDb(personnelId, changes) {
-  const currentResult = await pool.query(
-    `
-    SELECT
-      id,
-      full_name,
-      document_number,
-      offered_position,
-      company_id,
-      contract_id,
-      municipality_id,
-      modality,
-      status
-    FROM employees
-    WHERE id = $1
-    LIMIT 1
-    `,
-    [Number(personnelId)]
-  );
-
-  const current = currentResult.rows[0];
-
-  if (!current) {
-    throw new Error("Empleado no encontrado");
-  }
-
-  const next = {
-    full_name: changes.fullName ?? current.full_name,
-    document_number: changes.documentNumber ?? current.document_number,
-    offered_position: changes.position ?? current.offered_position,
-    company_id:
-      changes.companyId != null ? Number(changes.companyId) : current.company_id,
-    contract_id:
-      changes.contractId != null ? Number(changes.contractId) : current.contract_id,
-    municipality_id:
-      changes.municipalityId != null
-        ? Number(changes.municipalityId)
-        : current.municipality_id,
-    modality: changes.modality ?? current.modality,
-    status: changes.status ?? current.status,
-  };
-
-  const result = await pool.query(
-    `
-    UPDATE employees
-    SET
-      full_name = $1,
-      document_number = $2,
-      offered_position = $3,
-      company_id = $4,
-      contract_id = $5,
-      municipality_id = $6,
-      modality = $7,
-      status = $8,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = $9
-    RETURNING
-      id,
-      full_name,
-      document_number,
-      offered_position,
-      company_id,
-      contract_id,
-      municipality_id,
-      modality,
-      status
-    `,
-    [
-      next.full_name,
-      String(next.document_number),
-      next.offered_position,
-      next.company_id,
-      next.contract_id,
-      next.municipality_id,
-      next.modality,
-      next.status,
-      Number(personnelId),
-    ]
-  );
-
-  return mapPersonnelRow(result.rows[0]);
-}
-
-async function removePersonnelFromDb(personnelId) {
-  const result = await pool.query(
-    `
-    DELETE FROM employees
-    WHERE id = $1
-    RETURNING
-      id,
-      full_name,
-      document_number,
-      offered_position,
-      company_id,
-      contract_id,
-      municipality_id,
-      modality,
-      status
-    `,
-    [Number(personnelId)]
-  );
-
-  const row = result.rows[0];
-
-  if (!row) {
-    throw new Error("Empleado no encontrado");
-  }
-
-  return mapPersonnelRow(row);
 }
 
 module.exports = {
   getPersonnelFromDb,
   createPersonnelInDb,
-  updatePersonnelInDb,
-  removePersonnelFromDb,
 };

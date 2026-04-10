@@ -14,6 +14,8 @@ const state = {
   requiresMfa: false,
   tempUsername: "",
   tempPassword: "",
+  personnelCreateTab: "identificacion",
+  personnelDraft: {},
 };
 
 const elements = {
@@ -64,7 +66,6 @@ const moduleViews = {
     route: "/dashboard-summary",
     submodules: [{ key: "resumen_general", title: "Resumen general" }],
   },
-
   gestion_personal: {
     title: "Gestión del Personal",
     route: "/personnel",
@@ -75,7 +76,6 @@ const moduleViews = {
       { key: "cambiar_estado", title: "Cambiar estado" },
     ],
   },
-
   hoja_vida_documentos: {
     title: "Hoja de Vida y Documentos",
     route: "/resume-view",
@@ -86,7 +86,6 @@ const moduleViews = {
       { key: "historial_documental", title: "Historial documental" },
     ],
   },
-
   contratos_vinculacion: {
     title: "Contratos y Vinculación",
     route: null,
@@ -97,7 +96,6 @@ const moduleViews = {
       { key: "historial_contractual", title: "Historial contractual" },
     ],
   },
-
   cobertura_calculadora: {
     title: "Cobertura y Calculadora de Personal",
     route: "/coverage",
@@ -108,7 +106,6 @@ const moduleViews = {
       { key: "analisis_sede", title: "Análisis por sede" },
     ],
   },
-
   nomina_novedades: {
     title: "Nómina y Novedades",
     route: "/payroll-changes",
@@ -120,7 +117,6 @@ const moduleViews = {
       { key: "certificaciones", title: "Certificaciones" },
     ],
   },
-
   capacitaciones_asistencia: {
     title: "Capacitaciones y Asistencia",
     route: "/trainings",
@@ -131,7 +127,6 @@ const moduleViews = {
       { key: "historial_capacitaciones", title: "Historial" },
     ],
   },
-
   informes_reportes: {
     title: "Informes y Reportes",
     route: "/reports",
@@ -142,7 +137,6 @@ const moduleViews = {
       { key: "exportaciones", title: "Exportaciones" },
     ],
   },
-
   solicitudes_empleados: {
     title: "Solicitudes de Empleados",
     route: null,
@@ -152,7 +146,6 @@ const moduleViews = {
       { key: "estado_solicitudes", title: "Estado de solicitudes" },
     ],
   },
-
   administracion_configuraciones: {
     title: "Administración y Configuraciones",
     route: "/users",
@@ -166,12 +159,66 @@ const moduleViews = {
   },
 };
 
+const COLOMBIA_DEPARTMENTS = [
+  "Amazonas", "Antioquia", "Arauca", "Atlántico", "Bogotá D.C.", "Bolívar",
+  "Boyacá", "Caldas", "Caquetá", "Casanare", "Cauca", "Cesar", "Chocó",
+  "Córdoba", "Cundinamarca", "Guainía", "Guaviare", "Huila", "La Guajira",
+  "Magdalena", "Meta", "Nariño", "Norte de Santander", "Putumayo", "Quindío",
+  "Risaralda", "San Andrés y Providencia", "Santander", "Sucre", "Tolima",
+  "Valle del Cauca", "Vaupés", "Vichada",
+];
+
+const META_MUNICIPALITIES = [
+  "Acacías", "Barranca de Upía", "Cabuyaro", "Castilla la Nueva", "Cubarral",
+  "Cumaral", "El Calvario", "El Castillo", "El Dorado", "Fuente de Oro",
+  "Granada", "Guamal", "La Macarena", "La Uribe", "Lejanías", "Mapiripán",
+  "Mesetas", "Puerto Concordia", "Puerto Gaitán", "Puerto Lleras",
+  "Puerto López", "Puerto Rico", "Restrepo", "San Carlos de Guaroa",
+  "San Juan de Arama", "San Juanito", "San Martín", "Villavicencio",
+  "Vista Hermosa",
+];
+
+const LICITACION_CARGOS = [
+  "OPERARIO DE BODEGA",
+  "AUXILIARES Y TRANSPORTADORES",
+  "OPERARIO MANIPULADOR DE ALIMENTOS",
+  "COORDINADOR DE SUMINISTRO",
+  "SUPERVISOR DE CALIDAD",
+  "AUXILIAR ADMINISTRATIVO",
+];
+
+const CARGOS_REALES = [
+  "AREA DE FACTURACION",
+  "AREA DE TALENTO HUMANO",
+  "AREA DE CALIDAD",
+  "OPERARIO DE BODEGA RI",
+  "OPERARIO DE BODEGA RP",
+  "AUXILIARES DE RUTA RI",
+  "AUXILIARES DE RUTA RP",
+  "GESTOR DE ZONA",
+  "AUXILIAR DE GESTOR DE ZONA",
+  "OPERARIO MANIPULADOR DE ALIMENTOS",
+];
+
+const ESTADOS_PERSONAL = [
+  "ACTIVO",
+  "INACTIVO",
+  "EN PROCESO A",
+  "EN PROCESO B",
+  "SUSPENDIDO",
+];
+
+const DOC_TYPE_LABELS = {
+  CC: "CC",
+  CE: "CE",
+  PPT: "PPT",
+  PA: "PA",
+  NIT: "NIT",
+};
+
 async function apiFetch(path, options = {}) {
   const token = state.token || localStorage.getItem("empiria_token") || "";
-
-  const headers = {
-    ...(options.headers || {}),
-  };
+  const headers = { ...(options.headers || {}) };
 
   if (!(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
@@ -181,10 +228,7 @@ async function apiFetch(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(path, { ...options, headers });
 
   let payload;
   try {
@@ -204,6 +248,27 @@ function prettyLabel(text) {
   return String(text || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function escapeAttr(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderOptions(items, currentValue = "", placeholder = "Selecciona") {
+  return `
+    <option value="">${placeholder}</option>
+    ${items
+      .map(
+        (item) => `<option value="${escapeAttr(item)}" ${
+          String(currentValue) === String(item) ? "selected" : ""
+        }>${item}</option>`
+      )
+      .join("")}
+  `;
 }
 
 function iconSvg(pathMarkup) {
@@ -368,9 +433,148 @@ function formatContract(contractId) {
   return found ? `${found.name} (${found.id})` : String(contractId);
 }
 
+function getCompanyOptionsHtml(currentValue = "") {
+  return `
+    <option value="">Selecciona empresa</option>
+    ${state.companies
+      .map(
+        (company) => `
+          <option value="${company.id}" ${
+            String(currentValue) === String(company.id) ? "selected" : ""
+          }>
+            ${company.name}
+          </option>
+        `
+      )
+      .join("")}
+  `;
+}
+
+function getContractOptionsHtml(companyId, currentValue = "") {
+  const selectedCompanyId = Number(companyId || 0);
+  const contracts = state.contracts.filter(
+    (contract) => !selectedCompanyId || Number(contract.companyId) === selectedCompanyId
+  );
+
+  return `
+    <option value="">Selecciona contrato</option>
+    ${contracts
+      .map(
+        (contract) => `
+          <option value="${contract.id}" ${
+            String(currentValue) === String(contract.id) ? "selected" : ""
+          }>
+            ${contract.name}
+          </option>
+        `
+      )
+      .join("")}
+  `;
+}
+
+function getDepartmentMunicipalities(departmentName) {
+  if (departmentName === "Meta") return META_MUNICIPALITIES;
+  return [];
+}
+
+function isInstitutionalTabEnabled(cargoReal) {
+  return [
+    "OPERARIO MANIPULADOR DE ALIMENTOS",
+    "GESTOR DE ZONA",
+    "AUXILIAR DE GESTOR DE ZONA",
+  ].includes(String(cargoReal || "").toUpperCase());
+}
+
+function syncPersonnelDraftField(target) {
+  if (!target?.name) return;
+
+  if (target.type === "checkbox") {
+    state.personnelDraft[target.name] = target.checked ? "true" : "";
+    return;
+  }
+
+  if (target.multiple) {
+    const values = Array.from(target.selectedOptions).map((option) => option.value);
+    state.personnelDraft[target.name] = values.join("|");
+    return;
+  }
+
+  state.personnelDraft[target.name] = target.value;
+}
+
+function enforceInputRestrictions(form) {
+  if (!form) return;
+
+  form.querySelectorAll("[data-only-letters]").forEach((field) => {
+    field.addEventListener("input", () => {
+      field.value = field.value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]/g, "");
+      syncPersonnelDraftField(field);
+    });
+  });
+
+  form.querySelectorAll("[data-only-numbers]").forEach((field) => {
+    field.addEventListener("input", () => {
+      field.value = field.value.replace(/\D/g, "");
+      syncPersonnelDraftField(field);
+    });
+  });
+}
+
+function syncEmployeeHeaderFromDraft() {
+  const employeeHeaderName = document.getElementById("employeeHeaderName");
+  const employeeHeaderDocument = document.getElementById("employeeHeaderDocument");
+
+  const fullNameParts = [
+    state.personnelDraft.firstName || "",
+    state.personnelDraft.secondName || "",
+    state.personnelDraft.firstLastName || "",
+    state.personnelDraft.secondLastName || "",
+  ].filter(Boolean);
+
+  const fullName = fullNameParts.length
+    ? fullNameParts.join(" ").toUpperCase()
+    : "NOMBRE COMPLETO DE LA PERSONA";
+
+  if (employeeHeaderName) {
+    employeeHeaderName.textContent = fullName;
+  }
+
+  const docType = state.personnelDraft.documentType || "";
+  const docNumber = state.personnelDraft.documentNumber || "";
+  const docLabel = DOC_TYPE_LABELS[docType] || docType || "Tipo de documento";
+
+  if (employeeHeaderDocument) {
+    employeeHeaderDocument.textContent =
+      docType || docNumber
+        ? `${docLabel} ${docNumber}`.trim()
+        : "Tipo de documento y número de documento";
+  }
+}
+
+function autoSetResidenceCertificateDate() {
+  const hasExpiration = state.personnelDraft.residenceCertificateHasExpiration === "true";
+  if (hasExpiration) return;
+
+  const expeditionYear = Number(state.personnelDraft.expeditionYear || 0);
+  const expeditionMonth = Number(state.personnelDraft.expeditionMonth || 0);
+  const expeditionDay = Number(state.personnelDraft.expeditionDay || 0);
+
+  if (!expeditionYear || !expeditionMonth || !expeditionDay) return;
+
+  const baseDate = new Date(expeditionYear, expeditionMonth - 1, expeditionDay);
+  if (Number.isNaN(baseDate.getTime())) return;
+
+  baseDate.setMonth(baseDate.getMonth() + 6);
+
+  const yyyy = baseDate.getFullYear();
+  const mm = String(baseDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(baseDate.getDate()).padStart(2, "0");
+
+  state.personnelDraft.residenceCertificateExpiration = `${yyyy}-${mm}-${dd}`;
+}
+
 function ensureMfaField() {
   if (!elements.mfaFieldWrap || !elements.mfaCode) return;
-
   elements.mfaFieldWrap.classList.add("hidden");
   elements.mfaCode.value = "";
   elements.mfaCode.removeAttribute("required");
@@ -498,6 +702,10 @@ function renderModuleNav(modules = []) {
       state.activeModule = moduleKey;
       state.activeSubmodule = submoduleKey;
 
+      if (moduleKey !== "gestion_personal" || submoduleKey !== "crear_empleado") {
+        state.personnelCreateTab = "identificacion";
+      }
+
       renderModuleNav(modules);
       await openModule(moduleKey);
     });
@@ -562,45 +770,6 @@ async function loadDashboardModule() {
   `;
 }
 
-async function handleCreatePersonnel(event) {
-  event.preventDefault();
-
-  const form = event.currentTarget;
-  const formData = new FormData(form);
-
-  try {
-    await apiFetch("/personnel", {
-      method: "POST",
-      body: JSON.stringify({
-        fullName: formData.get("fullName"),
-        documentNumber: formData.get("documentNumber"),
-        position: formData.get("position"),
-        companyId: formData.get("companyId")
-          ? Number(formData.get("companyId"))
-          : state.currentUser?.companyId,
-        contractId: formData.get("contractId")
-          ? Number(formData.get("contractId"))
-          : state.currentUser?.contractId,
-        municipalityId: formData.get("municipalityId")
-          ? Number(formData.get("municipalityId"))
-          : null,
-        municipality: formData.get("municipality"),
-        institution: formData.get("institution"),
-        modality: formData.get("modality"),
-        status: formData.get("status"),
-      }),
-    });
-
-    state.expandedModule = "gestion_personal";
-    state.activeModule = "gestion_personal";
-    state.activeSubmodule = "consultar_empleados";
-    renderModuleNav(state.access?.modules || []);
-    await openModule("gestion_personal");
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
 async function loadPersonnelModule(moduleConfig, submoduleKey) {
   let payload;
 
@@ -615,63 +784,630 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     `;
   }
 
-  const showCreateForm = payload.canCreate && submoduleKey === "crear_empleado";
+  const showCreateForm = submoduleKey === "crear_empleado";
   const showEditHelp = submoduleKey === "editar_empleado";
   const showStatusHelp = submoduleKey === "cambiar_estado";
   const showList =
     submoduleKey === "consultar_empleados" || showEditHelp || showStatusHelp;
 
-  const formHtml = showCreateForm
-    ? `
-      <article class="info-card">
-        <h3>Registrar personal</h3>
-        <form id="personnelForm" class="personnel-form">
+  if (!state.personnelDraft) state.personnelDraft = {};
+  if (!state.personnelCreateTab) state.personnelCreateTab = "identificacion";
+
+  const draft = state.personnelDraft;
+  const activeTab = state.personnelCreateTab;
+  const currentCargoReal = String(draft.cargo_real || "").toUpperCase();
+  const institutionalEnabled = isInstitutionalTabEnabled(currentCargoReal);
+
+  const draftValue = (name, fallback = "") => {
+    if (draft[name] !== undefined && draft[name] !== null) return draft[name];
+    return fallback;
+  };
+
+  const selected = (name, value) =>
+    String(draftValue(name, "")) === String(value) ? "selected" : "";
+
+  const checked = (name) => (String(draftValue(name, "")) === "true" ? "checked" : "");
+
+  const expeditionDepartment = draftValue("expeditionDepartment", "");
+  const birthDepartment = draftValue("birthDepartment", "");
+  const vinculationCompanyId = draftValue("companyId", state.currentUser?.companyId ?? "");
+  const residenceMunicipality = draftValue("residenceMunicipality", "");
+  const institutionalMunicipality = draftValue("educationalMunicipality", "");
+
+  const expeditionMunicipalities = getDepartmentMunicipalities(expeditionDepartment);
+  const birthMunicipalities = getDepartmentMunicipalities(birthDepartment);
+
+  const educationalCatalog = payload.educationalCatalog || {};
+  const municipalityCatalog = educationalCatalog[institutionalMunicipality] || {};
+  const institutionNames = Object.keys(municipalityCatalog);
+  const selectedInstitution = draftValue("institution", "");
+  const sedeCatalog = municipalityCatalog[selectedInstitution] || {};
+  const sedeNames = Object.keys(sedeCatalog);
+  const selectedSede = draftValue("site", "");
+  const modalidadCatalog = sedeCatalog[selectedSede] || [];
+  const managerRole = ["GESTOR DE ZONA", "AUXILIAR DE GESTOR DE ZONA"].includes(currentCargoReal);
+
+  const tabButtons = `
+    <div class="employee-steps">
+      <button type="button" class="employee-step-tab ${activeTab === "identificacion" ? "active" : ""}" data-step-tab="identificacion">Identificación</button>
+      <button type="button" class="employee-step-tab ${activeTab === "vinculacion" ? "active" : ""}" data-step-tab="vinculacion">Vinculación</button>
+      <button type="button" class="employee-step-tab ${activeTab === "licitacion" ? "active" : ""}" data-step-tab="licitacion">Licitación-Autorización</button>
+      <button type="button" class="employee-step-tab ${activeTab === "datos_personales" ? "active" : ""}" data-step-tab="datos_personales">Datos Personales</button>
+      <button type="button" class="employee-step-tab ${activeTab === "institucional" ? "active" : ""} ${institutionalEnabled ? "" : "disabled"}" data-step-tab="institucional" ${institutionalEnabled ? "" : "disabled"}>Institucional</button>
+      <button type="button" class="employee-step-tab ${activeTab === "contratacion" ? "active" : ""}" data-step-tab="contratacion">Contratación</button>
+      <button type="button" class="employee-step-tab ${activeTab === "seguimiento" ? "active" : ""}" data-step-tab="seguimiento">Seguimiento</button>
+      <button type="button" class="employee-step-tab ${activeTab === "estudios" ? "active" : ""}" data-step-tab="estudios">Estudios</button>
+      <button type="button" class="employee-step-tab ${activeTab === "observaciones" ? "active" : ""}" data-step-tab="observaciones">Observaciones</button>
+    </div>
+  `;
+
+  let activeSectionHtml = "";
+
+  if (activeTab === "identificacion") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Sección A - Identificación</h4>
+            <p class="section-helper-text">Datos de identificación personal del empleado</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
           <label>
-            Nombre completo
-            <input name="fullName" type="text" required />
+            <span>Primer Nombre *</span>
+            <input name="firstName" data-only-letters type="text" value="${escapeAttr(draftValue("firstName"))}" required />
           </label>
+
           <label>
-            Documento
-            <input name="documentNumber" type="text" required />
+            <span>Segundo Nombre</span>
+            <input name="secondName" data-only-letters type="text" value="${escapeAttr(draftValue("secondName"))}" />
           </label>
+
           <label>
-            Cargo
-            <input name="position" type="text" required />
+            <span>Primer Apellido *</span>
+            <input name="firstLastName" data-only-letters type="text" value="${escapeAttr(draftValue("firstLastName"))}" required />
           </label>
+
           <label>
-            Municipio ID
-            <input name="municipalityId" type="number" />
+            <span>Segundo Apellido</span>
+            <input name="secondLastName" data-only-letters type="text" value="${escapeAttr(draftValue("secondLastName"))}" />
           </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
           <label>
-            Municipio
-            <input name="municipality" type="text" />
-          </label>
-          <label>
-            Empresa
-            <input name="companyId" type="number" value="${state.currentUser.companyId ?? ""}" ${state.currentUser.companyId ? "readonly" : ""} />
-          </label>
-          <label>
-            Contrato
-            <input name="contractId" type="number" value="${state.currentUser.contractId ?? ""}" ${state.currentUser.contractId ? "readonly" : ""} />
-          </label>
-          <label>
-            Institución
-            <input name="institution" type="text" />
-          </label>
-          <label>
-            Modalidad
-            <input name="modality" type="text" />
-          </label>
-          <label class="wide">
-            Estado
-            <select name="status">
-              <option value="activo">Activo</option>
-              <option value="novedad">Novedad</option>
-              <option value="retiro">Retiro</option>
+            <span>Tipo de Documento *</span>
+            <select name="documentType" required>
+              ${renderOptions(["CC", "PA", "PPT", "CE", "NIT"], draftValue("documentType"), "Selecciona")}
             </select>
           </label>
-          <div class="admin-actions wide">
-            <button type="submit">Guardar personal</button>
+
+          <label>
+            <span>Número de Documento *</span>
+            <input name="documentNumber" data-only-numbers type="text" value="${escapeAttr(draftValue("documentNumber"))}" required />
+          </label>
+        </div>
+
+        <div class="subsection-title">Fecha de Expedición del Documento *</div>
+        <div class="form-grid form-grid-3">
+          <label>
+            <span>Día</span>
+            <input name="expeditionDay" data-only-numbers type="text" maxlength="2" value="${escapeAttr(draftValue("expeditionDay"))}" required />
+          </label>
+
+          <label>
+            <span>Mes</span>
+            <input name="expeditionMonth" data-only-numbers type="text" maxlength="2" value="${escapeAttr(draftValue("expeditionMonth"))}" required />
+          </label>
+
+          <label>
+            <span>Año</span>
+            <input name="expeditionYear" data-only-numbers type="text" maxlength="4" value="${escapeAttr(draftValue("expeditionYear"))}" required />
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Departamento de Expedición *</span>
+            <select name="expeditionDepartment" required>
+              ${renderOptions(COLOMBIA_DEPARTMENTS, expeditionDepartment, "Selecciona departamento")}
+            </select>
+          </label>
+
+          <label>
+            <span>Municipio de Expedición *</span>
+            <select name="expeditionMunicipality" required>
+              ${renderOptions(expeditionMunicipalities, draftValue("expeditionMunicipality"), expeditionDepartment ? "Selecciona municipio" : "Selecciona primero departamento")}
+            </select>
+          </label>
+        </div>
+
+        <div class="subsection-title">Fecha de Nacimiento *</div>
+        <div class="form-grid form-grid-3">
+          <label>
+            <span>Día</span>
+            <input name="birthDay" data-only-numbers type="text" maxlength="2" value="${escapeAttr(draftValue("birthDay"))}" required />
+          </label>
+
+          <label>
+            <span>Mes</span>
+            <input name="birthMonth" data-only-numbers type="text" maxlength="2" value="${escapeAttr(draftValue("birthMonth"))}" required />
+          </label>
+
+          <label>
+            <span>Año</span>
+            <input name="birthYear" data-only-numbers type="text" maxlength="4" value="${escapeAttr(draftValue("birthYear"))}" required />
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-3">
+          <label>
+            <span>País de Nacimiento *</span>
+            <input name="birthCountry" data-only-letters type="text" value="${escapeAttr(draftValue("birthCountry", "Colombia"))}" required />
+          </label>
+
+          <label>
+            <span>Departamento de Nacimiento *</span>
+            <select name="birthDepartment" required>
+              ${renderOptions(COLOMBIA_DEPARTMENTS, birthDepartment, "Selecciona departamento")}
+            </select>
+          </label>
+
+          <label>
+            <span>Municipio de Nacimiento *</span>
+            <select name="birthMunicipality" required>
+              ${renderOptions(birthMunicipalities, draftValue("birthMunicipality"), birthDepartment ? "Selecciona municipio" : "Selecciona primero departamento")}
+            </select>
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Grupo Sanguíneo *</span>
+            <select name="bloodType" required>
+              ${renderOptions(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"], draftValue("bloodType"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>Sexo *</span>
+            <select name="biologicalSex" required>
+              ${renderOptions(["F", "M"], draftValue("biologicalSex"), "Selecciona")}
+            </select>
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "vinculacion") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Vinculación</h4>
+            <p class="section-helper-text">Empresa, contrato y municipio de vinculación</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-3">
+          <label>
+            <span>Empresa *</span>
+            <select name="companyId" required>
+              ${getCompanyOptionsHtml(vinculationCompanyId)}
+            </select>
+          </label>
+
+          <label>
+            <span>Contrato *</span>
+            <select name="contractId" required>
+              ${getContractOptionsHtml(vinculationCompanyId, draftValue("contractId"))}
+            </select>
+          </label>
+
+          <label>
+            <span>Municipio *</span>
+            <select name="municipalityId" required>
+              ${renderOptions(META_MUNICIPALITIES, draftValue("municipalityId"), "Selecciona municipio")}
+            </select>
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "licitacion") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Licitación-Autorización</h4>
+            <p class="section-helper-text">Información de licitación y fase del proceso</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>¿Presentado en Licitación? *</span>
+            <select name="presentedInOffer" id="presentedInOffer" required>
+              <option value="">Selecciona</option>
+              <option value="true" ${selected("presentedInOffer", "true")}>Sí</option>
+              <option value="false" ${selected("presentedInOffer", "false")}>No</option>
+            </select>
+          </label>
+
+          <label id="offerPositionWrap" class="${String(draftValue("presentedInOffer")) === "true" ? "" : "hidden"}">
+            <span>Cargo presentado en licitación</span>
+            <select name="offerPosition">
+              ${renderOptions(LICITACION_CARGOS, draftValue("offerPosition"), "Selecciona")}
+            </select>
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Cargo Real *</span>
+            <select name="cargo_real" required>
+              ${renderOptions(CARGOS_REALES, draftValue("cargo_real"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>Estado *</span>
+            <select name="status" required>
+              ${renderOptions(ESTADOS_PERSONAL, draftValue("status"), "Selecciona")}
+            </select>
+          </label>
+        </div>
+
+        <div class="personnel-note-box">
+          <strong>Fase del proceso:</strong><br />
+          ACTIVO: personal contratado y trabajando.<br />
+          INACTIVO: personal que renuncia o se retira por periodo de prueba.<br />
+          SUSPENDIDO: sale por reducción de cobertura.<br />
+          EN PROCESO A: personal verificado pero no ingresa por cobertura.<br />
+          EN PROCESO B: personal pendiente de verificación, antecedentes, EPS y AFP.
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "datos_personales") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Datos Personales</h4>
+            <p class="section-helper-text">Información de contacto y residencia</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Celular *</span>
+            <input name="phone" data-only-numbers type="text" value="${escapeAttr(draftValue("phone"))}" required />
+          </label>
+
+          <label>
+            <span>Correo Electrónico *</span>
+            <input name="email" type="email" value="${escapeAttr(draftValue("email"))}" required />
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Estado Civil</span>
+            <select name="civilStatus">
+              ${renderOptions(["soltero", "casado", "union_libre", "separado", "divorciado", "viudo"], draftValue("civilStatus"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>Barrio de Residencia</span>
+            <input name="neighborhood" type="text" value="${escapeAttr(draftValue("neighborhood"))}" />
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-1">
+          <label>
+            <span>Dirección de Residencia *</span>
+            <input name="address" type="text" value="${escapeAttr(draftValue("address"))}" required />
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-3">
+          <label>
+            <span>Departamento *</span>
+            <input name="residenceDepartment" type="text" value="Meta" readonly />
+          </label>
+
+          <label>
+            <span>Municipio *</span>
+            <select name="residenceMunicipality" required>
+              ${renderOptions(META_MUNICIPALITIES, residenceMunicipality, "Selecciona municipio")}
+            </select>
+          </label>
+
+          <label>
+            <span>Zona de Residencia</span>
+            <select name="residenceZone">
+              ${renderOptions(["urbano", "rural"], draftValue("residenceZone"), "Selecciona")}
+            </select>
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "institucional") {
+    if (!institutionalEnabled) {
+      activeSectionHtml = `
+        <section class="personnel-section">
+          <div class="section-title-wrap">
+            <div>
+              <h4>Institucional</h4>
+              <p class="section-helper-text">Esta pestaña solo se habilita para cargos operativos permitidos</p>
+            </div>
+          </div>
+
+          <div class="personnel-note-box">
+            Esta pestaña solo se habilita si el cargo real es:
+            <strong>OPERARIO MANIPULADOR DE ALIMENTOS</strong>,
+            <strong>GESTOR DE ZONA</strong> o
+            <strong>AUXILIAR DE GESTOR DE ZONA</strong>.
+          </div>
+        </section>
+      `;
+    } else if (managerRole) {
+      activeSectionHtml = `
+        <section class="personnel-section">
+          <div class="section-title-wrap">
+            <div>
+              <h4>Institucional</h4>
+              <p class="section-helper-text">Municipios a cargo del gestor</p>
+            </div>
+          </div>
+
+          <label>
+            <span>Municipios a Cargo</span>
+            <select name="municipiosACargo" multiple size="8">
+              ${META_MUNICIPALITIES.map(
+                (m) => `
+                  <option value="${m}" ${
+                    String(draftValue("municipiosACargo", "")).split("|").includes(m)
+                      ? "selected"
+                      : ""
+                  }>${m}</option>
+                `
+              ).join("")}
+            </select>
+          </label>
+        </section>
+      `;
+    } else {
+      activeSectionHtml = `
+        <section class="personnel-section">
+          <div class="section-title-wrap">
+            <div>
+              <h4>Institucional</h4>
+              <p class="section-helper-text">Asignación institucional del operario</p>
+            </div>
+          </div>
+
+          <div class="form-grid form-grid-2">
+            <label>
+              <span>Municipio *</span>
+              <select name="educationalMunicipality" required>
+                ${renderOptions(META_MUNICIPALITIES, institutionalMunicipality, "Selecciona municipio")}
+              </select>
+            </label>
+
+            <label>
+              <span>Institución Educativa *</span>
+              <select name="institution" required>
+                ${renderOptions(institutionNames, draftValue("institution"), institutionalMunicipality ? "Selecciona institución" : "Selecciona primero municipio")}
+              </select>
+            </label>
+
+            <label>
+              <span>Sede Educativa *</span>
+              <select name="site" required>
+                ${renderOptions(sedeNames, draftValue("site"), selectedInstitution ? "Selecciona sede" : "Selecciona primero institución")}
+              </select>
+            </label>
+
+            <label>
+              <span>Modalidad *</span>
+              <select name="educationalModality" required>
+                ${renderOptions(modalidadCatalog, draftValue("educationalModality"), selectedSede ? "Selecciona modalidad" : "Selecciona primero sede")}
+              </select>
+            </label>
+          </div>
+        </section>
+      `;
+    }
+  }
+
+  if (activeTab === "contratacion") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Contratación</h4>
+            <p class="section-helper-text">Datos de contratación y seguridad social</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Tipo de Contrato *</span>
+            <select name="contractType" required>
+              ${renderOptions(["obra_labor", "termino_fijo", "prestacion_servicios"], draftValue("contractType"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>Fecha Inicio Real *</span>
+            <input name="startDate" type="date" value="${escapeAttr(draftValue("startDate"))}" required />
+          </label>
+        </div>
+
+        <div class="subsection-title">Seguridad Social</div>
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>EPS *</span>
+            <input name="eps" type="text" value="${escapeAttr(draftValue("eps"))}" required />
+          </label>
+
+          <label>
+            <span>Fondo de Pensiones *</span>
+            <input name="pensionFund" type="text" value="${escapeAttr(draftValue("pensionFund"))}" required />
+          </label>
+
+          <label>
+            <span>Caja de Compensación *</span>
+            <input name="compensationBox" type="text" value="${escapeAttr(draftValue("compensationBox"))}" required />
+          </label>
+
+          <label>
+            <span>ARL</span>
+            <input name="arl" type="text" value="${escapeAttr(draftValue("arl"))}" />
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "seguimiento") {
+    autoSetResidenceCertificateDate();
+
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Seguimiento</h4>
+            <p class="section-helper-text">Seguimiento documental específico</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>¿Tiene SISBEN?</span>
+            <select name="sisben">
+              ${renderOptions(["true", "false"], draftValue("sisben"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>¿Tiene fecha de vencimiento el certificado de residencia?</span>
+            <select name="residenceCertificateHasExpiration">
+              ${renderOptions(["true", "false"], draftValue("residenceCertificateHasExpiration"), "Selecciona")}
+            </select>
+          </label>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Fecha de vencimiento certificado de residencia</span>
+            <input
+              name="residenceCertificateExpiration"
+              type="date"
+              value="${escapeAttr(draftValue("residenceCertificateExpiration"))}"
+              ${draftValue("residenceCertificateHasExpiration") === "true" ? "" : "readonly"}
+            />
+          </label>
+
+          <label>
+            <span>Categoría SISBEN</span>
+            <input name="sisbenCategory" type="text" value="${escapeAttr(draftValue("sisbenCategory"))}" />
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "estudios") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Estudios</h4>
+            <p class="section-helper-text">Solo registro básico. La verificación va en Documentos.</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Nivel Educativo</span>
+            <select name="educationLevel">
+              ${renderOptions(["primaria", "secundaria", "tecnico", "tecnologo", "profesional", "posgrado"], draftValue("educationLevel"), "Selecciona")}
+            </select>
+          </label>
+
+          <label>
+            <span>Título Obtenido</span>
+            <input name="degree" type="text" value="${escapeAttr(draftValue("degree"))}" />
+          </label>
+
+          <label>
+            <span>Institución</span>
+            <input name="degreeInstitution" type="text" value="${escapeAttr(draftValue("degreeInstitution"))}" />
+          </label>
+
+          <label>
+            <span>Fecha de Expedición del Título</span>
+            <input name="degreeDate" type="date" value="${escapeAttr(draftValue("degreeDate"))}" />
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "observaciones") {
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Observaciones</h4>
+            <p class="section-helper-text">Registro exclusivo de novedades y observaciones</p>
+          </div>
+        </div>
+
+        <label class="wide">
+          <span>Observaciones</span>
+          <textarea
+            name="internalNotes"
+            rows="5"
+            placeholder="Registre aquí las novedades y observaciones del empleado..."
+          >${escapeAttr(draftValue("internalNotes"))}</textarea>
+        </label>
+      </section>
+    `;
+  }
+
+  const formHtml = showCreateForm
+    ? `
+      <article class="info-card personnel-form-card employee-form-shell">
+        <div class="employee-form-title-block">
+          <h3>Formulario de Empleado</h3>
+          <p>Complete todos los datos del empleado en el sistema</p>
+        </div>
+
+        <div class="employee-header-card">
+          <h2 id="employeeHeaderName">NOMBRE COMPLETO DE LA PERSONA</h2>
+          <p id="employeeHeaderDocument">Tipo de documento y número de documento</p>
+        </div>
+
+        ${tabButtons}
+
+        <form id="personnelForm" class="personnel-form-v2">
+          ${activeSectionHtml}
+
+          <div class="personnel-form-actions">
+            <button type="submit" class="primary-soft-btn">
+              Guardar cambios de esta pestaña
+            </button>
           </div>
         </form>
       </article>
@@ -682,14 +1418,14 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     ? `
       <article class="info-card">
         <h3>Editar empleado</h3>
-        <p>En la siguiente fase este espacio tendrá edición individual por registro.</p>
+        <p>En la siguiente fase este espacio tendrá edición individual y trazabilidad por historial.</p>
       </article>
     `
     : showStatusHelp
       ? `
         <article class="info-card">
           <h3>Cambiar estado</h3>
-          <p>En la siguiente fase este espacio permitirá activar, inactivar o suspender personal desde cada registro.</p>
+          <p>Aquí podrás cambiar estado y guardar historial de motivos y fechas.</p>
         </article>
       `
       : "";
@@ -705,11 +1441,11 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
                   .map(
                     (item) => `
                       <div class="personnel-item">
-                        <strong>${item.fullName}</strong>
-                        <p>${item.position}</p>
-                        <p>Documento: ${item.documentNumber}</p>
+                        <strong>${item.fullName || "Sin nombre"}</strong>
+                        <p>${item.position || ""}</p>
+                        <p>Documento: ${item.documentNumber || ""}</p>
                         <p>${formatCompany(item.companyId)} | ${formatContract(item.contractId)}</p>
-                        <p>${item.municipality || "Sin municipio"} | ${item.institution || "Sin institución"} | ${item.status}</p>
+                        <p>${item.municipality || "Sin municipio"} | ${item.modality || "Sin modalidad"} | ${item.status || ""}</p>
                       </div>
                     `
                   )
@@ -723,9 +1459,102 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
   setTimeout(() => {
     const form = document.getElementById("personnelForm");
-    if (form) {
-      form.addEventListener("submit", handleCreatePersonnel);
+    if (!form) return;
+
+    document.querySelectorAll("[data-step-tab]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (button.disabled) return;
+        state.personnelCreateTab = button.dataset.stepTab;
+        await openModule("gestion_personal");
+      });
+    });
+
+    form.querySelectorAll("input, select, textarea").forEach((field) => {
+      field.addEventListener("input", (event) => {
+        syncPersonnelDraftField(event.target);
+        syncEmployeeHeaderFromDraft();
+      });
+
+      field.addEventListener("change", async (event) => {
+        syncPersonnelDraftField(event.target);
+
+        const reactiveFields = [
+          "expeditionDepartment",
+          "birthDepartment",
+          "companyId",
+          "educationalMunicipality",
+          "institution",
+          "site",
+          "cargo_real",
+          "residenceCertificateHasExpiration",
+        ];
+
+        if (reactiveFields.includes(event.target.name)) {
+          if (event.target.name === "companyId") state.personnelDraft.contractId = "";
+          if (event.target.name === "expeditionDepartment") state.personnelDraft.expeditionMunicipality = "";
+          if (event.target.name === "birthDepartment") state.personnelDraft.birthMunicipality = "";
+          if (event.target.name === "educationalMunicipality") {
+            state.personnelDraft.institution = "";
+            state.personnelDraft.site = "";
+            state.personnelDraft.educationalModality = "";
+          }
+          if (event.target.name === "institution") {
+            state.personnelDraft.site = "";
+            state.personnelDraft.educationalModality = "";
+          }
+          if (event.target.name === "site") {
+            state.personnelDraft.educationalModality = "";
+          }
+          if (event.target.name === "cargo_real" && !isInstitutionalTabEnabled(event.target.value)) {
+            state.personnelDraft.educationalMunicipality = "";
+            state.personnelDraft.institution = "";
+            state.personnelDraft.site = "";
+            state.personnelDraft.educationalModality = "";
+            state.personnelDraft.municipiosACargo = "";
+            if (state.personnelCreateTab === "institucional") {
+              state.personnelCreateTab = "licitacion";
+            }
+          }
+          if (event.target.name === "residenceCertificateHasExpiration") {
+            if (event.target.value === "false") {
+              autoSetResidenceCertificateDate();
+            } else if (event.target.value === "true") {
+              state.personnelDraft.residenceCertificateExpiration = "";
+            }
+          }
+
+          await openModule("gestion_personal");
+          return;
+        }
+
+        syncEmployeeHeaderFromDraft();
+      });
+    });
+
+    const presentedInOffer = document.getElementById("presentedInOffer");
+    const offerPositionWrap = document.getElementById("offerPositionWrap");
+
+    if (presentedInOffer && offerPositionWrap) {
+      const syncOfferField = () => {
+        if (presentedInOffer.value === "true") {
+          offerPositionWrap.classList.remove("hidden");
+        } else {
+          offerPositionWrap.classList.add("hidden");
+          state.personnelDraft.offerPosition = "";
+        }
+      };
+
+      presentedInOffer.addEventListener("change", syncOfferField);
+      syncOfferField();
     }
+
+    enforceInputRestrictions(form);
+    syncEmployeeHeaderFromDraft();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      alert("Cambios de la pestaña guardados temporalmente.");
+    });
   }, 0);
 
   return `
@@ -735,6 +1564,92 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
       ${listHtml}
     </div>
   `;
+}
+
+async function handleCreatePersonnel(event) {
+  event.preventDefault();
+
+  const payload = {
+    primer_nombre: state.personnelDraft.firstName || "",
+    segundo_nombre: state.personnelDraft.secondName || "",
+    primer_apellido: state.personnelDraft.firstLastName || "",
+    segundo_apellido: state.personnelDraft.secondLastName || "",
+    tipo_documento: state.personnelDraft.documentType || "",
+    numero_documento: state.personnelDraft.documentNumber || "",
+
+    fecha_expedicion_dia: Number(state.personnelDraft.expeditionDay || 0),
+    fecha_expedicion_mes: Number(state.personnelDraft.expeditionMonth || 0),
+    fecha_expedicion_anio: Number(state.personnelDraft.expeditionYear || 0),
+    departamento_expedicion: state.personnelDraft.expeditionDepartment || "",
+    municipio_expedicion: state.personnelDraft.expeditionMunicipality || "",
+
+    fecha_nacimiento_dia: Number(state.personnelDraft.birthDay || 0),
+    fecha_nacimiento_mes: Number(state.personnelDraft.birthMonth || 0),
+    fecha_nacimiento_anio: Number(state.personnelDraft.birthYear || 0),
+    pais_nacimiento: state.personnelDraft.birthCountry || "",
+    departamento_nacimiento: state.personnelDraft.birthDepartment || "",
+    municipio_nacimiento: state.personnelDraft.birthMunicipality || "",
+
+    grupo_sanguineo: state.personnelDraft.bloodType || "",
+    sexo_biologico: state.personnelDraft.biologicalSex || "",
+
+    empresa: Number(state.personnelDraft.companyId ?? state.currentUser?.companyId ?? 0),
+    contrato: Number(state.personnelDraft.contractId ?? state.currentUser?.contractId ?? 0),
+    municipio: state.personnelDraft.municipalityId || "",
+
+    presentacion_en_licitacion: state.personnelDraft.presentedInOffer === "true",
+    cargo_presentado_en_licitacion: state.personnelDraft.offerPosition || "",
+    cargo_real: state.personnelDraft.cargo_real || "",
+    estado: state.personnelDraft.status || "",
+    motivo_inactividad: state.personnelDraft.inactiveReason || "",
+    autorizado: state.personnelDraft.authorized === "true",
+    autorizado_por: state.personnelDraft.authorizedBy || "",
+    autorizado_fecha: state.personnelDraft.authorizedDate || "",
+
+    celular: state.personnelDraft.phone || "",
+    correo_electronico: state.personnelDraft.email || "",
+    direccion_residencia: state.personnelDraft.address || "",
+    barrio_residencia: state.personnelDraft.neighborhood || "",
+    municipio_residencia: state.personnelDraft.residenceMunicipality || "",
+    estado_civil: state.personnelDraft.civilStatus || "",
+    pais_residencia: "Colombia",
+    departamento_residencia: "Meta",
+    zona_residencia: state.personnelDraft.residenceZone || "",
+
+    institucion_educativa: state.personnelDraft.institution || "",
+    sede_educativa: state.personnelDraft.site || "",
+    modalidad: state.personnelDraft.educationalModality || "",
+
+    tipo_contrato: state.personnelDraft.contractType || "",
+    fecha_inicio_real: state.personnelDraft.startDate || "",
+    eps: state.personnelDraft.eps || "",
+    fondo_pensiones: state.personnelDraft.pensionFund || "",
+    caja_compensacion: state.personnelDraft.compensationBox || "",
+    arl: state.personnelDraft.arl || "",
+    dotacion: state.personnelDraft.uniformSize || "",
+
+    sisben_tiene: state.personnelDraft.sisben || "",
+    sisben_categoria: state.personnelDraft.sisbenCategory || "",
+    contacto_emergencia_nombre: state.personnelDraft.emergencyContactName || "",
+    contacto_emergencia_telefono: state.personnelDraft.emergencyContactPhone || "",
+    observaciones_internas: state.personnelDraft.internalNotes || "",
+  };
+
+  try {
+    await apiFetch("/personnel", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    alert("Empleado creado correctamente");
+
+    state.personnelDraft = {};
+    state.personnelCreateTab = "identificacion";
+    state.activeSubmodule = "consultar_empleados";
+    await openModule("gestion_personal");
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function loadResumeModule() {
@@ -1676,6 +2591,8 @@ function resetDashboard() {
   state.activeSubmodule = null;
   state.token = "";
   state.users = [];
+  state.personnelCreateTab = "identificacion";
+  state.personnelDraft = {};
 
   localStorage.removeItem("empiria_token");
   localStorage.removeItem("empiria_user");
@@ -1830,18 +2747,12 @@ if (elements.loginForm) {
         state.tempPassword = password;
 
         showMfaField(true);
-        showLoginMessage(
-          payload.message || "Debes ingresar el código MFA",
-          true
-        );
+        showLoginMessage(payload.message || "Debes ingresar el código MFA", true);
         return;
       }
 
       if (!response.ok || !payload.ok) {
-        showLoginMessage(
-          payload.message || "No fue posible iniciar sesión",
-          true
-        );
+        showLoginMessage(payload.message || "No fue posible iniciar sesión", true);
         return;
       }
 
