@@ -1,107 +1,78 @@
-const { readCollection, writeCollection } = require("./store");
+const fs = require("fs");
+const path = require("path");
 
-const PERSONNEL_FILE = "personnel.json";
+const filePath = path.join(__dirname, "personnel.json");
+
+function readPersonnel() {
+  if (!fs.existsSync(filePath)) return [];
+  const data = fs.readFileSync(filePath, "utf-8");
+  return data ? JSON.parse(data) : [];
+}
+
+function writePersonnel(data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
 
 function getPersonnel() {
-  return readCollection(PERSONNEL_FILE);
+  return readPersonnel();
 }
 
-function savePersonnel(personnel) {
-  return writeCollection(PERSONNEL_FILE, personnel);
-}
+// 🔥 ESTA ES LA QUE FALTABA
+function getVisibleResumeRecords(user) {
+  const personnel = readPersonnel();
 
-function getNextPersonnelId(personnel) {
-  const ids = personnel.map((item) => item.id);
-  return ids.length ? Math.max(...ids) + 1 : 1;
-}
-
-function createPersonnel(payload) {
-  if (
-    !payload.fullName ||
-    !payload.documentNumber ||
-    !payload.position ||
-    !payload.companyId ||
-    !payload.contractId ||
-    !payload.municipality
-  ) {
-    throw new Error("Faltan datos obligatorios del personal");
+  if (user.role === "administrador") {
+    return personnel;
   }
 
-  const personnel = getPersonnel();
+  return personnel.filter((p) => {
+    const sameCompany =
+      !user.companyId || !p.companyId || p.companyId === user.companyId;
+
+    const sameContract =
+      !user.contractId || !p.contractId || p.contractId === user.contractId;
+
+    return sameCompany && sameContract;
+  });
+}
+
+function createPersonnel(newPerson) {
+  const personnel = readPersonnel();
+
+  const id = Date.now();
 
   const record = {
-    id: getNextPersonnelId(personnel),
-    fullName: payload.fullName,
-    documentNumber: String(payload.documentNumber),
-    position: payload.position,
-    companyId: Number(payload.companyId),
-    contractId: Number(payload.contractId),
-    municipality: payload.municipality,
-    site: payload.site || "",
-    institution: payload.institution || "",
-    modality: payload.modality || "",
-    headOfHousehold: Boolean(payload.headOfHousehold),
-    status: payload.status || "activo",
+    id,
+    ...newPerson,
+    createdAt: new Date().toISOString(),
   };
 
   personnel.push(record);
-  savePersonnel(personnel);
+  writePersonnel(personnel);
 
   return record;
 }
 
-function updatePersonnel(personnelId, changes) {
-  const personnel = getPersonnel();
-  const index = personnel.findIndex((item) => item.id === Number(personnelId));
+// 🔥 UPDATE REAL (TE FALTABA ESTO BIEN HECHO)
+function updatePersonnel(id, updatedData) {
+  const personnel = readPersonnel();
 
-  if (index === -1) {
-    throw new Error("Empleado no encontrado");
-  }
+  const index = personnel.findIndex((p) => p.id == id);
+  if (index === -1) return null;
 
-  const current = personnel[index];
-
-  const updated = {
-    ...current,
-    ...changes,
+  personnel[index] = {
+    ...personnel[index],
+    ...updatedData,
+    updatedAt: new Date().toISOString(),
   };
 
-  if (updated.companyId != null) {
-    updated.companyId = Number(updated.companyId);
-  }
-
-  if (updated.contractId != null) {
-    updated.contractId = Number(updated.contractId);
-  }
-
-  if (updated.documentNumber != null) {
-    updated.documentNumber = String(updated.documentNumber);
-  }
-
-  updated.headOfHousehold = Boolean(updated.headOfHousehold);
-
-  personnel[index] = updated;
-  savePersonnel(personnel);
-
-  return updated;
-}
-
-function removePersonnel(personnelId) {
-  const personnel = getPersonnel();
-  const index = personnel.findIndex((item) => item.id === Number(personnelId));
-
-  if (index === -1) {
-    throw new Error("Empleado no encontrado");
-  }
-
-  const [removed] = personnel.splice(index, 1);
-  savePersonnel(personnel);
-
-  return removed;
+  writePersonnel(personnel);
+  return personnel[index];
 }
 
 module.exports = {
-  createPersonnel,
   getPersonnel,
+  getVisibleResumeRecords,
+  createPersonnel,
   updatePersonnel,
-  removePersonnel,
 };

@@ -1145,7 +1145,17 @@ async function renderPersonnelTableModule() {
     `;
   }
 
-  const rows = Array.isArray(payload.personnel) ? payload.personnel : [];
+  const rows = Array.isArray(payload.data)
+    ? payload.data
+    : Array.isArray(payload.personnel)
+    ? payload.personnel
+    : [];
+
+  const searchValue = getPersonnelFilterValue("personnelSearch");
+  const statusValue = getPersonnelFilterValue("personnelFilterStatus");
+  const hvStatusValue = getPersonnelFilterValue("personnelFilterHvStatus");
+  const municipalityValue = getPersonnelFilterValue("personnelFilterMunicipality");
+
   const filteredRows = filterPersonnelRows(rows);
   const municipalityOptions = getVisibleMunicipalityOptions(rows);
 
@@ -1160,10 +1170,10 @@ async function renderPersonnelTableModule() {
 
     [searchInput, statusInput, hvStatusInput, municipalityInput].forEach((el) => {
       if (!el) return;
-      el.addEventListener("input", async () => {
-        await openModule("gestion_personal");
-      });
-      el.addEventListener("change", async () => {
+
+      const eventName = el.tagName === "SELECT" ? "change" : "input";
+
+      el.addEventListener(eventName, async () => {
         await openModule("gestion_personal");
       });
     });
@@ -1278,24 +1288,43 @@ async function renderPersonnelTableModule() {
             type="text"
             class="personnel-toolbar-search"
             placeholder="Buscar por nombre, documento o cargo"
+            value="${escapeAttr(searchValue)}"
           />
 
           <select id="personnelFilterStatus">
             <option value="">Estado laboral</option>
-            ${renderOptions(ESTADOS_PERSONAL, "", "Estado laboral")}
+            ${ESTADOS_PERSONAL
+              .map(
+                (item) => `
+                  <option value="${escapeAttr(item)}" ${
+                    String(statusValue) === String(item) ? "selected" : ""
+                  }>
+                    ${item}
+                  </option>
+                `
+              )
+              .join("")}
           </select>
 
           <select id="personnelFilterHvStatus">
             <option value="">Hoja de vida</option>
-            <option value="Completa">Completa</option>
-            <option value="Incompleta">Incompleta</option>
-            <option value="En revisión">En revisión</option>
+            <option value="Completa" ${hvStatusValue === "Completa" ? "selected" : ""}>Completa</option>
+            <option value="Incompleta" ${hvStatusValue === "Incompleta" ? "selected" : ""}>Incompleta</option>
+            <option value="En revisión" ${hvStatusValue === "En revisión" ? "selected" : ""}>En revisión</option>
           </select>
 
           <select id="personnelFilterMunicipality">
             <option value="">Municipio</option>
             ${municipalityOptions
-              .map((value) => `<option value="${escapeAttr(value)}">${value}</option>`)
+              .map(
+                (value) => `
+                  <option value="${escapeAttr(value)}" ${
+                    String(municipalityValue) === String(value) ? "selected" : ""
+                  }>
+                    ${value}
+                  </option>
+                `
+              )
               .join("")}
           </select>
 
@@ -2207,13 +2236,23 @@ async function handleCreatePersonnel(event) {
     observaciones_internas: state.personnelDraft.internalNotes || "",
   };
 
+  if (state.personnelViewMode === "edit" && state.personnelEditingId) {
+    payload.id = state.personnelEditingId;
+  }
+
   try {
+    const method = state.personnelViewMode === "edit" ? "PUT" : "POST";
+
     await apiFetch("/personnel", {
-      method: "POST",
+      method,
       body: JSON.stringify(payload),
     });
 
-    alert(state.personnelViewMode === "edit" ? "Empleado actualizado correctamente" : "Empleado creado correctamente");
+    alert(
+      state.personnelViewMode === "edit"
+        ? "Empleado actualizado correctamente"
+        : "Empleado creado correctamente"
+    );
 
     state.personnelDraft = {};
     state.personnelCreateTab = "identificacion";

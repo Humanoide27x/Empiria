@@ -2077,5 +2077,77 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     "createdAt": "2026-04-10T19:25:55.166Z"
+  },
+  {
+    "id": 175,
+    "username": "TH01",
+    "userId": 2,
+    "role": "talento_humano",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T14:42:24.753Z"
+  },
+  {
+    "id": 176,
+    "username": "TH01",
+    "userId": 2,
+    "role": "talento_humano",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T15:20:23.031Z"
+  },
+  {
+    "id": 177,
+    "username": "TH01",
+    "userId": 2,
+    "role": "talento_humano",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T15:41:39.352Z"
+  },
+  {
+    "id": 178,
+    "username": "admin",
+    "userId": 1,
+    "role": "administrador",
+    "success": false,
+    "status": "pending_mfa",
+    "reason": "mfa_required",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T15:47:21.343Z"
+  },
+  {
+    "id": 179,
+    "username": "TH01",
+    "userId": 2,
+    "role": "talento_humano",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T16:59:55.834Z"
+  },
+  {
+    "id": 180,
+    "username": "TH01",
+    "userId": 2,
+    "role": "talento_humano",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "createdAt": "2026-04-14T17:02:11.761Z"
   }
 ]
