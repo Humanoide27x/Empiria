@@ -1,16 +1,10 @@
-const { ACTIONS, MODULES } = require("../../auth/permissions");
 const { createSession, removeSession } = require("../../auth/tokens");
-const {
-  describeUserAccess,
-  evaluateModuleAccess,
-} = require("../../auth/access");
+const { describeUserAccess } = require("../../auth/access");
 
 const {
-  getUsers,
   enableMfaForUser,
   findUserByCredentials,
   findUserById,
-  resetMfaForUser,
   sanitizeUser,
   saveMfaSecret,
 } = require("../../data/users");
@@ -38,7 +32,6 @@ const {
   getAuthenticatedUser,
   getBlockedMessage,
   requireAuth,
-  requireAdministrator,
 } = require("./auth.helpers");
 
 async function handleLogin(req, res) {
@@ -49,14 +42,26 @@ async function handleLogin(req, res) {
 
   try {
     const body = await readJsonBody(req);
-    const username = body.username || "";
-    const normalizedUsername = String(username || "").trim().toLowerCase();
+
+    const username = String(body.username || "").trim();
+    const normalizedUsername = username.toLowerCase();
+    const password = String(body.password || "");
+    const mfaCode = String(body.mfaCode || "").trim();
+
     const ip = getClientIp(req);
     const userAgent = req.headers["user-agent"] || "";
 
+    if (!username || !password) {
+      sendJson(res, 400, {
+        ok: false,
+        message: "Debes enviar usuario y contrasena",
+      });
+      return;
+    }
+
     const blockState = isUserBlocked(normalizedUsername);
 
-    if (blockState.blocked) {
+    if (blockState?.blocked) {
       createSafeAccessLog({
         username,
         success: false,
@@ -75,7 +80,7 @@ async function handleLogin(req, res) {
       return;
     }
 
-    const user = findUserByCredentials(body.username, body.password);
+    const user = findUserByCredentials(username, password);
 
     if (!user) {
       const attempt = registerFailedAttempt(normalizedUsername);
@@ -108,9 +113,11 @@ async function handleLogin(req, res) {
       return;
     }
 
-    const existingUserBlockState = isUserBlocked(user.username);
+    const existingUserBlockState = isUserBlocked(
+      String(user.username || "").trim().toLowerCase()
+    );
 
-    if (existingUserBlockState.blocked) {
+    if (existingUserBlockState?.blocked) {
       createSafeAccessLog({
         username: user.username,
         userId: user.id,
@@ -132,7 +139,7 @@ async function handleLogin(req, res) {
     }
 
     if (user.mfaEnabled) {
-      if (!body.mfaCode) {
+      if (!mfaCode) {
         createSafeAccessLog({
           username: user.username,
           userId: user.id,
@@ -152,10 +159,12 @@ async function handleLogin(req, res) {
         return;
       }
 
-      const isValidMfa = verifyMfaToken(user.mfaSecret, body.mfaCode);
+      const isValidMfa = verifyMfaToken(user.mfaSecret, mfaCode);
 
       if (!isValidMfa) {
-        const attempt = registerFailedAttempt(user.username);
+        const attempt = registerFailedAttempt(
+          String(user.username || "").trim().toLowerCase()
+        );
 
         createSafeAccessLog({
           username: user.username,
@@ -189,7 +198,7 @@ async function handleLogin(req, res) {
       }
     }
 
-    clearFailedAttempts(user.username);
+    clearFailedAttempts(String(user.username || "").trim().toLowerCase());
 
     const token = createSession(user);
 
@@ -212,9 +221,11 @@ async function handleLogin(req, res) {
       access: describeUserAccess(user),
     });
   } catch (error) {
-    sendJson(res, 400, {
+    console.error("Error en login:", error);
+
+    sendJson(res, 500, {
       ok: false,
-      message: error.message,
+      message: "Error interno iniciando sesion",
     });
   }
 }
@@ -251,7 +262,9 @@ function handleMe(req, res) {
 
   const auth = requireAuth(req, res);
 
-  if (!auth) return;
+  if (!auth) {
+    return;
+  }
 
   sendJson(res, 200, {
     ok: true,
@@ -274,10 +287,11 @@ async function handleRoles(req, res) {
       roles,
     });
   } catch (error) {
+    console.error("Error consultando roles:", error);
+
     sendJson(res, 500, {
       ok: false,
       message: "No fue posible consultar los roles",
-      detail: error.message,
     });
   }
 }
@@ -289,15 +303,16 @@ async function handleMfaSetup(req, res) {
   }
 
   const auth = requireAuth(req, res);
-  if (!auth) return;
 
-  const user = auth.user;
+  if (!auth) {
+    return;
+  }
 
   try {
-    const { secret, otpauth_url } = generateMfaSecret(user.username);
+    const { secret, otpauth_url } = generateMfaSecret(auth.user.username);
     const qr = await generateQrCode(otpauth_url);
 
-    saveMfaSecret(user.id, secret);
+    saveMfaSecret(auth.user.id, secret);
 
     sendJson(res, 200, {
       ok: true,
@@ -305,10 +320,11 @@ async function handleMfaSetup(req, res) {
       message: "Escanea este QR con tu app autenticadora",
     });
   } catch (error) {
+    console.error("Error generando MFA:", error);
+
     sendJson(res, 500, {
       ok: false,
       message: "Error generando MFA",
-      detail: error.message,
     });
   }
 }
@@ -320,26 +336,39 @@ async function handleMfaConfirm(req, res) {
   }
 
   const auth = requireAuth(req, res);
-  if (!auth) return;
+
+  if (!auth) {
+    return;
+  }
 
   try {
     const body = await readJsonBody(req);
+    const token = String(body.token || "").trim();
     const currentUser = findUserById(auth.user.id);
 
-    if (!body.token) {
-      sendJson(res, 400, { ok: false, message: "Debes enviar el codigo MFA" });
+    if (!token) {
+      sendJson(res, 400, {
+        ok: false,
+        message: "Debes enviar el codigo MFA",
+      });
       return;
     }
 
     if (!currentUser || !currentUser.mfaSecret) {
-      sendJson(res, 400, { ok: false, message: "Primero genera el secreto MFA" });
+      sendJson(res, 400, {
+        ok: false,
+        message: "Primero genera el secreto MFA",
+      });
       return;
     }
 
-    const isValid = verifyMfaToken(currentUser.mfaSecret, body.token);
+    const isValid = verifyMfaToken(currentUser.mfaSecret, token);
 
     if (!isValid) {
-      sendJson(res, 400, { ok: false, message: "Codigo invalido" });
+      sendJson(res, 400, {
+        ok: false,
+        message: "Codigo invalido",
+      });
       return;
     }
 
@@ -350,10 +379,11 @@ async function handleMfaConfirm(req, res) {
       message: "MFA activado correctamente",
     });
   } catch (error) {
+    console.error("Error confirmando MFA:", error);
+
     sendJson(res, 500, {
       ok: false,
       message: "Error confirmando MFA",
-      detail: error.message,
     });
   }
 }

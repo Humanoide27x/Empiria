@@ -8,9 +8,9 @@
     "companyId": null,
     "contractId": null,
     "assignedMunicipalities": [],
-    "mfaSecret": "PJYVK7LHNF6XS6KKHBLTSRZ7KQQTQQZEGRFWWMD5NRRFUZBIKJAQ",
-    "mfaEnabled": true,
-    "mfaConfirmedAt": "2026-04-03T01:37:05.327Z"
+    "mfaSecret": "null",
+    "mfaEnabled": false,
+    "mfaConfirmedAt": "null"
   },
   {
     "id": 2,

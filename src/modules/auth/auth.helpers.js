@@ -1,4 +1,4 @@
-const { ROLES } = require("../../auth/permissions");
+const { ROLES, normalizeRole } = require("../../auth/permissions");
 const { getSession } = require("../../auth/tokens");
 const { findUserById } = require("../../data/users");
 const { createAccessLog } = require("../../data/accessLogin");
@@ -8,17 +8,17 @@ const { getBlockConfig } = require("../../data/loginAttempts");
 
 function getClientIp(req) {
   const forwardedFor = req.headers["x-forwarded-for"];
+  const realIp = req.headers["x-real-ip"];
 
   if (typeof forwardedFor === "string" && forwardedFor.trim()) {
     return forwardedFor.split(",")[0].trim();
   }
 
-  return (
-    req.socket?.remoteAddress ||
-    req.connection?.remoteAddress ||
-    req.headers["x-real-ip"] ||
-    ""
-  );
+  if (typeof realIp === "string" && realIp.trim()) {
+    return realIp.trim();
+  }
+
+  return req.socket?.remoteAddress || req.connection?.remoteAddress || "";
 }
 
 function createSafeAccessLog(payload) {
@@ -30,28 +30,34 @@ function createSafeAccessLog(payload) {
 }
 
 function getAuthenticatedUser(req) {
-  const token = getBearerToken(req);
+  try {
+    const token = getBearerToken(req);
 
-  if (!token) {
+    if (!token) {
+      return null;
+    }
+
+    const session = getSession(token);
+
+    if (!session || !session.userId) {
+      return null;
+    }
+
+    const user = findUserById(session.userId);
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      token,
+      session,
+      user,
+    };
+  } catch (error) {
+    console.error("Error obteniendo usuario autenticado:", error.message);
     return null;
   }
-
-  const session = getSession(token);
-
-  if (!session) {
-    return null;
-  }
-
-  const user = findUserById(session.userId);
-
-  if (!user) {
-    return null;
-  }
-
-  return {
-    token,
-    user,
-  };
 }
 
 function getBlockedMessage(blockedUntil) {
@@ -84,7 +90,9 @@ function requireAdministrator(req, res) {
     return null;
   }
 
-  if (auth.user.role !== ROLES.ADMINISTRATOR) {
+  const role = normalizeRole(auth.user.role);
+
+  if (role !== ROLES.ADMINISTRATOR) {
     sendJson(res, 403, {
       ok: false,
       message: "Solo el administrador puede hacer esta accion",

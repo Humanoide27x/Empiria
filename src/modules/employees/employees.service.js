@@ -1,59 +1,10 @@
-const crypto = require("crypto");
-
-let personnelData = {};
-let store = {};
-
-try {
-  personnelData = require("../../data/personnel");
-} catch (error) {
-  personnelData = {};
-}
-
-try {
-  store = require("../../data/store");
-} catch (error) {
-  store = {};
-}
-
-const PERSONNEL_FILE = "personnel.json";
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function readAllPersonnel() {
-  if (typeof store.readCollection === "function") {
-    return safeArray(store.readCollection(PERSONNEL_FILE));
-  }
-
-  if (typeof personnelData.getPersonnel === "function") {
-    return safeArray(personnelData.getPersonnel());
-  }
-
-  if (typeof personnelData.listPersonnel === "function") {
-    return safeArray(personnelData.listPersonnel());
-  }
-
-  return [];
-}
-
-function saveAllPersonnel(items) {
-  const normalizedItems = safeArray(items);
-
-  if (typeof store.writeCollection === "function") {
-    return store.writeCollection(PERSONNEL_FILE, normalizedItems);
-  }
-
-  if (typeof personnelData.savePersonnel === "function") {
-    return personnelData.savePersonnel(normalizedItems);
-  }
-
-  if (typeof personnelData.setPersonnel === "function") {
-    return personnelData.setPersonnel(normalizedItems);
-  }
-
-  return normalizedItems;
-}
+const {
+  listEmployeesFromRepository,
+  getEmployeeByIdFromRepository,
+  createEmployeeInRepository,
+  updateEmployeeInRepository,
+  deleteEmployeeFromRepository,
+} = require("./repository");
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -62,6 +13,19 @@ function firstNonEmpty(...values) {
     }
   }
   return "";
+}
+
+function safeString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function safeNumber(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function buildFullName(payload = {}) {
@@ -76,8 +40,8 @@ function buildFullName(payload = {}) {
     payload.personalName
   );
 
-  if (String(directName).trim()) {
-    return String(directName).trim();
+  if (safeString(directName)) {
+    return safeString(directName);
   }
 
   const firstName = firstNonEmpty(
@@ -112,13 +76,12 @@ function buildFullName(payload = {}) {
   );
 
   return [firstName, secondName, lastName, secondLastName]
-    .map((item) => String(item || "").trim())
+    .map((item) => safeString(item))
     .filter(Boolean)
     .join(" ");
 }
 
-function normalizeEmployeePayload(payload = {}) {
-  const now = new Date().toISOString();
+function normalizeEmployeePayload(payload = {}, currentEmployee = null) {
   const fullName = buildFullName(payload);
 
   const firstName = firstNonEmpty(
@@ -126,14 +89,16 @@ function normalizeEmployeePayload(payload = {}) {
     payload.primerNombre,
     payload.primer_nombre,
     payload.nombre1,
-    payload.nombrePrimero
+    payload.nombrePrimero,
+    currentEmployee?.primer_nombre
   );
 
   const secondName = firstNonEmpty(
     payload.secondName,
     payload.segundoNombre,
     payload.segundo_nombre,
-    payload.nombre2
+    payload.nombre2,
+    currentEmployee?.segundo_nombre
   );
 
   const firstLastName = firstNonEmpty(
@@ -142,20 +107,23 @@ function normalizeEmployeePayload(payload = {}) {
     payload.apellidos,
     payload.primerApellido,
     payload.primer_apellido,
-    payload.apellido1
+    payload.apellido1,
+    currentEmployee?.primer_apellido
   );
 
   const secondLastName = firstNonEmpty(
     payload.secondLastName,
     payload.segundoApellido,
     payload.segundo_apellido,
-    payload.apellido2
+    payload.apellido2,
+    currentEmployee?.segundo_apellido
   );
 
   const documentType = firstNonEmpty(
     payload.documentType,
     payload.tipo_documento,
-    payload.tipoDocumento
+    payload.tipoDocumento,
+    currentEmployee?.tipo_documento
   );
 
   const documentNumber = firstNonEmpty(
@@ -169,30 +137,35 @@ function normalizeEmployeePayload(payload = {}) {
     payload.cedula,
     payload.cédula,
     payload.cc,
-    payload.numDocumento
+    payload.numDocumento,
+    currentEmployee?.numero_documento
   );
 
   const municipality = firstNonEmpty(
     payload.municipality,
     payload.municipio,
-    payload.municipio_residencia,
-    payload.assignedMunicipality
+    currentEmployee?.municipality,
+    currentEmployee?.municipio
   );
 
   const companyId = firstNonEmpty(
     payload.companyId,
+    payload.company_id,
     payload.company,
     payload.empresa,
     payload.empresaId,
-    payload.company_id
+    currentEmployee?.companyId,
+    currentEmployee?.company_id
   );
 
   const contractId = firstNonEmpty(
     payload.contractId,
+    payload.contract_id,
     payload.contract,
     payload.contrato,
     payload.contratoId,
-    payload.contract_id
+    currentEmployee?.contractId,
+    currentEmployee?.contract_id
   );
 
   const email = firstNonEmpty(
@@ -200,14 +173,16 @@ function normalizeEmployeePayload(payload = {}) {
     payload.correo,
     payload.correoElectronico,
     payload.correo_electronico,
-    payload.emailAddress
+    payload.emailAddress,
+    currentEmployee?.email
   );
 
   const phone = firstNonEmpty(
     payload.phone,
     payload.telefono,
     payload.celular,
-    payload.mobile
+    payload.mobile,
+    currentEmployee?.phone
   );
 
   const position = firstNonEmpty(
@@ -215,239 +190,189 @@ function normalizeEmployeePayload(payload = {}) {
     payload.cargo,
     payload.cargo_real,
     payload.jobTitle,
-    payload.rolCargo
+    payload.rolCargo,
+    currentEmployee?.position,
+    currentEmployee?.cargo_real
   );
 
-  const employeeId = firstNonEmpty(
-    payload.id,
-    payload.employeeId,
-    payload.personnelId
+  const status = firstNonEmpty(
+    payload.status,
+    payload.estado,
+    payload.employeeStatus,
+    currentEmployee?.status,
+    "activo"
   );
 
   return {
-    ...payload,
-
-    id: employeeId || crypto.randomUUID(),
-    employeeId: employeeId || payload.employeeId || null,
-    personnelId: employeeId || payload.personnelId || null,
-
-    name: fullName,
+    tenantId: safeNumber(firstNonEmpty(payload.tenantId, payload.tenant_id, currentEmployee?.tenantId, currentEmployee?.tenant_id, 1)),
     fullName,
-    nombre: fullName,
-    nombreCompleto: fullName,
-
-    primer_nombre: String(firstName || "").trim(),
-    segundo_nombre: String(secondName || "").trim(),
-    primer_apellido: String(firstLastName || "").trim(),
-    segundo_apellido: String(secondLastName || "").trim(),
-
-    tipo_documento: documentType ? String(documentType).trim() : "",
-
-    document: documentNumber ? String(documentNumber).trim() : "",
-    documentNumber: documentNumber ? String(documentNumber).trim() : "",
-    documento: documentNumber ? String(documentNumber).trim() : "",
-    numero_documento: documentNumber ? String(documentNumber).trim() : "",
-    cedula: documentNumber ? String(documentNumber).trim() : "",
-
-    municipality: municipality ? String(municipality).trim() : "",
-    municipio: municipality ? String(municipality).trim() : "",
-
-    companyId: companyId ? String(companyId).trim() : "",
-    contractId: contractId ? String(contractId).trim() : "",
-
-    company: payload.company ?? companyId ?? "",
-    contract: payload.contract ?? contractId ?? "",
-    empresa: payload.empresa ?? companyId ?? "",
-    contrato: payload.contrato ?? contractId ?? "",
-
-    email: email ? String(email).trim() : "",
-    correo: email ? String(email).trim() : "",
-    correo_electronico: email ? String(email).trim() : "",
-
-    phone: phone ? String(phone).trim() : "",
-    telefono: phone ? String(phone).trim() : "",
-    celular: phone ? String(phone).trim() : "",
-
-    position: position ? String(position).trim() : "",
-    cargo: position ? String(position).trim() : "",
-    cargo_real: firstNonEmpty(payload.cargo_real, payload.cargo, payload.position),
-
-    direccion_residencia: firstNonEmpty(
-      payload.direccion_residencia,
-      payload.address
-    ),
-    barrio_residencia: firstNonEmpty(
-      payload.barrio_residencia,
-      payload.neighborhood
-    ),
-    municipio_residencia: firstNonEmpty(
-      payload.municipio_residencia,
-      payload.residenceMunicipality
+    primer_nombre: safeString(firstName),
+    segundo_nombre: safeString(secondName),
+    primer_apellido: safeString(firstLastName),
+    segundo_apellido: safeString(secondLastName),
+    tipo_documento: safeString(documentType),
+    numero_documento: safeString(documentNumber),
+    municipality: safeString(municipality),
+    companyId: safeNumber(companyId),
+    contractId: safeNumber(contractId),
+    email: safeString(email),
+    phone: safeString(phone),
+    position: safeString(position),
+    cargo_real: safeString(
+      firstNonEmpty(payload.cargo_real, payload.cargo, payload.position, position)
     ),
 
-    eps: firstNonEmpty(payload.eps),
-    fondo_pensiones: firstNonEmpty(payload.fondo_pensiones, payload.pensionFund),
-    caja_compensacion: firstNonEmpty(payload.caja_compensacion, payload.compensationBox),
-    arl: firstNonEmpty(payload.arl),
-
-    status: firstNonEmpty(
-      payload.status,
-      payload.estado,
-      payload.employeeStatus,
-      "activo"
+    direccion_residencia: safeString(
+      firstNonEmpty(payload.direccion_residencia, payload.address, currentEmployee?.direccion_residencia)
+    ),
+    barrio_residencia: safeString(
+      firstNonEmpty(payload.barrio_residencia, payload.neighborhood, currentEmployee?.barrio_residencia)
+    ),
+    municipio_residencia: safeString(
+      firstNonEmpty(
+        payload.municipio_residencia,
+        payload.residenceMunicipality,
+        currentEmployee?.municipio_residencia
+      )
     ),
 
-    createdAt: payload.createdAt || now,
-    updatedAt: now,
+    eps: safeString(firstNonEmpty(payload.eps, currentEmployee?.eps)),
+    fondo_pensiones: safeString(
+      firstNonEmpty(payload.fondo_pensiones, payload.pensionFund, currentEmployee?.fondo_pensiones)
+    ),
+    caja_compensacion: safeString(
+      firstNonEmpty(
+        payload.caja_compensacion,
+        payload.compensationBox,
+        currentEmployee?.caja_compensacion
+      )
+    ),
+    arl: safeString(firstNonEmpty(payload.arl, currentEmployee?.arl)),
+
+    status: safeString(status),
+
+    // 🔥 CLAVE PARA QUE FUNCIONE EL GUARDADO PARCIAL
+    registro_estado: safeString(
+      firstNonEmpty(payload.registro_estado, currentEmployee?.registro_estado)
+    ),
   };
 }
 
-function listEmployees() {
-  return readAllPersonnel();
-}
+function validateEmployeePayload(payload, { requireNames = true } = {}) {
+  const isIncompleteRegistration =
+    payload.registro_estado === "INCOMPLETO" ||
+    payload.status === "REGISTRO INCOMPLETO" ||
+    (!payload.companyId &&
+      !payload.contractId &&
+      !safeString(payload.municipality));
 
-function getPersonnel() {
-  return listEmployees();
-}
-
-function getEmployeeById(id) {
-  if (!id) {
-    return null;
+  if (!safeString(payload.fullName)) {
+    throw new Error("El nombre completo del empleado es obligatorio");
   }
 
-  const employees = readAllPersonnel();
-
-  return (
-    employees.find((item) => {
-      const itemId = item?.id || item?.employeeId || item?.personnelId;
-      return String(itemId) === String(id);
-    }) || null
-  );
-}
-
-function findPersonnelById(id) {
-  return getEmployeeById(id);
-}
-
-function createEmployee(payload = {}) {
-  const employees = readAllPersonnel();
-  const newEmployee = normalizeEmployeePayload(payload);
-
-  if (!String(newEmployee.name || "").trim()) {
-    throw new Error("El nombre del empleado es obligatorio");
-  }
-
-  if (!String(newEmployee.primer_nombre || "").trim()) {
+  if (requireNames && !safeString(payload.primer_nombre)) {
     throw new Error("El primer nombre del empleado es obligatorio");
   }
 
-  if (!String(newEmployee.primer_apellido || "").trim()) {
+  if (requireNames && !safeString(payload.primer_apellido)) {
     throw new Error("El primer apellido del empleado es obligatorio");
   }
 
-  const duplicateByDocument =
-    newEmployee.document &&
-    employees.find(
-      (item) =>
-        String(
-          item.document ||
-            item.documentNumber ||
-            item.documento ||
-            item.numero_documento ||
-            item.cedula ||
-            ""
-        ) === String(newEmployee.document)
-    );
+  if (!safeString(payload.numero_documento)) {
+    throw new Error("El número de documento es obligatorio");
+  }
 
-  if (duplicateByDocument) {
+  // 🔥 SI ES INCOMPLETO → NO VALIDAR LO DEMÁS
+  if (isIncompleteRegistration) {
+    return;
+  }
+
+  if (!payload.companyId) {
+    throw new Error("La empresa es obligatoria");
+  }
+
+  if (!payload.contractId) {
+    throw new Error("El contrato es obligatorio");
+  }
+
+  if (!safeString(payload.municipality)) {
+    throw new Error("El municipio es obligatorio");
+  }
+}
+
+async function listEmployees(resource = {}) {
+  return await listEmployeesFromRepository(resource);
+}
+
+async function getEmployeeById(id) {
+  if (!id) return null;
+  return await getEmployeeByIdFromRepository(id);
+}
+
+async function createEmployee(payload = {}) {
+  const normalizedPayload = normalizeEmployeePayload(payload);
+
+  validateEmployeePayload(normalizedPayload, { requireNames: true });
+
+  const duplicate = await listEmployeesFromRepository({
+    documentNumber: normalizedPayload.numero_documento,
+    tenantId: normalizedPayload.tenantId,
+  });
+
+  if (Array.isArray(duplicate) && duplicate.length > 0) {
     throw new Error("Ya existe un empleado con ese número de documento");
   }
 
-  employees.push(newEmployee);
-  saveAllPersonnel(employees);
-
-  return newEmployee;
+  return await createEmployeeInRepository(normalizedPayload);
 }
 
-function createPersonnel(payload = {}) {
-  return createEmployee(payload);
+async function updateEmployee(id, payload = {}) {
+  if (!id) throw new Error("Id de empleado requerido");
+
+  const currentEmployee = await getEmployeeByIdFromRepository(id);
+  if (!currentEmployee) return null;
+
+  const normalizedPayload = normalizeEmployeePayload(payload, currentEmployee);
+
+  validateEmployeePayload(normalizedPayload, { requireNames: true });
+
+  if (
+    safeString(normalizedPayload.numero_documento) &&
+    safeString(normalizedPayload.numero_documento) !==
+      safeString(currentEmployee.numero_documento)
+  ) {
+    const duplicate = await listEmployeesFromRepository({
+      documentNumber: normalizedPayload.numero_documento,
+      tenantId: normalizedPayload.tenantId,
+    });
+
+    const duplicateFound = Array.isArray(duplicate)
+      ? duplicate.find((item) => Number(item.id) !== Number(id))
+      : null;
+
+    if (duplicateFound) {
+      throw new Error("Ya existe un empleado con ese número de documento");
+    }
+  }
+
+  return await updateEmployeeInRepository(id, normalizedPayload);
 }
 
-function updateEmployee(id, payload = {}) {
-  if (!id) {
-    throw new Error("Id de empleado requerido");
-  }
-
-  const employees = readAllPersonnel();
-  const index = employees.findIndex((item) => {
-    const itemId = item?.id || item?.employeeId || item?.personnelId;
-    return String(itemId) === String(id);
-  });
-
-  if (index === -1) {
-    return null;
-  }
-
-  const current = employees[index];
-  const merged = normalizeEmployeePayload({
-    ...current,
-    ...payload,
-    id: current.id || current.employeeId || current.personnelId || id,
-    employeeId:
-      current.employeeId || current.id || current.personnelId || id,
-    personnelId:
-      current.personnelId || current.id || current.employeeId || id,
-    createdAt: current.createdAt,
-  });
-
-  if (!String(merged.name || "").trim()) {
-    throw new Error("El nombre del empleado es obligatorio");
-  }
-
-  employees[index] = merged;
-  saveAllPersonnel(employees);
-
-  return merged;
+async function deleteEmployee(id) {
+  if (!id) throw new Error("Id de empleado requerido");
+  return await deleteEmployeeFromRepository(id);
 }
 
-function updatePersonnel(id, payload = {}) {
-  return updateEmployee(id, payload);
-}
-
-function deleteEmployee(id) {
-  if (!id) {
-    throw new Error("Id de empleado requerido");
-  }
-
-  const employees = readAllPersonnel();
-  const index = employees.findIndex((item) => {
-    const itemId = item?.id || item?.employeeId || item?.personnelId;
-    return String(itemId) === String(id);
-  });
-
-  if (index === -1) {
-    return false;
-  }
-
-  employees.splice(index, 1);
-  saveAllPersonnel(employees);
-
-  return true;
-}
-
-function deletePersonnel(id) {
-  return deleteEmployee(id);
+async function getRequiredDocumentsByEmployeeId(id) {
+  if (!id) throw new Error("Id de empleado requerido");
+  return await getRequiredDocumentsByEmployeeIdFromRepository(id);
 }
 
 module.exports = {
   listEmployees,
-  getPersonnel,
   getEmployeeById,
-  findPersonnelById,
   createEmployee,
-  createPersonnel,
   updateEmployee,
-  updatePersonnel,
   deleteEmployee,
-  deletePersonnel,
+  getRequiredDocumentsByEmployeeId,
 };

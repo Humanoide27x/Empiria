@@ -166,6 +166,43 @@
         <!-- WORKSPACE -->
         <section class="workspace">
           <div id="workspace" class="workspace-panel">
+            <div id="bloqueInstitucional" class="form-grid two-cols hidden">
+              <div class="full">
+                <p class="eyebrow">Ubicación educativa</p>
+                <h3>Institución, sede y modalidad</h3>
+              </div>
+
+              <label for="municipioEducativo">
+                Municipio
+                <select id="municipioEducativo" name="municipality_id">
+                  <option value="">Seleccione municipio</option>
+                </select>
+              </label>
+
+              <label for="institucionEducativa">
+                Institución
+                <select id="institucionEducativa" name="institution_id">
+                  <option value="">Seleccione institución</option>
+                </select>
+              </label>
+
+              <label for="sedeEducativa">
+                Sede
+                <select id="sedeEducativa" name="site_id">
+                  <option value="">Seleccione sede</option>
+                </select>
+              </label>
+
+              <label for="modalidadEducativa">
+                Modalidad
+                <select id="modalidadEducativa" name="modality">
+                  <option value="">Seleccione modalidad</option>
+                </select>
+              </label>
+
+              <input type="hidden" id="codigoInstitucion" name="codigo_institucion" />
+            </div>
+            
             <div class="workspace-empty">
               <div>
                 <p class="eyebrow">Workspace</p>

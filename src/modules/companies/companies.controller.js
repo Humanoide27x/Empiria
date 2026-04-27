@@ -1,5 +1,6 @@
 const { requireAuth } = require("../auth/auth.helpers");
 const { sendJson, sendMethodNotAllowed } = require("../../http/response");
+const { getTenantIdForRequest } = require("../../tenancy/tenant");
 const service = require("./companies.service");
 
 async function handleGetCompanies(req, res) {
@@ -14,10 +15,12 @@ async function handleGetCompanies(req, res) {
   }
 
   try {
-    const companies = await service.getCompanies();
+    const tenantId = getTenantIdForRequest(req, auth.user);
+    const companies = await service.getCompanies(tenantId);
 
     sendJson(res, 200, {
       ok: true,
+      tenantId,
       companies,
     });
   } catch (error) {

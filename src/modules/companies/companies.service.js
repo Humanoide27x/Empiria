@@ -1,7 +1,7 @@
 const repository = require("./companies.repository");
 
-async function getCompanies() {
-  return repository.getAllCompanies();
+async function getCompanies(tenantId) {
+  return repository.getAllCompanies(tenantId);
 }
 
 module.exports = {

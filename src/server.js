@@ -12,8 +12,10 @@ const { handleContractsRoutes } = require("./modules/contracts/contracts.routes"
 const { handleDashboardRoutes } = require("./modules/dashboard/dashboard.routes");
 const { handleTrainingsRoutes } = require("./modules/trainings/trainings.routes");
 const { handleReportsRoutes } = require("./modules/reports/reports.routes");
+const { handleRequirementRoutes } = require("./modules/requirements/requirements.routes");
 
 const { requireAuth } = require("./modules/auth/auth.helpers");
+const { handleSaveDraft } = require("./modules/employees/drafts.controller");
 
 const { withModuleProtection } = require("./http/protection");
 const { readJsonBody } = require("./http/request");
@@ -23,12 +25,7 @@ const {
   sendNotFound,
 } = require("./http/response");
 
-const {
-  ACTIONS,
-  MODULES,
-  getRolePermissions,
-} = require("./auth/permissions");
-
+const { ACTIONS, MODULES } = require("./auth/permissions");
 const { evaluateModuleAccess } = require("./auth/access");
 const { getUsers, sanitizeUser } = require("./data/users");
 
@@ -47,6 +44,10 @@ const MIME_TYPES = {
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
 };
+
+const { handleEducationRoutes } = require("./modules/education/education.routes");
+const { handleGetDrafts } = require("./modules/employees/drafts.controller");
+const { getDraftsByEmployee } = require("./modules/employees/drafts.repository");
 
 function getContentType(filePath) {
   const extension = path.extname(filePath).toLowerCase();
@@ -147,6 +148,7 @@ async function handleAccessCheck(req, res, url) {
   }
 
   const auth = requireAuth(req, res);
+
   if (!auth) {
     return;
   }
@@ -154,8 +156,7 @@ async function handleAccessCheck(req, res, url) {
   try {
     const body = await readJsonBody(req);
     const moduleKey = body.module || url.searchParams.get("module");
-    const action =
-      body.action || url.searchParams.get("action") || ACTIONS.VIEW;
+    const action = body.action || url.searchParams.get("action") || ACTIONS.VIEW;
     const resource = body.resource || null;
 
     if (!moduleKey) {
@@ -166,12 +167,7 @@ async function handleAccessCheck(req, res, url) {
       return;
     }
 
-    const result = evaluateModuleAccess(
-      auth.user,
-      moduleKey,
-      action,
-      resource
-    );
+    const result = evaluateModuleAccess(auth.user, moduleKey, action, resource);
 
     sendJson(res, 200, {
       ok: true,
@@ -215,7 +211,8 @@ const protectedModuleRoutes = [
 ];
 
 async function requestHandler(req, res) {
-  const url = new URL(req.url, "http://localhost:3000");
+  const baseUrl = `http://${req.headers.host || "localhost:3000"}`;
+  const url = new URL(req.url, baseUrl);
 
   if (tryServePublicAsset(req, res, url)) {
     return;
@@ -226,6 +223,44 @@ async function requestHandler(req, res) {
 
   const adminHandled = await handleAdminRoutes(req, res, url);
   if (adminHandled) return;
+
+  const educationHandled = await handleEducationRoutes(req, res, url);
+  if (educationHandled) return;
+
+  // GUARDAR BORRADOR DE SECCIÓN
+  if (req.method === "POST" && url.pathname === "/employee-drafts") {
+    await withModuleProtection(
+      MODULES.PERSONNEL,
+      ACTIONS.CREATE,
+      async (innerReq, innerRes, innerUrl, user) => {
+        await handleSaveDraft(innerReq, innerRes, user);
+      }
+    )(req, res, url);
+
+    return;
+  }
+
+  // CONSULTAR BORRADORES POR EMPLEADO
+  if (req.method === "GET" && url.pathname.startsWith("/employee-drafts/")) {
+    await withModuleProtection(
+      MODULES.PERSONNEL,
+      ACTIONS.VIEW,
+      async (innerReq, innerRes, innerUrl, user) => {
+        const employeeId = innerUrl.pathname.split("/")[2];
+        const drafts = await getDraftsByEmployee(employeeId);
+
+        sendJson(innerRes, 200, {
+          ok: true,
+          data: drafts,
+        });
+      }
+    )(req, res, url);
+
+    return;
+  }
+
+  const requirementsHandled = await handleRequirementRoutes(req, res, url);
+  if (requirementsHandled) return;
 
   const employeesHandled = await handleEmployeesRoutes(req, res, url);
   if (employeesHandled) return;
@@ -276,7 +311,7 @@ async function requestHandler(req, res) {
   );
 
   if (protectedRoute) {
-    withModuleProtection(
+    await withModuleProtection(
       protectedRoute.moduleKey,
       protectedRoute.action,
       async (innerReq, innerRes, innerUrl, user, resource) => {
@@ -288,6 +323,7 @@ async function requestHandler(req, res) {
         });
       }
     )(req, res, url);
+
     return;
   }
 

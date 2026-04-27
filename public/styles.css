@@ -189,34 +189,67 @@ h3 {
 }
 
 /* LOGIN */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
 .login-screen {
-  min-height: calc(100vh - 32px);
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+
   display: grid;
   place-items: center;
+
+  padding: 0;
+  margin: 0;
+
+  background-image: url("./assets/login-bg.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.login-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 31, 68, 0.18);
+  z-index: 0;
 }
 
 .login-card {
-  width: min(100%, 520px);
-  padding: 38px;
-  border-radius: var(--radius-xl);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  box-shadow: var(--shadow);
+  position: relative;
+  z-index: 1;
+  width: min(100%, 390px);
+  padding: 28px 30px 30px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(226, 232, 240, 0.75);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(18px);
 }
 
 .login-brand {
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 28px;
+  margin: 0 0 22px;
 }
 
 .logo-login {
-  width: 300px;
+  width: 230px;
+  max-width: 100%;
   height: auto;
   display: block;
-  margin-bottom: 20px;
+  margin: 0 auto;
+  object-fit: contain;
 }
 
 .logo-sidebar {
@@ -272,16 +305,18 @@ h3 {
 }
 
 .login-header {
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
-
 /* APP */
 .dashboard {
   display: grid;
   grid-template-columns: 290px 1fr;
   gap: 18px;
-  min-height: calc(100vh - 32px);
+  min-height: 100vh;
   overflow-x: hidden;
+
+  /* 👇 ESTO ES LO NUEVO */
+  background: #ffffff;
 }
 
 .sidebar {
@@ -1851,4 +1886,500 @@ button[type="submit"] {
   color: var(--text-soft);
   font-weight: 600;
   font-family: "Inter", sans-serif;
+}
+
+/* =========================================================
+   AJUSTE FINAL LAYOUT EMPIRIA
+========================================================= */
+
+.app-shell {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+ .dashboard {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+}
+
+.main-panel {
+  width: 100%;
+  min-width: 0;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.employee-form-shell,
+.personnel-form-card,
+.personnel-section,
+.employee-header-card,
+.employee-steps {
+  max-width: none;
+  width: 100%;
+}
+
+.employee-steps {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  padding: 8px !important;
+  overflow: visible !important;
+  width: 100% !important;
+}
+
+.employee-step-tab {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+  white-space: normal !important;
+  text-align: center !important;
+}
+
+.tab-progress {
+  margin-left: 4px !important;
+}
+
+@media (max-width: 1200px) {
+  .employee-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .employee-steps {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .dashboard {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    width: 240px;
+    min-width: 240px;
+  }
+
+  .form-grid-2,
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.personnel-form-card,
+.employee-form-shell,
+.personnel-form-v2,
+.submodule-content,
+#workspace {
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* =========================================================
+   CORRECCIÓN FINAL LOGIN + APP EMPIRIA
+========================================================= */
+
+html,
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  min-height: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  background: #ffffff !important;
+}
+
+/* LOGIN */
+.login-screen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+
+  background-image: url("./assets/login-bg.png") !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+.login-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 31, 68, 0.12);
+  z-index: 0;
+}
+
+.login-card {
+  position: relative !important;
+  z-index: 1 !important;
+  width: min(100%, 390px) !important;
+  padding: 28px 30px 30px !important;
+  border-radius: 24px !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border: 1px solid rgba(226, 232, 240, 0.75) !important;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: blur(18px) !important;
+}
+
+.login-brand {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 0 0 22px !important;
+}
+
+.logo-login {
+  width: 250px !important;
+  max-width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  margin: 0 auto !important;
+  object-fit: contain !important;
+}
+
+/* APP */
+.app-shell {
+  width: calc(100% - 40px) !important;
+  max-width: none !important;
+  margin: 16px auto !important;
+  position: relative !important;
+  z-index: 1 !important;
+  overflow-x: hidden !important;
+  background: #ffffff !important;
+}
+
+.dashboard {
+  display: grid !important;
+  grid-template-columns: 280px minmax(0, 1fr) !important;
+  gap: 18px !important;
+  width: 100% !important;
+  min-height: calc(100vh - 32px) !important;
+  background: #ffffff !important;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+}
+
+.sidebar {
+  width: 280px !important;
+  min-width: 280px !important;
+}
+
+.main-panel {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding-left: 20px !important;
+  padding-right: 20px !important;
+  
+}
+
+.workspace,
+#workspace,
+.workspace-panel,
+.submodule-content,
+.employee-form-shell,
+.personnel-form-card,
+.personnel-form-v2,
+.personnel-section {
+  overflow: visible !important;
+}
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .dashboard {
+    grid-template-columns: 1fr !important;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .main-panel {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+}
+
+/* CORRECCIÓN: ocultar login cuando ya inició sesión */
+.login-screen.hidden,
+#loginWrap.hidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Fondo blanco para el sistema */
+body {
+  background: #ffffff !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+/* App normal sin fondo del login */
+.app-shell,
+.dashboard,
+.main-panel {
+  background: #ffffff !important;
+}
+
+/* Dashboard ajustado */
+.dashboard {
+  display: grid !important;
+  grid-template-columns: 280px minmax(0, 1fr) !important;
+  gap: 18px !important;
+  min-height: calc(100vh - 32px) !important;
+  overflow: visible !important;
+}
+
+/* Login solo cuando está visible */
+.login-screen:not(.hidden) {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: grid !important;
+  place-items: center !important;
+  background-image: url("./assets/login-bg.png") !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+/* CORRECCIÓN FORMULARIO GESTIÓN DE PERSONAL */
+.main-panel,
+.workspace,
+#workspace,
+.workspace-panel,
+.submodule-content {
+  min-width: 0 !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+
+.employee-form-shell,
+.personnel-form-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+
+.personnel-form-v2,
+.personnel-section,
+.employee-header-card,
+.employee-steps {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.form-grid,
+.figma-grid {
+  min-width: 0 !important;
+}
+
+.form-grid-2,
+.figma-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.form-grid-3,
+.figma-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.form-grid-4,
+.form-grid-5,
+.form-grid-6,
+.figma-grid-4,
+.figma-grid-5,
+.figma-grid-6 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+input,
+select,
+textarea {
+  min-width: 0 !important;
+}
+
+/* =========================================================
+   AJUSTE RESPONSIVE FORMULARIO (SIN SCROLL HORIZONTAL)
+========================================================= */
+
+.form-grid-4,
+.form-grid-5,
+.form-grid-6,
+.figma-grid-4,
+.figma-grid-5,
+.figma-grid-6 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 1200px) {
+  .form-grid-3,
+  .form-grid-4,
+  .form-grid-5,
+  .form-grid-6,
+  .figma-grid-3,
+  .figma-grid-4,
+  .figma-grid-5,
+  .figma-grid-6 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .form-grid,
+  .figma-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.form-grid-4,
+.form-grid-5,
+.form-grid-6,
+.figma-grid-4,
+.figma-grid-5,
+.figma-grid-6 {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+@media (max-width: 1200px) {
+  .form-grid-3,
+  .form-grid-4,
+  .form-grid-5,
+  .form-grid-6,
+  .figma-grid-3,
+  .figma-grid-4,
+  .figma-grid-5,
+  .figma-grid-6 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .form-grid,
+  .figma-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* CORREGIR BARRA DE PASOS - UNA SOLA LÍNEA SIN DESBORDARSE */
+.employee-steps {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 6px !important;
+  padding: 6px !important;
+  overflow: hidden !important;
+  width: 100% !important;
+}
+
+.employee-step-tab {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  height: 34px !important;
+  padding: 0 6px !important;
+  font-size: 10px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.tab-progress {
+  margin-left: 4px !important;
+  font-size: 10px !important;
+  flex-shrink: 0 !important;
+}
+
+.hidden,
+#loginWrap.hidden,
+#dashboard.hidden,
+#bootScreen.hidden,
+.login-screen.hidden,
+.dashboard.hidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.required-docs-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.required-docs-panel h4 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.required-doc-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.compliance-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.status-chip.success {
+  background: #00C288;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.status-chip.warning {
+  background: #f59e0b;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.status-chip.danger {
+  background: #ef4444;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.required-doc-item.ok {
+  color: #00C288;
+}
+
+.required-doc-item.missing {
+  color: #ef4444;
 }

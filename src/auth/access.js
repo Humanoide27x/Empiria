@@ -38,12 +38,12 @@ function matchesLinkedCompanyAndContract(user, resource = {}) {
   const resourceContractId = resource.contractId ?? null;
 
   const companyMatches =
-    userCompanyId == null || resourceCompanyId == null
+    resourceCompanyId == null
       ? true
       : Number(userCompanyId) === Number(resourceCompanyId);
 
   const contractMatches =
-    userContractId == null || resourceContractId == null
+    resourceContractId == null
       ? true
       : Number(userContractId) === Number(resourceContractId);
 
@@ -62,6 +62,7 @@ function matchesAssignedMunicipalities(user, resource = {}) {
   }
 
   const resourceMunicipality = normalizeMunicipality(resource.municipality);
+
   if (!resourceMunicipality) {
     return true;
   }
@@ -70,7 +71,8 @@ function matchesAssignedMunicipalities(user, resource = {}) {
 }
 
 function matchesUserScope(user, resource = {}) {
-  const roleConfig = getRolePermissions(user?.role);
+  const normalizedRole = normalizeRole(user?.role);
+  const roleConfig = getRolePermissions(normalizedRole);
 
   if (!roleConfig) {
     return false;
@@ -101,9 +103,14 @@ function matchesUserScope(user, resource = {}) {
   }
 }
 
-function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource = null) {
+function evaluateModuleAccess(
+  user,
+  moduleKey,
+  action = ACTIONS.VIEW,
+  resource = null
+) {
   try {
-    if (!user) {
+    if (!user || !user.role) {
       return {
         allowed: false,
         reason: "Debes iniciar sesión",
@@ -121,6 +128,7 @@ function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource =
     }
 
     const resolvedModuleKey = normalizeModuleKey(moduleKey);
+
     if (!resolvedModuleKey) {
       return {
         allowed: false,
@@ -129,6 +137,7 @@ function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource =
     }
 
     const moduleConfig = getModuleConfig(roleConfig, resolvedModuleKey);
+
     if (!moduleConfig) {
       return {
         allowed: false,
@@ -136,9 +145,9 @@ function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource =
       };
     }
 
-    const resolvedAction = safeString(action) || ACTIONS.VIEW;
+    const resolvedAction = (safeString(action) || ACTIONS.VIEW).toLowerCase();
     const allowedActions = Array.isArray(moduleConfig.allowedActions)
-      ? moduleConfig.allowedActions
+      ? moduleConfig.allowedActions.map((item) => safeString(item).toLowerCase())
       : [];
 
     if (!allowedActions.includes(resolvedAction)) {
@@ -149,6 +158,7 @@ function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource =
     }
 
     const scopeOk = matchesUserScope(user, resource || {});
+
     if (!scopeOk) {
       return {
         allowed: false,
@@ -172,11 +182,12 @@ function evaluateModuleAccess(user, moduleKey, action = ACTIONS.VIEW, resource =
 
 function describeUserAccess(user) {
   try {
-    const roleConfig = getRolePermissions(user?.role);
+    const normalizedRole = normalizeRole(user?.role);
+    const roleConfig = getRolePermissions(normalizedRole);
 
     if (!roleConfig) {
       return {
-        role: normalizeRole(user?.role),
+        role: normalizedRole,
         scope: null,
         linkedScope: null,
         modules: [],
@@ -184,10 +195,10 @@ function describeUserAccess(user) {
     }
 
     return {
-      role: normalizeRole(user?.role),
+      role: normalizedRole,
       scope: roleConfig.scope || null,
       linkedScope: roleConfig.linkedScope || null,
-      modules: getAccessibleModules(user.role),
+      modules: getAccessibleModules(normalizedRole),
     };
   } catch (error) {
     console.error("Error describiendo acceso:", error);
