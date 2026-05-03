@@ -17,9 +17,10 @@ async function getRolesFromDb() {
 // =============================
 async function getCompaniesFromDb() {
   const result = await pool.query(`
-    SELECT id, name, nit, active, created_at
-    FROM companies
-    ORDER BY id
+  SELECT id, name, nit, active, tenant_id
+  FROM companies
+  WHERE active = true
+  ORDER BY name
   `);
   return result.rows;
 }

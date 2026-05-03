@@ -80,7 +80,13 @@ const LIMITED_EMPLOYEE_FILE_FIELDS = Object.freeze([
 ]);
 
 const EMPLOYEE_MANAGEMENT_PERMISSIONS = Object.freeze({
-  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE],
+  allowedActions: [
+  ACTIONS.VIEW,
+  ACTIONS.CREATE,
+  ACTIONS.UPDATE,
+  ACTIONS.EDIT,
+  ACTIONS.MANAGE,
+],
   features: Object.freeze([
     "crear_empleado",
     "editar_empleado",
