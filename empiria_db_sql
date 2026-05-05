@@ -587,6 +587,50 @@ ALTER SEQUENCE public.post_hiring_affiliations_id_seq OWNED BY public.post_hirin
 
 
 --
+-- Name: payroll_novelties; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.payroll_novelties (
+    id                   integer NOT NULL,
+    employee_id          integer NOT NULL,
+    company_id           integer,
+    contract_id          integer,
+    novelty_type         character varying(50) NOT NULL,
+    start_date           date NOT NULL,
+    end_date             date,
+    days                 integer,
+    observations         text,
+    support_document_url text,
+    status               character varying(30) DEFAULT 'PENDIENTE'::character varying NOT NULL,
+    created_by_user_id   integer,
+    created_at           timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at           timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    reviewed_by_user_id  integer,
+    reviewed_at          timestamp without time zone,
+    review_notes         text,
+    CONSTRAINT chk_novelty_type CHECK ((novelty_type)::text = ANY (ARRAY['INCAPACIDAD','VACACIONES','LICENCIA_REMUNERADA','LICENCIA_NO_REMUNERADA','SUSPENSION','AUSENCIA','CAMBIO_CARGO','CAMBIO_SALARIO','OTRO']::text[])),
+    CONSTRAINT chk_novelty_status CHECK ((status)::text = ANY (ARRAY['PENDIENTE','APROBADA','RECHAZADA','ANULADA']::text[]))
+);
+
+CREATE SEQUENCE public.payroll_novelties_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+ALTER SEQUENCE public.payroll_novelties_id_seq OWNED BY public.payroll_novelties.id;
+ALTER TABLE ONLY public.payroll_novelties ALTER COLUMN id SET DEFAULT nextval('public.payroll_novelties_id_seq'::regclass);
+
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id);
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(id);
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+ALTER TABLE ONLY public.payroll_novelties ADD CONSTRAINT payroll_novelties_reviewed_by_user_id_fkey FOREIGN KEY (reviewed_by_user_id) REFERENCES public.users(id);
+
+CREATE INDEX idx_payroll_novelties_employee_id  ON public.payroll_novelties USING btree (employee_id);
+CREATE INDEX idx_payroll_novelties_company_id   ON public.payroll_novelties USING btree (company_id);
+CREATE INDEX idx_payroll_novelties_status       ON public.payroll_novelties USING btree (status);
+CREATE INDEX idx_payroll_novelties_novelty_type ON public.payroll_novelties USING btree (novelty_type);
+
+--
 -- Name: role_module_permissions; Type: TABLE; Schema: public; Owner: postgres
 --
 

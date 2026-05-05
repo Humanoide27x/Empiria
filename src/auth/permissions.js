@@ -126,7 +126,7 @@ const COVERAGE_PERMISSIONS = Object.freeze({
 });
 
 const PAYROLL_PERMISSIONS = Object.freeze({
-  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.REGISTER, ACTIONS.EXPORT],
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.REGISTER, ACTIONS.UPDATE, ACTIONS.EXPORT],
   features: Object.freeze([
     "registrar_novedades_nomina",
     "verificacion_novedades_nomina",
@@ -381,7 +381,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       },
 
       [MODULES.PAYROLL]: {
-        allowedActions: [ACTIONS.VIEW, ACTIONS.REGISTER],
+        allowedActions: [ACTIONS.VIEW, ACTIONS.REGISTER, ACTIONS.UPDATE],
         requiresSupportDocuments: true,
         features: Object.freeze([
           "registrar_novedades_nomina",
