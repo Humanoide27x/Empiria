@@ -6537,3 +6537,247 @@ body {
   .novedad-form-grid { grid-template-columns: 1fr; }
   .coverage-tab-btn { padding: 8px 14px; font-size: 12px; }
 }
+
+/* ============================================================
+   CARGO CELL — 2 LÍNEAS
+   ============================================================ */
+.cargo-cell .role-chip {
+  white-space: normal !important;
+  max-width: 130px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* ============================================================
+   ACCIONES CON ICONOS Y TOOLTIP
+   ============================================================ */
+.personnel-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #475569;
+  position: relative;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.personnel-icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.personnel-icon-btn:hover { background: #e2e8f0; color: #1e293b; border-color: #cbd5e1; }
+.personnel-icon-btn.btn-icon-view:hover { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+.personnel-icon-btn.btn-icon-edit:hover { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.personnel-icon-btn.btn-icon-docs:hover { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+.personnel-icon-btn::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.personnel-icon-btn:hover::after { opacity: 1; }
+
+/* ============================================================
+   MODAL INTERNO (rechazo de documentos, etc.)
+   ============================================================ */
+.empiria-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeInOverlay 0.15s;
+}
+@keyframes fadeInOverlay { from { opacity: 0; } to { opacity: 1; } }
+.empiria-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px 32px;
+  width: 440px;
+  max-width: 95vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+}
+.empiria-modal h3 { margin: 0 0 6px; font-size: 17px; color: #0f172a; }
+.empiria-modal p { margin: 0 0 16px; color: #64748b; font-size: 13px; }
+.empiria-modal textarea {
+  width: 100%;
+  min-height: 80px;
+  border-radius: 8px;
+  border: 1.5px solid #e2e8f0;
+  padding: 10px 12px;
+  font-size: 14px;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.empiria-modal textarea:focus { outline: none; border-color: #6366f1; }
+.empiria-modal-actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
+
+/* ============================================================
+   ESTUDIOS
+   ============================================================ */
+.estudios-add-form {
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+.estudios-add-form h5 { margin: 0 0 14px; font-size: 13px; color: #1e293b; font-weight: 700; }
+.estudios-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.estudio-item {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.estudio-item-info { flex: 1; }
+.estudio-item-info strong { display: block; font-size: 13px; color: #1e293b; font-weight: 700; }
+.estudio-item-info span { font-size: 12px; color: #64748b; display: block; margin-top: 2px; }
+.btn-remove-estudio {
+  background: #fee2e2; color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 6px; cursor: pointer;
+  padding: 4px 10px; font-size: 12px; font-weight: 600;
+  flex-shrink: 0; transition: opacity 0.15s;
+}
+.btn-remove-estudio:hover { opacity: 0.75; }
+.food-handling-section {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 20px;
+}
+.food-handling-section h5 { margin: 0 0 12px; font-size: 13px; color: #166534; font-weight: 700; }
+
+/* ============================================================
+   OBSERVACIONES
+   ============================================================ */
+.obs-history { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+.obs-item {
+  background: #f8fafc;
+  border-left: 3px solid #6366f1;
+  padding: 12px 14px;
+  border-radius: 0 8px 8px 0;
+}
+.obs-item-meta { font-size: 11px; color: #94a3b8; margin-bottom: 5px; }
+.obs-item-text { font-size: 13px; color: #1e293b; line-height: 1.5; }
+.obs-empty { font-size: 13px; color: #94a3b8; font-style: italic; text-align: center; padding: 16px; }
+
+/* ============================================================
+   HOJA DE VIDA (CV VIEW)
+   ============================================================ */
+.cv-shell {
+  max-width: 800px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+.cv-header {
+  background: linear-gradient(135deg, #1e293b, #334155);
+  color: #fff;
+  padding: 32px 36px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.cv-avatar {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px; font-weight: 800;
+  flex-shrink: 0;
+}
+.cv-header-info h2 { margin: 0 0 4px; font-size: 22px; font-weight: 800; }
+.cv-header-info p { margin: 0; font-size: 13px; opacity: 0.8; }
+.cv-body { padding: 28px 36px; }
+.cv-section { margin-bottom: 24px; }
+.cv-section-title {
+  font-size: 11px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.08em; color: #6366f1;
+  border-bottom: 2px solid #e0e7ff;
+  padding-bottom: 6px; margin-bottom: 14px;
+}
+.cv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cv-field { }
+.cv-field span { display: block; font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.cv-field strong { display: block; font-size: 13px; color: #1e293b; margin-top: 1px; }
+.cv-study-item { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+.cv-study-item:last-child { border: none; }
+.cv-study-item strong { display: block; font-size: 13px; color: #1e293b; }
+.cv-study-item span { font-size: 12px; color: #64748b; }
+.cv-actions { padding: 0 36px 28px; display: flex; gap: 10px; }
+.btn-back-cv { }
+
+@media (max-width: 768px) {
+  .cv-header { flex-direction: column; text-align: center; padding: 24px; }
+  .cv-body { padding: 20px; }
+  .cv-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Badge variants para solicitudes ─── */
+.novedad-badge.badge-warning  { background: #fef3c7; color: #92400e; }
+.novedad-badge.badge-info     { background: #dbeafe; color: #1e40af; }
+.novedad-badge.badge-success  { background: #dcfce7; color: #166534; }
+.novedad-badge.badge-danger   { background: #fee2e2; color: #991b1b; }
+.novedad-badge.badge-neutral  { background: var(--panel-3); color: var(--text-faint); }
+
+/* ─── data-table ─── */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table thead tr {
+  background: var(--panel-2);
+}
+.data-table th {
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  border-bottom: 1px solid var(--border);
+}
+.data-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-table tbody tr:hover {
+  background: var(--panel-2);
+}

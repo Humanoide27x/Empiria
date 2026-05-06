@@ -73,6 +73,9 @@ const state = {
     hvStatus: "",
     municipality: "",
     gestorZona: "",
+    institution: "",
+    site: "",
+    modality: "",
   },
 
   coverageSelectedUploadId: null,
@@ -134,7 +137,7 @@ const moduleViews = {
   dashboard: {
     title: "Dashboard",
     route: "/dashboard-summary",
-    submodules: [{ key: "resumen_general", title: "Resumen general" }],
+    submodules: [],
   },
   
   gestion_personal: {
@@ -156,6 +159,7 @@ const moduleViews = {
     submodules: [
       { key: "registrar_novedad", title: "Registrar novedad" },
       { key: "consultar_novedades", title: "Consultar novedades" },
+      { key: "novedades_personal", title: "Novedades del Personal" },
       { key: "desprendibles", title: "Desprendibles" },
       { key: "certificaciones", title: "Certificaciones" },
     ],
@@ -1766,6 +1770,13 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
   const managerRole = ["GESTOR DE ZONA", "AUXILIAR DE GESTOR DE ZONA"].includes(currentCargoReal);
   const isEditMode = state.personnelViewMode === "edit";
 
+  const allPersonnel = Array.isArray(payload.data) ? payload.data : [];
+  const gestorNames = allPersonnel
+    .filter(p => String(p.cargo_real || "").toUpperCase() === "GESTOR DE ZONA")
+    .map(p => getPersonnelFullName(p))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
+
   const tabButtons = `
     <div class="employee-steps">
       <button type="button" class="employee-step-tab ${activeTab === "identificacion" ? "active" : ""}" data-step-tab="identificacion">Identificación</button>
@@ -1958,12 +1969,13 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         <div class="form-grid form-grid-1">
           <label>
             <span>Gestor de Zona</span>
-            <input
-              name="gestorZona"
-              type="text"
-              placeholder="Nombre del gestor de zona responsable"
-              value="${escapeAttr(draftValue("gestorZona"))}"
-            />
+            <select name="gestorZona">
+              <option value="">— Sin asignar —</option>
+              ${gestorNames.map(g => `<option value="${escapeAttr(g)}" ${draftValue("gestorZona") === g ? "selected" : ""}>${escapeHtml(g)}</option>`).join("")}
+              ${draftValue("gestorZona") && !gestorNames.includes(draftValue("gestorZona"))
+                ? `<option value="${escapeAttr(draftValue("gestorZona"))}" selected>${escapeHtml(draftValue("gestorZona"))}</option>`
+                : ""}
+            </select>
           </label>
         </div>
       </section>
@@ -2143,7 +2155,8 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <label>
               <span>Municipio *</span>
               <select name="educationalMunicipality" required>
-                ${renderOptions(META_MUNICIPALITIES, institutionalMunicipality, "Selecciona municipio")}
+                <option value="">Selecciona municipio</option>
+                ${META_MUNICIPALITIES.map(m => `<option value="${escapeAttr(m.name)}" ${normalizeCatalogText(municipalityNameResolved) === normalizeCatalogText(m.name) ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("")}
               </select>
             </label>
 
@@ -2209,6 +2222,11 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <span>Fecha inicio por cobertura *</span>
             <input name="coverageStartDate" type="date" value="${escapeAttr(draftValue("coverageStartDate"))}" required />
           </label>
+
+          <label>
+            <span>Fecha de retiro</span>
+            <input name="terminationDate" type="date" value="${escapeAttr(draftValue("terminationDate"))}" />
+          </label>
         </div>
 
         <div class="subsection-title">Seguridad Social</div>
@@ -2244,7 +2262,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
   if (activeTab === "seguimiento") {
     const hasSisben = String(draftValue("sisben", "")) === "true";
-    const hasResidenceCertificate = String(draftValue("hasResidenceCertificate", "")) === "true";
+    const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true";
 
     activeSectionHtml = `
       <section class="personnel-section">
@@ -2256,21 +2274,58 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         </div>
 
         <div class="form-grid form-grid-2">
-          <label class="checkbox-line">
-            <input type="checkbox" name="sisben" value="true" ${hasSisben ? "checked" : ""} />
-            <span>Tiene SISBEN</span>
+          <label>
+            <span>¿Tiene SISBEN?</span>
+            <select name="sisben">
+              <option value="">Selecciona</option>
+              <option value="true" ${hasSisben ? "selected" : ""}>Sí</option>
+              <option value="false" ${!hasSisben && draftValue("sisben") !== "" ? "selected" : ""}>No</option>
+            </select>
           </label>
 
-          <label class="checkbox-line">
-            <input type="checkbox" name="hasResidenceCertificate" value="true" ${hasResidenceCertificate ? "checked" : ""} />
-            <span>Tiene certificado de residencia</span>
+          <label>
+            <span>¿Tiene certificado de residencia?</span>
+            <select name="hasResidenceCertificate">
+              <option value="">Selecciona</option>
+              <option value="true" ${hasResidenceCert ? "selected" : ""}>Sí</option>
+              <option value="false" ${!hasResidenceCert && draftValue("hasResidenceCertificate") !== "" ? "selected" : ""}>No</option>
+            </select>
           </label>
         </div>
+
+        ${hasSisben ? `
+        <div class="subsection-title">Datos del SISBEN</div>
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Fecha de expedición SISBEN</span>
+            <input name="sisbenIssueDate" type="date" value="${escapeAttr(draftValue("sisbenIssueDate"))}" />
+          </label>
+          <label>
+            <span>Fecha de vencimiento SISBEN</span>
+            <input name="sisbenExpirationDate" type="date" value="${escapeAttr(draftValue("sisbenExpirationDate"))}" />
+          </label>
+        </div>
+        ` : ""}
+
+        ${hasResidenceCert ? `
+        <div class="subsection-title">Datos del certificado de residencia</div>
+        <div class="form-grid form-grid-2">
+          <label>
+            <span>Fecha de expedición</span>
+            <input name="residenceCertificateIssueDate" type="date" value="${escapeAttr(draftValue("residenceCertificateIssueDate"))}" />
+          </label>
+          <label>
+            <span>Fecha de vencimiento</span>
+            <input name="residenceCertificateExpiration" type="date" value="${escapeAttr(draftValue("residenceCertificateExpiration"))}" />
+          </label>
+        </div>
+        ` : ""}
       </section>
     `;
   }
 
   if (activeTab === "estudios") {
+    const estudios = Array.isArray(draftValue("studies", [])) ? draftValue("studies", []) : [];
     activeSectionHtml = `
       <section class="personnel-section">
         <div class="section-title-wrap">
@@ -2280,12 +2335,89 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
           </div>
         </div>
 
-        <p class="soft">Sección de estudios activa.</p>
+        <div class="estudios-add-form">
+          <h5>Agregar estudio</h5>
+          <div class="form-grid form-grid-2">
+            <label>
+              <span>Nivel educativo</span>
+              <select id="newStudyLevel">
+                <option value="">Selecciona</option>
+                <option value="Primaria">Primaria</option>
+                <option value="Bachillerato">Bachillerato</option>
+                <option value="Técnico">Técnico</option>
+                <option value="Tecnólogo">Tecnólogo</option>
+                <option value="Profesional">Profesional</option>
+                <option value="Especialización">Especialización</option>
+                <option value="Maestría">Maestría</option>
+                <option value="Doctorado">Doctorado</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </label>
+            <label>
+              <span>Año de grado</span>
+              <input id="newStudyYear" type="number" min="1950" max="2099" placeholder="Ej: 2020" />
+            </label>
+            <label>
+              <span>Institución educativa</span>
+              <input id="newStudyInstitution" type="text" placeholder="Nombre de la institución" />
+            </label>
+            <label>
+              <span>Título obtenido</span>
+              <input id="newStudyDegree" type="text" placeholder="Nombre del título" />
+            </label>
+          </div>
+          <div style="margin-top:12px">
+            <button type="button" id="btnAddEstudio" class="btn btn-primary btn-row">+ Agregar estudio</button>
+          </div>
+        </div>
+
+        ${estudios.length ? `
+        <div class="estudios-list">
+          ${estudios.map((s, i) => `
+            <div class="estudio-item">
+              <div class="estudio-item-info">
+                <strong>${escapeHtml(s.degree || "Sin título")}</strong>
+                <span>${escapeHtml(s.educationLevel || "")}${s.institution ? " · " + escapeHtml(s.institution) : ""}${s.year ? " · " + escapeHtml(String(s.year)) : ""}</span>
+              </div>
+              <button type="button" class="btn-remove-estudio" data-study-index="${i}">Eliminar</button>
+            </div>
+          `).join("")}
+        </div>
+        ` : `<p class="obs-empty">No hay estudios registrados aún.</p>`}
+
+        <div class="food-handling-section">
+          <h5>Curso de manipulación de alimentos</h5>
+          <div class="form-grid form-grid-2">
+            <label>
+              <span>Fecha de expedición</span>
+              <input name="foodHandlingCourseIssueDate" type="date" value="${escapeAttr(draftValue("foodHandlingCourseIssueDate"))}" />
+            </label>
+            <label>
+              <span>Fecha de vencimiento</span>
+              <input name="foodHandlingCourseExpirationDate" type="date" value="${escapeAttr(draftValue("foodHandlingCourseExpirationDate"))}" />
+            </label>
+          </div>
+        </div>
+
+        <div class="food-handling-section" style="margin-top:14px; background:#fff7ed; border-color:#fed7aa;">
+          <h5 style="color:#c2410c">Exámenes de manipulación de alimentos</h5>
+          <div class="form-grid form-grid-2">
+            <label>
+              <span>Fecha de expedición</span>
+              <input name="foodHandlingExamIssueDate" type="date" value="${escapeAttr(draftValue("foodHandlingExamIssueDate"))}" />
+            </label>
+            <label>
+              <span>Fecha de vencimiento</span>
+              <input name="foodHandlingExamExpirationDate" type="date" value="${escapeAttr(draftValue("foodHandlingExamExpirationDate"))}" />
+            </label>
+          </div>
+        </div>
       </section>
     `;
   }
 
   if (activeTab === "observaciones") {
+    const observations = Array.isArray(draftValue("observations", [])) ? draftValue("observations", []) : [];
     activeSectionHtml = `
       <section class="personnel-section">
         <div class="section-title-wrap">
@@ -2300,6 +2432,21 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <span>Nueva observación</span>
             <textarea id="newObservationText" rows="4" placeholder="Escribe aquí la observación..."></textarea>
           </label>
+        </div>
+        <div style="margin-top:10px">
+          <button type="button" id="btnAddObservacion" class="btn btn-primary btn-row">Guardar observación</button>
+        </div>
+
+        <div class="obs-history">
+          ${observations.length
+            ? observations.slice().reverse().map(o => `
+              <div class="obs-item">
+                <div class="obs-item-meta">${escapeHtml(o.date ? new Date(o.date).toLocaleString("es-CO") : "—")} · ${escapeHtml(o.user || "—")}</div>
+                <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
+              </div>
+            `).join("")
+            : `<p class="obs-empty">No hay observaciones registradas.</p>`
+          }
         </div>
       </section>
     `;
@@ -2346,12 +2493,16 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
           "cargo_real",
           "sisben",
           "hasResidenceCertificate",
+          "presentedInOffer",
         ];
 
         if (reactiveFields.includes(event.target.name)) {
           if (event.target.name === "companyId") state.personnelDraft.contractId = "";
           if (event.target.name === "expeditionDepartment") state.personnelDraft.expeditionMunicipality = "";
           if (event.target.name === "birthDepartment") state.personnelDraft.birthMunicipality = "";
+          if (event.target.name === "presentedInOffer" && event.target.value !== "true") {
+            state.personnelDraft.offerPosition = "";
+          }
 
           if (event.target.name === "educationalMunicipality") {
             state.personnelDraft.institution = "";
@@ -2393,6 +2544,50 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     syncEmployeeHeaderFromDraft();
 
     form.addEventListener("submit", handleCreatePersonnel);
+
+    // ESTUDIOS — agregar
+    const btnAddEstudio = document.getElementById("btnAddEstudio");
+    if (btnAddEstudio) {
+      btnAddEstudio.addEventListener("click", () => {
+        const level = document.getElementById("newStudyLevel")?.value || "";
+        const year = document.getElementById("newStudyYear")?.value || "";
+        const institution = document.getElementById("newStudyInstitution")?.value || "";
+        const degree = document.getElementById("newStudyDegree")?.value || "";
+        if (!degree && !institution) { showWarning("Ingresa al menos el título o la institución."); return; }
+        if (!Array.isArray(state.personnelDraft.studies)) state.personnelDraft.studies = [];
+        state.personnelDraft.studies.push({ educationLevel: level, year, institution, degree });
+        state.personnelCreateTab = "estudios";
+        openModule("gestion_personal");
+      });
+    }
+
+    // ESTUDIOS — eliminar
+    document.querySelectorAll(".btn-remove-estudio").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.dataset.studyIndex, 10);
+        if (!Array.isArray(state.personnelDraft.studies)) return;
+        state.personnelDraft.studies.splice(idx, 1);
+        state.personnelCreateTab = "estudios";
+        openModule("gestion_personal");
+      });
+    });
+
+    // OBSERVACIONES — guardar
+    const btnAddObs = document.getElementById("btnAddObservacion");
+    if (btnAddObs) {
+      btnAddObs.addEventListener("click", () => {
+        const txt = (document.getElementById("newObservationText")?.value || "").trim();
+        if (!txt) { showWarning("Escribe la observación antes de guardar."); return; }
+        if (!Array.isArray(state.personnelDraft.observations)) state.personnelDraft.observations = [];
+        state.personnelDraft.observations.push({
+          text: txt,
+          date: new Date().toISOString(),
+          user: state.currentUser?.name || "Usuario",
+        });
+        state.personnelCreateTab = "observaciones";
+        openModule("gestion_personal");
+      });
+    }
   }, 0);
 
   return `
@@ -2511,6 +2706,9 @@ async function renderPersonnelTableModule() {
   const hvStatusValue = state.personnelFilters.hvStatus || "";
   const municipalityValue = state.personnelFilters.municipality || "";
   const gestorZonaValue = state.personnelFilters.gestorZona || "";
+  const institutionFilterValue = state.personnelFilters.institution || "";
+  const siteFilterValue = state.personnelFilters.site || "";
+  const modalityFilterValue = state.personnelFilters.modality || "";
 
   const normalize = (value) =>
     String(value || "")
@@ -2565,6 +2763,21 @@ async function renderPersonnelTableModule() {
       if (itemGestor !== normalize(gestorZonaValue)) return false;
     }
 
+    if (institutionFilterValue) {
+      const itemInstitution = normalize(item.institution || item.institucion_educativa || item.educational_institution || item.institutionName || "");
+      if (itemInstitution !== normalize(institutionFilterValue)) return false;
+    }
+
+    if (siteFilterValue) {
+      const itemSite = normalize(item.site || item.sede_educativa || item.educational_site || item.siteName || "");
+      if (itemSite !== normalize(siteFilterValue)) return false;
+    }
+
+    if (modalityFilterValue) {
+      const itemModality = normalize(item.educationalModality || item.modalidad || item.modality || item.modalidad_educativa || "");
+      if (itemModality !== normalize(modalityFilterValue)) return false;
+    }
+
     return true;
   });
 
@@ -2572,6 +2785,19 @@ async function renderPersonnelTableModule() {
   const gestorZonaOptions = Array.from(
     new Set(rows.map(r => (r.gestorZona || r.gestor_zona || "").trim()).filter(Boolean))
   ).sort((a, b) => a.localeCompare(b, "es"));
+
+  const institutionFilterOptions = Array.from(
+    new Set(rows.map(r => (r.institution || r.institucion_educativa || r.educational_institution || r.institutionName || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b, "es"));
+
+  const siteFilterOptions = Array.from(
+    new Set(rows.map(r => (r.site || r.sede_educativa || r.educational_site || r.siteName || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b, "es"));
+
+  const modalityFilterOptions = Array.from(
+    new Set(rows.map(r => (r.educationalModality || r.modalidad || r.modality || r.modalidad_educativa || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b, "es"));
+
   const dashboardSummary = calculatePersonnelDashboard(filteredRows, allDocuments);
   const documentAlerts = calculateDocumentAlerts(filteredRows, allDocuments);
 
@@ -2665,6 +2891,7 @@ async function renderPersonnelTableModule() {
         found.coverage_start_date ||
         found.fecha_inicio_cobertura ||
         "",
+      terminationDate: found.terminationDate || found.fecha_retiro || "",
 
       eps: found.eps || "",
       pensionFund:
@@ -2750,13 +2977,20 @@ async function renderPersonnelTableModule() {
         hvStatus:     document.getElementById("personnelFilterHvStatus")?.value || "",
         municipality: document.getElementById("personnelFilterMunicipality")?.value || "",
         gestorZona:   document.getElementById("personnelFilterGestorZona")?.value || "",
+        institution:  document.getElementById("personnelFilterInstitution")?.value || "",
+        site:         document.getElementById("personnelFilterSite")?.value || "",
+        modality:     document.getElementById("personnelFilterModality")?.value || "",
       };
       state.personnelPage = 1;
       await openModule("gestion_personal");
     };
 
+    const institutionInput = document.getElementById("personnelFilterInstitution");
+    const siteInput = document.getElementById("personnelFilterSite");
+    const modalityInput = document.getElementById("personnelFilterModality");
+
     // Selects: re-render inmediato
-    [statusInput, hvStatusInput, municipalityInput, gestorZonaInput].forEach((el) => {
+    [statusInput, hvStatusInput, municipalityInput, gestorZonaInput, institutionInput, siteInput, modalityInput].forEach((el) => {
       if (!el) return;
       el.addEventListener("change", applyPersonnelFilters);
     });
@@ -2777,6 +3011,9 @@ async function renderPersonnelTableModule() {
           hvStatus: "",
           municipality: "",
           gestorZona: "",
+          institution: "",
+          site: "",
+          modality: "",
         };
 
         await openModule("gestion_personal");
@@ -2799,6 +3036,18 @@ async function renderPersonnelTableModule() {
         showInfo("Esta función estará disponible próximamente.", "Exportación");
       });
     }
+
+    document.querySelectorAll("[data-cv-personnel-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = button.dataset.cvPersonnelId;
+        const found = rows.find((item) => String(item.id) === String(id));
+        if (!found) return;
+        state.personnelDraft = hydratePersonnelDraft(found);
+        state.personnelViewMode = "cv";
+        state.personnelEditingId = found.id || null;
+        await openModule("gestion_personal");
+      });
+    });
 
     document.querySelectorAll("[data-edit-personnel-id]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -2961,6 +3210,27 @@ async function renderPersonnelTableModule() {
               .join("")}
           </select>
 
+          <select id="personnelFilterInstitution">
+            <option value="">Institución</option>
+            ${institutionFilterOptions
+              .map(v => `<option value="${escapeAttr(v)}" ${institutionFilterValue === v ? "selected" : ""}>${escapeHtml(v)}</option>`)
+              .join("")}
+          </select>
+
+          <select id="personnelFilterSite">
+            <option value="">Sede</option>
+            ${siteFilterOptions
+              .map(v => `<option value="${escapeAttr(v)}" ${siteFilterValue === v ? "selected" : ""}>${escapeHtml(v)}</option>`)
+              .join("")}
+          </select>
+
+          <select id="personnelFilterModality">
+            <option value="">Modalidad</option>
+            ${modalityFilterOptions
+              .map(v => `<option value="${escapeAttr(v)}" ${modalityFilterValue === v ? "selected" : ""}>${escapeHtml(v)}</option>`)
+              .join("")}
+          </select>
+
           <button type="button" id="clearPersonnelFilters" class="btn btn-secondary">
             Limpiar
           </button>
@@ -3018,7 +3288,7 @@ async function renderPersonnelTableModule() {
                                 ${escapeHtml(getPersonnelFullName(item))}
                               </td>
 
-                              <td>
+                              <td class="cargo-cell">
                                 <span class="role-chip ${roleClass}">
                                   ${escapeHtml(roleLabel)}
                                 </span>
@@ -3044,20 +3314,14 @@ async function renderPersonnelTableModule() {
 
                               <td>
                                 <div class="personnel-row-actions">
-                                  <button
-                                    type="button"
-                                    class="btn btn-secondary btn-row"
-                                    data-edit-personnel-id="${escapeAttr(item.id)}"
-                                  >
-                                    Editar
+                                  <button type="button" class="personnel-icon-btn btn-icon-view" title="Ver hoja de vida" data-cv-personnel-id="${escapeAttr(item.id)}">
+                                    <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                   </button>
-
-                                  <button
-                                    type="button"
-                                    class="btn btn-secondary btn-row"
-                                    data-documents-personnel-id="${escapeAttr(item.id)}"
-                                  >
-                                    Documentos
+                                  <button type="button" class="personnel-icon-btn btn-icon-edit" title="Editar empleado" data-edit-personnel-id="${escapeAttr(item.id)}">
+                                    <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                  </button>
+                                  <button type="button" class="personnel-icon-btn btn-icon-docs" title="Documentos" data-documents-personnel-id="${escapeAttr(item.id)}">
+                                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                                   </button>
                                 </div>
                               </td>
@@ -3471,31 +3735,41 @@ async function loadEmployeeDocumentsModule() {
     });
 
     document.querySelectorAll("[data-reject-document-id]").forEach((button) => {
-      button.addEventListener("click", async () => {
+      button.addEventListener("click", () => {
         const id = button.dataset.rejectDocumentId;
-        const reason = prompt("Escribe el motivo del rechazo:");
+        const overlay = document.createElement("div");
+        overlay.className = "empiria-modal-overlay";
+        overlay.innerHTML = `
+          <div class="empiria-modal">
+            <h3>Rechazar documento</h3>
+            <p>Escribe el motivo del rechazo. Esta razón quedará visible en el expediente del empleado.</p>
+            <textarea id="rejectReasonInput" placeholder="Motivo del rechazo..."></textarea>
+            <div class="empiria-modal-actions">
+              <button type="button" id="btnCancelReject" class="btn btn-secondary">Cancelar</button>
+              <button type="button" id="btnConfirmReject" class="btn btn-primary">Rechazar</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+        document.getElementById("rejectReasonInput")?.focus();
 
-        if (reason === null) return;
+        document.getElementById("btnCancelReject")?.addEventListener("click", () => overlay.remove());
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
 
-        if (!reason.trim()) {
-          showWarning("Debes escribir un motivo de rechazo."); return;
-          return;
-        }
-
-        try {
-          await apiFetch("/documents/reject", {
-            method: "PUT",
-            body: JSON.stringify({
-              id,
-              reason: reason.trim(),
-              userName: state.currentUser?.name || "Usuario",
-            }),
-          });
-
-          await openModule("gestion_personal");
-        } catch {
-          showError("No fue posible rechazar el documento.")
-        }
+        document.getElementById("btnConfirmReject")?.addEventListener("click", async () => {
+          const reason = (document.getElementById("rejectReasonInput")?.value || "").trim();
+          if (!reason) { showWarning("Debes escribir un motivo de rechazo."); return; }
+          overlay.remove();
+          try {
+            await apiFetch("/documents/reject", {
+              method: "PUT",
+              body: JSON.stringify({ id, reason, userName: state.currentUser?.name || "Usuario" }),
+            });
+            await openModule("gestion_personal");
+          } catch {
+            showError("No fue posible rechazar el documento.");
+          }
+        });
       });
     });
   }, 0);
@@ -3773,6 +4047,7 @@ async function handleCreatePersonnel(event) {
 
       startDate: state.personnelDraft.startDate || "",
       coverageStartDate: state.personnelDraft.coverageStartDate || "",
+      terminationDate: state.personnelDraft.terminationDate || "",
 
       eps: state.personnelDraft.eps || "",
       pensionFund: state.personnelDraft.pensionFund || "",
@@ -3868,6 +4143,10 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       return await loadEmployeeDocumentsModule();
     }
 
+    if (state.personnelViewMode === "cv") {
+      return renderPersonnelCvModule();
+    }
+
     if (
       state.personnelViewMode === "create" ||
       state.personnelViewMode === "edit"
@@ -3934,6 +4213,11 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       wireConsultarNovedadesEvents();
       return html;
     }
+    if (submoduleKey === "novedades_personal") {
+      const html = await loadNovedadesPersonalModule();
+      wireNovedadesPersonalEvents();
+      return html;
+    }
     if (submoduleKey === "desprendibles") {
       const html = await loadDesprendiblesModule();
       wireDesprendiblesEvents();
@@ -3991,13 +4275,13 @@ async function loadRegistrarNovedadModule() {
 
   return `
     <div class="payroll-module-wrap">
-      <div class="payroll-header">
+      <section class="personnel-premium-hero">
         <div>
-          <span class="payroll-eyebrow">Nómina y Novedades</span>
-          <h2>Registrar novedad</h2>
+          <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+          <h2>Registrar Novedad</h2>
           <p>Registra incapacidades, vacaciones, licencias y otras novedades del personal.</p>
         </div>
-      </div>
+      </section>
 
       <div class="payroll-form-card">
         <div class="payroll-form-grid">
@@ -4037,6 +4321,7 @@ async function loadRegistrarNovedadModule() {
               <option value="AUSENCIA"              ${d.noveltyType==="AUSENCIA"              ?"selected":""}>Ausencia injustificada</option>
               <option value="CAMBIO_CARGO"          ${d.noveltyType==="CAMBIO_CARGO"          ?"selected":""}>Cambio de cargo</option>
               <option value="CAMBIO_SALARIO"        ${d.noveltyType==="CAMBIO_SALARIO"        ?"selected":""}>Cambio de salario</option>
+              <option value="RETIRO"                ${d.noveltyType==="RETIRO"                ?"selected":""}>Retiro del empleado</option>
               <option value="OTRO"                  ${d.noveltyType==="OTRO"                  ?"selected":""}>Otro</option>
             </select>
           </div>
@@ -4187,21 +4472,21 @@ async function loadConsultarNovedadesModule() {
     INCAPACIDAD:"Incapacidad", VACACIONES:"Vacaciones",
     LICENCIA_REMUNERADA:"Lic. remunerada", LICENCIA_NO_REMUNERADA:"Lic. no remunerada",
     SUSPENSION:"Suspensión", AUSENCIA:"Ausencia", CAMBIO_CARGO:"Cambio cargo",
-    CAMBIO_SALARIO:"Cambio salario", OTRO:"Otro",
+    CAMBIO_SALARIO:"Cambio salario", RETIRO:"Retiro", OTRO:"Otro",
   }[t] || t);
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-CO") : "-";
 
   return `
     <div class="payroll-module-wrap">
-      <div class="payroll-header">
+      <section class="personnel-premium-hero">
         <div>
-          <span class="payroll-eyebrow">Nómina y Novedades</span>
-          <h2>Consultar novedades</h2>
+          <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+          <h2>Consultar Novedades</h2>
           <p>${filtered.length} de ${novedades.length} novedades registradas</p>
         </div>
         <button type="button" id="btnIrRegistrar" class="btn btn-primary">+ Registrar novedad</button>
-      </div>
+      </section>
 
       <div class="payroll-filters">
         <input id="novSearchFilter" type="text" class="payroll-input" placeholder="Buscar empleado o documento..."
@@ -4216,6 +4501,7 @@ async function loadConsultarNovedadesModule() {
           <option value="AUSENCIA"              ${f.type==="AUSENCIA"              ?"selected":""}>Ausencia</option>
           <option value="CAMBIO_CARGO"          ${f.type==="CAMBIO_CARGO"          ?"selected":""}>Cambio cargo</option>
           <option value="CAMBIO_SALARIO"        ${f.type==="CAMBIO_SALARIO"        ?"selected":""}>Cambio salario</option>
+          <option value="RETIRO"                ${f.type==="RETIRO"                ?"selected":""}>Retiro</option>
           <option value="OTRO"                  ${f.type==="OTRO"                  ?"selected":""}>Otro</option>
         </select>
         <select id="novStatusFilter" class="payroll-select" style="max-width:160px">
@@ -4418,7 +4704,7 @@ async function loadDesprendiblesModule() {
         INCAPACIDAD: "Incapacidad", VACACIONES: "Vacaciones",
         LICENCIA_REMUNERADA: "Licencia remunerada", LICENCIA_NO_REMUNERADA: "Licencia no remunerada",
         SUSPENSION: "Suspensión", AUSENCIA: "Ausencia injustificada",
-        CAMBIO_CARGO: "Cambio de cargo", CAMBIO_SALARIO: "Cambio de salario", OTRO: "Otro",
+        CAMBIO_CARGO: "Cambio de cargo", CAMBIO_SALARIO: "Cambio de salario", RETIRO: "Retiro", OTRO: "Otro",
       }[t] || t);
 
       const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-CO") : "-";
@@ -4471,13 +4757,13 @@ async function loadDesprendiblesModule() {
 
   return `
     <div class="payroll-module-wrap">
-      <div class="payroll-header">
+      <section class="personnel-premium-hero">
         <div>
-          <span class="payroll-eyebrow">Nómina y Novedades</span>
-          <h2>Desprendibles de pago</h2>
+          <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+          <h2>Desprendibles de Pago</h2>
           <p>Genera el desprendible de novedades de nómina por empleado y período.</p>
         </div>
-      </div>
+      </section>
       <div class="payroll-form-card">
         <div class="payroll-form-grid">
           <div class="payroll-field">
@@ -4622,13 +4908,13 @@ async function loadCertificacionesModule() {
 
   return `
     <div class="payroll-module-wrap">
-      <div class="payroll-header">
+      <section class="personnel-premium-hero">
         <div>
-          <span class="payroll-eyebrow">Nómina y Novedades</span>
-          <h2>Certificaciones laborales</h2>
+          <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+          <h2>Certificaciones Laborales</h2>
           <p>Genera certificaciones laborales para los empleados.</p>
         </div>
-      </div>
+      </section>
       <div class="payroll-form-card">
         <div class="payroll-form-grid">
           <div class="payroll-field full-width">
@@ -4714,10 +5000,25 @@ function wireCertificacionesEvents() {
   // SOLICITUDES
   // ─────────────────────────────
   if (moduleKey === "solicitudes_empleados") {
+    if (submoduleKey === "solicitar_certificacion") {
+      const html = await loadSolicitudFormModule("CERTIFICADO_LABORAL", "Certificado Laboral", "Solicita tu certificado laboral para trámites personales, bancarios o de visa.");
+      wireSolicitudFormEvents();
+      return html;
+    }
+    if (submoduleKey === "solicitar_desprendible") {
+      const html = await loadSolicitudFormModule("DESPRENDIBLE_PAGO", "Desprendible de Pago", "Solicita el desprendible de pago correspondiente al período que necesitas.");
+      wireSolicitudFormEvents();
+      return html;
+    }
+    if (submoduleKey === "estado_solicitudes") {
+      const html = await loadEstadoSolicitudesModule();
+      wireEstadoSolicitudesEvents();
+      return html;
+    }
     return `
       <article class="info-card">
         <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este espacio quedará dedicado a la atención de solicitudes del empleado.</p>
+        <p>Espacio disponible para desarrollo.</p>
       </article>
     `;
   }
@@ -4809,12 +5110,6 @@ async function loadCoverageModule() {
   const personnelRows = Array.isArray(personnelPayload.data)
     ? personnelPayload.data
     : [];
-
-  let novedadesData = [];
-  try {
-    const novPayload = await apiFetch("/novedades");
-    novedadesData = Array.isArray(novPayload.data) ? novPayload.data : [];
-  } catch { novedadesData = []; }
 
   const selectedUploadId =
     state.coverageSelectedUploadId || (history[0]?.id ? String(history[0].id) : "");
@@ -5096,15 +5391,12 @@ async function loadCoverageModule() {
     return "modality-default";
   };
 
-  const getChangeLabel = (value, cuposDelta = null) => {
+  const getChangeIcon = (value) => {
     const status = normalize(value);
-    const delta = Number(cuposDelta || 0);
-
-    if (status === "SUBIO") return delta > 0 ? `Subió +${formatNumber(delta)}` : "Subió";
-    if (status === "BAJO") return delta < 0 ? `Bajó ${formatNumber(delta)}` : "Bajó";
-    if (status === "SIN_CAMBIO") return "Sin cambio";
-
-    return "Sin comparación";
+    if (status === "SUBIO") return `<svg class="change-icon change-up" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`;
+    if (status === "BAJO")  return `<svg class="change-icon change-down" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    if (status === "SIN_CAMBIO") return `<svg class="change-icon change-same" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+    return `<span class="change-icon change-none">—</span>`;
   };
 
   const getChangeClass = (value) => {
@@ -5342,161 +5634,19 @@ async function loadCoverageModule() {
       });
     }
 
-    // Tab switching
-    document.querySelectorAll("[data-coverage-tab]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        state.coverageActiveTab = btn.dataset.coverageTab;
-        await openModule("cobertura_calculadora");
-      });
-    });
-
-    // Add novedad — show form
-    document.querySelectorAll(".btn-add-novedad").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const empId = btn.dataset.novedadEmpId;
-        const formWrap = document.getElementById(`novedad-form-${empId}`);
-        if (formWrap) formWrap.classList.toggle("hidden");
-        const detailWrap = document.getElementById(`novedad-detail-${empId}`);
-        if (detailWrap) detailWrap.classList.add("hidden");
-      });
-    });
-
-    // Cancel novedad
-    document.querySelectorAll(".btn-cancel-novedad").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const empId = btn.dataset.cancelEmpId;
-        const formWrap = document.getElementById(`novedad-form-${empId}`);
-        if (formWrap) formWrap.classList.add("hidden");
-      });
-    });
-
-    // Ver novedades toggle
-    document.querySelectorAll(".btn-ver-novedades").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const empId = btn.dataset.novedadEmpId;
-        const detailWrap = document.getElementById(`novedad-detail-${empId}`);
-        if (detailWrap) detailWrap.classList.toggle("hidden");
-        const formWrap = document.getElementById(`novedad-form-${empId}`);
-        if (formWrap) formWrap.classList.add("hidden");
-      });
-    });
-
-    // Submit novedad form
-    document.querySelectorAll(".novedad-inline-form").forEach((form) => {
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const empId = form.dataset.formEmpId;
-        const row = form.closest(".novedad-emp-row");
-        const type = form.querySelector("[name='type']")?.value || "";
-        const date = form.querySelector("[name='date']")?.value || "";
-        const description = form.querySelector("[name='description']")?.value || "";
-        const fileInput = form.querySelector("[name='documentFile']");
-
-        if (!type) { showWarning("Selecciona el tipo de novedad."); return; }
-
-        let documentBase64 = null;
-        let documentName = null;
-        if (fileInput && fileInput.files && fileInput.files.length) {
-          documentBase64 = await fileToBase64(fileInput.files[0]);
-          documentName = fileInput.files[0].name;
-        }
-
-        const empName = row?.querySelector(".novedad-emp-name")?.textContent?.trim() || "";
-        const munId = form.closest("[data-emp-id]")?.dataset?.empId
-          ? document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadMunId || ""
-          : "";
-        const munName = document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadMunName || "";
-        const cargo = document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadCargo || "";
-
-        try {
-          const submitBtn = form.querySelector("[type='submit']");
-          if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Guardando..."; }
-
-          await apiFetch("/novedades", {
-            method: "POST",
-            body: JSON.stringify({
-              employeeId: empId,
-              employeeName: empName,
-              municipalityId: munId,
-              municipalityName: munName,
-              cargo,
-              type,
-              date,
-              description,
-              documentBase64,
-              documentName,
-            }),
-          });
-
-          await openModule("cobertura_calculadora");
-        } catch (err) {
-          showError(err.message || "Error al registrar la novedad.");
-        }
-      });
-    });
-
-    // Approve novedad
-    document.querySelectorAll(".novedad-approve-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const novId = btn.dataset.novId;
-        try {
-          await apiFetch(`/novedades/${novId}/status`, {
-            method: "PUT",
-            body: JSON.stringify({ status: "APROBADO", reviewNote: "" }),
-          });
-          await openModule("cobertura_calculadora");
-        } catch (err) {
-          showError(err.message || "Error al aprobar.");
-        }
-      });
-    });
-
-    // Reject novedad
-    document.querySelectorAll(".novedad-reject-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const novId = btn.dataset.novId;
-        const note = prompt("Motivo del rechazo (opcional):") || "";
-        try {
-          await apiFetch(`/novedades/${novId}/status`, {
-            method: "PUT",
-            body: JSON.stringify({ status: "RECHAZADO", reviewNote: note }),
-          });
-          await openModule("cobertura_calculadora");
-        } catch (err) {
-          showError(err.message || "Error al rechazar.");
-        }
-      });
-    });
   }, 0);
-
-  const coverageTab = state.coverageActiveTab || "cobertura";
 
   return `
     <div class="coverage-pro-module">
       <article class="coverage-pro-card">
-        <section class="coverage-pro-header coverage-pro-header-v2">
-          <div class="coverage-pro-header-copy">
-            <span class="coverage-pro-eyebrow-badge">Cobertura PAE</span>
+        <section class="personnel-premium-hero">
+          <div>
+            <span class="personnel-premium-eyebrow">Módulo Operativo</span>
             <h2>Verificación de Cobertura</h2>
-            <p>Sube archivos Excel por corte, conserva historial y compara cobertura requerida vs. personal contratado.</p>
-          </div>
-
-          <div class="coverage-pro-current coverage-pro-current-v2">
-            <span>Archivo activo</span>
-            <strong>${escapeHtml(getSelectedPeriodLabel())}</strong>
+            <p>Sube archivos Excel por corte, conserva historial y compara cobertura requerida vs personal contratado.</p>
           </div>
         </section>
 
-        <nav class="coverage-tab-nav">
-          <button class="coverage-tab-btn ${coverageTab === 'cobertura' ? 'active' : ''}" data-coverage-tab="cobertura">
-            Verificación de Cobertura
-          </button>
-          <button class="coverage-tab-btn ${coverageTab === 'novedades' ? 'active' : ''}" data-coverage-tab="novedades">
-            Novedades del Personal
-          </button>
-        </nav>
-
-        ${coverageTab === 'cobertura' ? `
         <section class="coverage-pro-upload">
           <div class="coverage-upload-copy">
             <h3>Subir archivo de cobertura</h3>
@@ -5754,10 +5904,9 @@ async function loadCoverageModule() {
                                 ${cuposDelta === null ? "-" : formatNumber(cuposDelta)}
                               </td>
 
-                              <td>
-                                <span class="change ${getChangeClass(row.change_status)}">
-                                  ${escapeHtml(getChangeLabel(row.change_status, cuposDelta))}
-                                </span>
+                              <td class="change-cell">
+                                ${getChangeIcon(row.change_status)}
+                                ${row.update_origin !== "HEREDADO" ? `<svg class="updated-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
                               </td>
                             </tr>
                           `;
@@ -5775,127 +5924,380 @@ async function loadCoverageModule() {
             </table>
           </div>
         </section>
-        ` : `
-        <section class="novedades-section">
-          <div class="novedades-toolbar">
-            <h3>Personal — estado de novedades</h3>
-            <span class="novedades-count-badge">${personnelRows.length} personas</span>
-          </div>
-
-          <div class="novedades-list">
-            ${personnelRows.map(emp => {
-              const empId = String(emp.id || "");
-              const empNovedades = novedadesData.filter(n => String(n.employeeId) === empId);
-              const hasNovedades = empNovedades.length > 0;
-              const latestStatus = hasNovedades ? empNovedades[0].status : null;
-
-              const statusColors = { PENDIENTE: "cov-warning", APROBADO: "cov-success", RECHAZADO: "cov-danger" };
-
-              return `
-                <div class="novedad-emp-row" data-emp-id="${escapeAttr(empId)}">
-                  <div class="novedad-emp-info">
-                    <span class="novedad-emp-name">${escapeHtml(getPersonnelFullName(emp))}</span>
-                    <span class="novedad-emp-meta">${escapeHtml(getPersonnelMunicipality(emp))} · ${escapeHtml(getPersonnelRole(emp))}</span>
-                  </div>
-
-                  <div class="novedad-emp-status">
-                    ${!hasNovedades
-                      ? `<span class="novedad-badge novedad-badge-none">Sin novedad</span>`
-                      : `<span class="novedad-badge ${statusColors[latestStatus] || ''}">${escapeHtml(latestStatus || "—")}</span>
-                         <span class="novedad-count-label">${empNovedades.length} novedad${empNovedades.length !== 1 ? 'es' : ''}</span>`
-                    }
-                  </div>
-
-                  <div class="novedad-emp-actions">
-                    <button type="button" class="btn btn-secondary btn-row btn-add-novedad"
-                      data-novedad-emp-id="${escapeAttr(empId)}"
-                      data-novedad-emp-name="${escapeAttr(getPersonnelFullName(emp))}"
-                      data-novedad-mun-id="${escapeAttr(String(emp.municipalityId || emp.municipality_id || ''))}"
-                      data-novedad-mun-name="${escapeAttr(getPersonnelMunicipality(emp))}"
-                      data-novedad-cargo="${escapeAttr(getPersonnelRole(emp))}">
-                      + Novedad
-                    </button>
-                    ${hasNovedades
-                      ? `<button type="button" class="btn btn-secondary btn-row btn-ver-novedades"
-                           data-novedad-emp-id="${escapeAttr(empId)}">
-                           Ver (${empNovedades.length})
-                         </button>`
-                      : ""}
-                  </div>
-                </div>
-
-                <div class="novedad-form-wrap hidden" id="novedad-form-${escapeAttr(empId)}">
-                  <form class="novedad-inline-form" data-form-emp-id="${escapeAttr(empId)}">
-                    <div class="novedad-form-grid">
-                      <label>
-                        <span>Tipo</span>
-                        <select name="type" required>
-                          <option value="">Selecciona</option>
-                          <option value="Ausencia">Ausencia</option>
-                          <option value="Incapacidad">Incapacidad</option>
-                          <option value="Licencia">Licencia</option>
-                          <option value="Permiso">Permiso</option>
-                          <option value="Reemplazo">Reemplazo</option>
-                          <option value="Otro">Otro</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>Fecha</span>
-                        <input name="date" type="date" value="${new Date().toISOString().slice(0,10)}" required />
-                      </label>
-                      <label class="novedad-form-full">
-                        <span>Descripción</span>
-                        <textarea name="description" rows="2" placeholder="Describe la novedad..."></textarea>
-                      </label>
-                      <label class="novedad-form-full">
-                        <span>Documento soporte (PDF)</span>
-                        <input name="documentFile" type="file" accept=".pdf" />
-                      </label>
-                    </div>
-                    <div class="novedad-form-actions">
-                      <button type="submit" class="btn btn-primary btn-row">Registrar</button>
-                      <button type="button" class="btn btn-secondary btn-row btn-cancel-novedad" data-cancel-emp-id="${escapeAttr(empId)}">Cancelar</button>
-                    </div>
-                  </form>
-                </div>
-
-                <div class="novedad-detail-wrap hidden" id="novedad-detail-${escapeAttr(empId)}">
-                  ${empNovedades.map(nov => `
-                    <div class="novedad-detail-card ${(statusColors[nov.status] || 'cov-neutral')}">
-                      <div class="novedad-detail-head">
-                        <div>
-                          <strong>${escapeHtml(nov.type || "Otro")}</strong>
-                          <span class="novedad-detail-date">${escapeHtml(nov.date || "")}</span>
-                        </div>
-                        <span class="novedad-status-chip ${(statusColors[nov.status] || '')}">
-                          ${escapeHtml(nov.status || "PENDIENTE")}
-                        </span>
-                      </div>
-                      ${nov.description ? `<p class="novedad-detail-desc">${escapeHtml(nov.description)}</p>` : ""}
-                      <div class="novedad-detail-meta">
-                        <span>Registrado por: <strong>${escapeHtml(nov.registeredByName || nov.registeredBy || "—")}</strong></span>
-                        ${nov.documentBase64
-                          ? `<a href="${escapeAttr(nov.documentBase64)}" target="_blank" class="novedad-doc-link">Ver documento</a>`
-                          : `<span class="novedad-no-doc">Sin documento</span>`}
-                      </div>
-                      ${nov.reviewNote ? `<p class="novedad-review-note">Nota revisión: ${escapeHtml(nov.reviewNote)}</p>` : ""}
-                      ${nov.status === "PENDIENTE" ? `
-                        <div class="novedad-review-actions">
-                          <button type="button" class="btn btn-row novedad-approve-btn"
-                            data-nov-id="${escapeAttr(String(nov.id))}">✓ Aprobar</button>
-                          <button type="button" class="btn btn-row novedad-reject-btn"
-                            data-nov-id="${escapeAttr(String(nov.id))}">✕ Rechazar</button>
-                        </div>
-                      ` : ""}
-                    </div>
-                  `).join("")}
-                </div>
-              `;
-            }).join("")}
-          </div>
-        </section>
-        `}
       </article>
+    </div>
+  `;
+}
+
+// ============================================================
+// NÓMINA — Novedades del Personal (estado de novedades por empleado)
+// ============================================================
+async function loadNovedadesPersonalModule() {
+  let personnelRows = [];
+  let novedadesData = [];
+  try {
+    const pp = await apiFetch("/personnel");
+    personnelRows = Array.isArray(pp.data) ? pp.data : [];
+  } catch { personnelRows = []; }
+  try {
+    const novPayload = await apiFetch("/novedades");
+    novedadesData = Array.isArray(novPayload.data) ? novPayload.data : [];
+  } catch { novedadesData = []; }
+
+  return `
+    <div class="payroll-module-wrap">
+      <section class="personnel-premium-hero">
+        <div>
+          <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+          <h2>Novedades del Personal</h2>
+          <p>Estado de novedades por empleado: ausencias, incapacidades, licencias y más.</p>
+        </div>
+      </section>
+      <section class="novedades-section">
+        <div class="novedades-toolbar">
+          <h3>Personal — estado de novedades</h3>
+          <span class="novedades-count-badge">${personnelRows.length} personas</span>
+        </div>
+        <div class="novedades-list">
+          ${personnelRows.map(emp => {
+            const empId = String(emp.id || "");
+            const empNovedades = novedadesData.filter(n => String(n.employeeId) === empId);
+            const hasNovedades = empNovedades.length > 0;
+            const latestStatus = hasNovedades ? empNovedades[0].status : null;
+            const statusColors = { PENDIENTE: "cov-warning", APROBADO: "cov-success", RECHAZADO: "cov-danger" };
+            return `
+              <div class="novedad-emp-row" data-emp-id="${escapeAttr(empId)}">
+                <div class="novedad-emp-info">
+                  <span class="novedad-emp-name">${escapeHtml(getPersonnelFullName(emp))}</span>
+                  <span class="novedad-emp-meta">${escapeHtml(getPersonnelMunicipality(emp))} · ${escapeHtml(getPersonnelRole(emp))}</span>
+                </div>
+                <div class="novedad-emp-status">
+                  ${!hasNovedades
+                    ? `<span class="novedad-badge novedad-badge-none">Sin novedad</span>`
+                    : `<span class="novedad-badge ${statusColors[latestStatus] || ''}">${escapeHtml(latestStatus || "—")}</span>
+                       <span class="novedad-count-label">${empNovedades.length} novedad${empNovedades.length !== 1 ? 'es' : ''}</span>`
+                  }
+                </div>
+                <div class="novedad-emp-actions">
+                  <button type="button" class="btn btn-secondary btn-row btn-add-novedad"
+                    data-novedad-emp-id="${escapeAttr(empId)}"
+                    data-novedad-emp-name="${escapeAttr(getPersonnelFullName(emp))}"
+                    data-novedad-mun-id="${escapeAttr(String(emp.municipalityId || emp.municipality_id || ''))}"
+                    data-novedad-mun-name="${escapeAttr(getPersonnelMunicipality(emp))}"
+                    data-novedad-cargo="${escapeAttr(getPersonnelRole(emp))}">
+                    + Novedad
+                  </button>
+                  ${hasNovedades
+                    ? `<button type="button" class="btn btn-secondary btn-row btn-ver-novedades"
+                         data-novedad-emp-id="${escapeAttr(empId)}">
+                         Ver (${empNovedades.length})
+                       </button>`
+                    : ""}
+                </div>
+              </div>
+              <div class="novedad-form-wrap hidden" id="novedad-form-${escapeAttr(empId)}">
+                <form class="novedad-inline-form" data-form-emp-id="${escapeAttr(empId)}">
+                  <div class="novedad-form-grid">
+                    <label>
+                      <span>Tipo</span>
+                      <select name="type" required>
+                        <option value="">Selecciona</option>
+                        <option value="Ausencia">Ausencia</option>
+                        <option value="Incapacidad">Incapacidad</option>
+                        <option value="Licencia">Licencia</option>
+                        <option value="Permiso">Permiso</option>
+                        <option value="Reemplazo">Reemplazo</option>
+                        <option value="Otro">Otro</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Fecha</span>
+                      <input name="date" type="date" value="${new Date().toISOString().slice(0,10)}" required />
+                    </label>
+                    <label class="novedad-form-full">
+                      <span>Descripción</span>
+                      <textarea name="description" rows="2" placeholder="Describe la novedad..."></textarea>
+                    </label>
+                    <label class="novedad-form-full">
+                      <span>Documento soporte (PDF)</span>
+                      <input name="documentFile" type="file" accept=".pdf" />
+                    </label>
+                  </div>
+                  <div class="novedad-form-actions">
+                    <button type="submit" class="btn btn-primary btn-row">Registrar</button>
+                    <button type="button" class="btn btn-secondary btn-row btn-cancel-novedad" data-cancel-emp-id="${escapeAttr(empId)}">Cancelar</button>
+                  </div>
+                </form>
+              </div>
+              <div class="novedad-detail-wrap hidden" id="novedad-detail-${escapeAttr(empId)}">
+                ${empNovedades.map(nov => `
+                  <div class="novedad-detail-card ${(statusColors[nov.status] || 'cov-neutral')}">
+                    <div class="novedad-detail-head">
+                      <div>
+                        <strong>${escapeHtml(nov.type || "Otro")}</strong>
+                        <span class="novedad-detail-date">${escapeHtml(nov.date || "")}</span>
+                      </div>
+                      <span class="novedad-status-chip ${(statusColors[nov.status] || '')}">
+                        ${escapeHtml(nov.status || "PENDIENTE")}
+                      </span>
+                    </div>
+                    ${nov.description ? `<p class="novedad-detail-desc">${escapeHtml(nov.description)}</p>` : ""}
+                    <div class="novedad-detail-meta">
+                      <span>Registrado por: <strong>${escapeHtml(nov.registeredByName || nov.registeredBy || "—")}</strong></span>
+                      ${nov.documentBase64
+                        ? `<a href="${escapeAttr(nov.documentBase64)}" target="_blank" class="novedad-doc-link">Ver documento</a>`
+                        : `<span class="novedad-no-doc">Sin documento</span>`}
+                    </div>
+                    ${nov.reviewNote ? `<p class="novedad-review-note">Nota revisión: ${escapeHtml(nov.reviewNote)}</p>` : ""}
+                    ${nov.status === "PENDIENTE" ? `
+                      <div class="novedad-review-actions">
+                        <button type="button" class="btn btn-row novedad-approve-btn"
+                          data-nov-id="${escapeAttr(String(nov.id))}">✓ Aprobar</button>
+                        <button type="button" class="btn btn-row novedad-reject-btn"
+                          data-nov-id="${escapeAttr(String(nov.id))}">✕ Rechazar</button>
+                      </div>
+                    ` : ""}
+                  </div>
+                `).join("")}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function wireNovedadesPersonalEvents() {
+  setTimeout(() => {
+    document.querySelectorAll(".btn-add-novedad").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const empId = btn.dataset.novedadEmpId;
+        const formWrap = document.getElementById(`novedad-form-${empId}`);
+        if (formWrap) formWrap.classList.toggle("hidden");
+        const detailWrap = document.getElementById(`novedad-detail-${empId}`);
+        if (detailWrap) detailWrap.classList.add("hidden");
+      });
+    });
+
+    document.querySelectorAll(".btn-cancel-novedad").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const empId = btn.dataset.cancelEmpId;
+        const formWrap = document.getElementById(`novedad-form-${empId}`);
+        if (formWrap) formWrap.classList.add("hidden");
+      });
+    });
+
+    document.querySelectorAll(".btn-ver-novedades").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const empId = btn.dataset.novedadEmpId;
+        const detailWrap = document.getElementById(`novedad-detail-${empId}`);
+        if (detailWrap) detailWrap.classList.toggle("hidden");
+        const formWrap = document.getElementById(`novedad-form-${empId}`);
+        if (formWrap) formWrap.classList.add("hidden");
+      });
+    });
+
+    document.querySelectorAll(".novedad-inline-form").forEach((form) => {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const empId = form.dataset.formEmpId;
+        const row = form.closest(".novedad-emp-row");
+        const type = form.querySelector("[name='type']")?.value || "";
+        const date = form.querySelector("[name='date']")?.value || "";
+        const description = form.querySelector("[name='description']")?.value || "";
+        const fileInput = form.querySelector("[name='documentFile']");
+
+        if (!type) { showWarning("Selecciona el tipo de novedad."); return; }
+
+        let documentBase64 = null;
+        let documentName = null;
+        if (fileInput && fileInput.files && fileInput.files.length) {
+          documentBase64 = await fileToBase64(fileInput.files[0]);
+          documentName = fileInput.files[0].name;
+        }
+
+        const empName = row?.querySelector(".novedad-emp-name")?.textContent?.trim() || "";
+        const munId = document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadMunId || "";
+        const munName = document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadMunName || "";
+        const cargo = document.querySelector(`[data-novedad-emp-id="${empId}"]`)?.dataset?.novedadCargo || "";
+
+        try {
+          const submitBtn = form.querySelector("[type='submit']");
+          if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Guardando..."; }
+
+          await apiFetch("/novedades", {
+            method: "POST",
+            body: JSON.stringify({ employeeId: empId, employeeName: empName, municipalityId: munId, municipalityName: munName, cargo, type, date, description, documentBase64, documentName }),
+          });
+
+          await openModule("nomina_novedades");
+        } catch (err) {
+          showError(err.message || "Error al registrar la novedad.");
+        }
+      });
+    });
+
+    document.querySelectorAll(".novedad-approve-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const novId = btn.dataset.novId;
+        try {
+          await apiFetch(`/novedades/${novId}/status`, {
+            method: "PUT",
+            body: JSON.stringify({ status: "APROBADO", reviewNote: "" }),
+          });
+          await openModule("nomina_novedades");
+        } catch (err) {
+          showError(err.message || "Error al aprobar.");
+        }
+      });
+    });
+
+    document.querySelectorAll(".novedad-reject-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const novId = btn.dataset.novId;
+        const note = prompt("Motivo del rechazo (opcional):") || "";
+        try {
+          await apiFetch(`/novedades/${novId}/status`, {
+            method: "PUT",
+            body: JSON.stringify({ status: "RECHAZADO", reviewNote: note }),
+          });
+          await openModule("nomina_novedades");
+        } catch (err) {
+          showError(err.message || "Error al rechazar.");
+        }
+      });
+    });
+  }, 0);
+}
+
+// ============================================================
+// HOJA DE VIDA — Vista de CV completo
+// ============================================================
+function renderPersonnelCvModule() {
+  const d = state.personnelDraft || {};
+  const fullName = [d.firstName, d.secondName, d.firstLastName, d.secondLastName].filter(Boolean).join(" ").toUpperCase() || "SIN NOMBRE";
+  const initials = [d.firstName, d.firstLastName].filter(Boolean).map(n => n[0]).join("").toUpperCase() || "?";
+  const fmtDate = (v) => v ? new Date(v + "T00:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" }) : "—";
+  const val = (v) => escapeHtml(v || "—");
+
+  setTimeout(() => {
+    document.getElementById("btnBackFromCv")?.addEventListener("click", async () => {
+      state.personnelViewMode = "table";
+      await openModule("gestion_personal");
+    });
+  }, 0);
+
+  const estudios = Array.isArray(d.studies) ? d.studies : [];
+  const observations = Array.isArray(d.observations) ? d.observations : [];
+
+  return `
+    <div style="padding: 16px;">
+      <div class="cv-actions" style="padding: 0 0 16px; display:flex; gap:10px;">
+        <button id="btnBackFromCv" type="button" class="btn btn-secondary">← Volver al listado</button>
+      </div>
+      <div class="cv-shell">
+        <div class="cv-header">
+          <div class="cv-avatar">${escapeHtml(initials)}</div>
+          <div class="cv-header-info">
+            <h2>${escapeHtml(fullName)}</h2>
+            <p>${val(d.cargo_real)} ${d.offerPosition && d.presentedInOffer === "true" ? "· Cargo licitación: " + escapeHtml(d.offerPosition) : ""}</p>
+            <p style="margin-top:4px; opacity:0.7">${val(d.documentType)} ${val(d.documentNumber)}</p>
+          </div>
+        </div>
+        <div class="cv-body">
+
+          <div class="cv-section">
+            <div class="cv-section-title">Identificación</div>
+            <div class="cv-grid">
+              <div class="cv-field"><span>Tipo de documento</span><strong>${val(d.documentType)}</strong></div>
+              <div class="cv-field"><span>Número de documento</span><strong>${val(d.documentNumber)}</strong></div>
+              <div class="cv-field"><span>Fecha de expedición</span><strong>${val([d.expeditionDay, d.expeditionMonth, d.expeditionYear].filter(Boolean).join("/"))}</strong></div>
+              <div class="cv-field"><span>Lugar de expedición</span><strong>${val(d.expeditionMunicipality)} · ${val(d.expeditionDepartment)}</strong></div>
+              <div class="cv-field"><span>Fecha de nacimiento</span><strong>${val([d.birthDay, d.birthMonth, d.birthYear].filter(Boolean).join("/"))}</strong></div>
+              <div class="cv-field"><span>Lugar de nacimiento</span><strong>${val(d.birthMunicipality)} · ${val(d.birthDepartment)}</strong></div>
+              <div class="cv-field"><span>Grupo sanguíneo</span><strong>${val(d.bloodType)}</strong></div>
+              <div class="cv-field"><span>Sexo biológico</span><strong>${val(d.biologicalSex)}</strong></div>
+            </div>
+          </div>
+
+          <div class="cv-section">
+            <div class="cv-section-title">Datos de Contacto</div>
+            <div class="cv-grid">
+              <div class="cv-field"><span>Celular</span><strong>${val(d.phone)}</strong></div>
+              <div class="cv-field"><span>Correo electrónico</span><strong>${val(d.email)}</strong></div>
+              <div class="cv-field"><span>Dirección</span><strong>${val(d.address)}</strong></div>
+              <div class="cv-field"><span>Barrio</span><strong>${val(d.neighborhood)}</strong></div>
+              <div class="cv-field"><span>Municipio de residencia</span><strong>${val(d.residenceMunicipality)}</strong></div>
+              <div class="cv-field"><span>Estado civil</span><strong>${val(d.civilStatus)}</strong></div>
+            </div>
+          </div>
+
+          <div class="cv-section">
+            <div class="cv-section-title">Vinculación y Contratación</div>
+            <div class="cv-grid">
+              <div class="cv-field"><span>Estado laboral</span><strong>${val(d.status)}</strong></div>
+              <div class="cv-field"><span>Gestor de Zona</span><strong>${val(d.gestorZona)}</strong></div>
+              <div class="cv-field"><span>Tipo de contrato</span><strong>${val(d.contractType)}</strong></div>
+              <div class="cv-field"><span>Tipo de tiempo</span><strong>${val(d.workTimeType)}</strong></div>
+              <div class="cv-field"><span>Fecha de ingreso</span><strong>${fmtDate(d.startDate)}</strong></div>
+              <div class="cv-field"><span>Fecha inicio cobertura</span><strong>${fmtDate(d.coverageStartDate)}</strong></div>
+              ${d.terminationDate ? `<div class="cv-field"><span>Fecha de retiro</span><strong>${fmtDate(d.terminationDate)}</strong></div>` : ""}
+              <div class="cv-field"><span>EPS</span><strong>${val(d.eps)}</strong></div>
+              <div class="cv-field"><span>Fondo de pensiones</span><strong>${val(d.pensionFund)}</strong></div>
+            </div>
+          </div>
+
+          ${d.educationalMunicipality ? `
+          <div class="cv-section">
+            <div class="cv-section-title">Asignación Institucional</div>
+            <div class="cv-grid">
+              <div class="cv-field"><span>Municipio</span><strong>${val(d.educationalMunicipality)}</strong></div>
+              <div class="cv-field"><span>Institución</span><strong>${val(d.institution)}</strong></div>
+              <div class="cv-field"><span>Sede</span><strong>${val(d.site)}</strong></div>
+              <div class="cv-field"><span>Modalidad</span><strong>${val(d.educationalModality)}</strong></div>
+            </div>
+          </div>
+          ` : ""}
+
+          ${estudios.length ? `
+          <div class="cv-section">
+            <div class="cv-section-title">Formación Académica</div>
+            ${estudios.map(s => `
+              <div class="cv-study-item">
+                <strong>${escapeHtml(s.degree || "Sin título")}</strong>
+                <span>${escapeHtml(s.educationLevel || "")}${s.institution ? " · " + escapeHtml(s.institution) : ""}${s.year ? " · " + escapeHtml(String(s.year)) : ""}</span>
+              </div>
+            `).join("")}
+          </div>
+          ` : ""}
+
+          ${(d.foodHandlingCourseIssueDate || d.foodHandlingExamIssueDate) ? `
+          <div class="cv-section">
+            <div class="cv-section-title">Manipulación de Alimentos</div>
+            <div class="cv-grid">
+              ${d.foodHandlingCourseIssueDate ? `<div class="cv-field"><span>Curso — Expedición</span><strong>${fmtDate(d.foodHandlingCourseIssueDate)}</strong></div>` : ""}
+              ${d.foodHandlingCourseExpirationDate ? `<div class="cv-field"><span>Curso — Vencimiento</span><strong>${fmtDate(d.foodHandlingCourseExpirationDate)}</strong></div>` : ""}
+              ${d.foodHandlingExamIssueDate ? `<div class="cv-field"><span>Examen — Expedición</span><strong>${fmtDate(d.foodHandlingExamIssueDate)}</strong></div>` : ""}
+              ${d.foodHandlingExamExpirationDate ? `<div class="cv-field"><span>Examen — Vencimiento</span><strong>${fmtDate(d.foodHandlingExamExpirationDate)}</strong></div>` : ""}
+            </div>
+          </div>
+          ` : ""}
+
+          ${observations.length ? `
+          <div class="cv-section">
+            <div class="cv-section-title">Observaciones</div>
+            ${observations.slice().reverse().map(o => `
+              <div class="obs-item" style="margin-bottom:8px">
+                <div class="obs-item-meta">${escapeHtml(o.date ? new Date(o.date).toLocaleString("es-CO") : "—")} · ${escapeHtml(o.user || "—")}</div>
+                <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
+              </div>
+            `).join("")}
+          </div>
+          ` : ""}
+
+        </div>
+      </div>
     </div>
   `;
 }
@@ -6595,7 +6997,20 @@ async function loadTrainingsModule() {
     </article>
   `;
 
-  return `<div class="training-grid">${formHtml}${listHtml}</div>`;
+  return `
+    <div class="personnel-master-module personnel-premium-module">
+      <article class="personnel-premium-card">
+        <section class="personnel-premium-hero">
+          <div>
+            <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+            <h2>Capacitaciones</h2>
+            <p>Gestiona las capacitaciones del equipo: programadas, en curso y cerradas.</p>
+          </div>
+        </section>
+        <div class="training-grid">${formHtml}${listHtml}</div>
+      </article>
+    </div>
+  `;
 }
 
 async function loadTrainingAttendanceModule() {
@@ -6630,7 +7045,16 @@ async function loadTrainingAttendanceModule() {
   }, 0);
 
   return `
-    <div class="attendance-list">
+    <div class="personnel-master-module personnel-premium-module">
+      <article class="personnel-premium-card">
+        <section class="personnel-premium-hero">
+          <div>
+            <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+            <h2>Asistencia a Capacitaciones</h2>
+            <p>Registra y consulta la asistencia del personal a las capacitaciones programadas.</p>
+          </div>
+        </section>
+        <div class="attendance-list" style="padding:1rem">
       ${
         payload.trainings.length
           ? payload.trainings
@@ -6687,6 +7111,8 @@ async function loadTrainingAttendanceModule() {
               .join("")
           : '<article class="info-card"><p>No hay capacitaciones visibles para marcar asistencia.</p></article>'
       }
+        </div>
+      </article>
     </div>
   `;
 }
@@ -6825,7 +7251,20 @@ async function loadReportsModule() {
     </article>
   `;
 
-  return `<div class="report-grid">${formHtml}${listHtml}</div>`;
+  return `
+    <div class="personnel-master-module personnel-premium-module">
+      <article class="personnel-premium-card">
+        <section class="personnel-premium-hero">
+          <div>
+            <span class="personnel-premium-eyebrow">Módulo Operativo</span>
+            <h2>Informes y Reportes</h2>
+            <p>Genera y consulta informes de personal, cobertura y actividad del equipo.</p>
+          </div>
+        </section>
+        <div class="report-grid">${formHtml}${listHtml}</div>
+      </article>
+    </div>
+  `;
 }
 
 function toggleAdminPanel(isVisible) {
@@ -6975,6 +7414,380 @@ if (elements.accessForm) {
         <p>${error.message}</p>
       `;
     }
+  });
+}
+
+// ============================================================
+// SOLICITUDES — Formulario de solicitud (certificado / desprendible)
+// ============================================================
+async function loadSolicitudFormModule(defaultType, titulo, descripcion) {
+  let personnelRows = [];
+  try {
+    const pp = await apiFetch("/personnel");
+    personnelRows = Array.isArray(pp.data) ? pp.data : Array.isArray(pp.personnel) ? pp.personnel : [];
+  } catch { personnelRows = []; }
+
+  const activeEmployees = personnelRows.filter(e => {
+    const s = String(e.status || e.estado || "").toUpperCase();
+    return s === "ACTIVO" || s === "ACTIVE";
+  });
+
+  const REQUEST_TYPE_LABELS = {
+    CERTIFICADO_LABORAL: "Certificado Laboral",
+    CARTA_PRESENTACION: "Carta de Presentación",
+    DESPRENDIBLE_PAGO: "Desprendible de Pago",
+    PAZ_Y_SALVO: "Paz y Salvo",
+    PERMISO: "Permiso",
+    VACACIONES: "Vacaciones",
+    CAMBIO_DATOS_PERSONALES: "Cambio de Datos Personales",
+    SOLICITUD_DOCUMENTOS: "Solicitud de Documentos",
+    QUEJA_RECLAMO: "Queja o Reclamo",
+    OTRO: "Otro",
+  };
+
+  const empOptions = activeEmployees.map(e =>
+    `<option value="${escapeAttr(String(e.id))}">${escapeHtml(getPersonnelFullName(e))} — ${escapeHtml(e.documentNumber || e.document_number || e.numero_documento || "")}</option>`
+  ).join("");
+
+  const typeOptions = Object.entries(REQUEST_TYPE_LABELS).map(([k, v]) =>
+    `<option value="${k}" ${k === defaultType ? "selected" : ""}>${escapeHtml(v)}</option>`
+  ).join("");
+
+  return `
+    <div class="payroll-module-wrap">
+      <section class="personnel-premium-hero">
+        <div>
+          <span class="personnel-premium-eyebrow">Solicitudes de Empleados</span>
+          <h2>${escapeHtml(titulo)}</h2>
+          <p>${escapeHtml(descripcion)}</p>
+        </div>
+      </section>
+      <div class="payroll-form-card">
+        <form id="solicitudForm" class="form-grid two-cols">
+          <label class="full" for="solicEmpSelect">
+            Empleado
+            <select id="solicEmpSelect" required>
+              <option value="">— Selecciona un empleado —</option>
+              ${empOptions}
+            </select>
+          </label>
+          <label for="solicType">
+            Tipo de solicitud
+            <select id="solicType" required>
+              ${typeOptions}
+            </select>
+          </label>
+          <label for="solicPriority">
+            Prioridad
+            <select id="solicPriority">
+              <option value="NORMAL">Normal</option>
+              <option value="ALTA">Alta</option>
+              <option value="BAJA">Baja</option>
+            </select>
+          </label>
+          <label class="full" for="solicDesc">
+            Descripción / Motivo
+            <textarea id="solicDesc" rows="4" placeholder="Describe el motivo o detalle de la solicitud..." required></textarea>
+          </label>
+          <div class="full" style="display:flex;gap:1rem;align-items:center">
+            <button type="submit" class="btn btn-primary" id="solicSubmitBtn">Enviar solicitud</button>
+            <span id="solicMsg" class="message"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function wireSolicitudFormEvents() {
+  const form = document.getElementById("solicitudForm");
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("solicSubmitBtn");
+    const msgEl = document.getElementById("solicMsg");
+    const employeeId = document.getElementById("solicEmpSelect").value;
+    const requestType = document.getElementById("solicType").value;
+    const priority = document.getElementById("solicPriority").value;
+    const description = document.getElementById("solicDesc").value.trim();
+
+    if (!employeeId) { showError("Selecciona un empleado"); return; }
+    if (!description) { showError("Escribe el motivo de la solicitud"); return; }
+
+    btn.disabled = true;
+    if (msgEl) msgEl.textContent = "";
+    try {
+      await apiFetch("/employee-requests", {
+        method: "POST",
+        body: JSON.stringify({ employeeId, requestType, priority, description }),
+      });
+      showSuccess("Solicitud enviada correctamente");
+      form.reset();
+    } catch (err) {
+      showError(err.message || "No se pudo enviar la solicitud");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+// ============================================================
+// SOLICITUDES — Estado de solicitudes
+// ============================================================
+async function loadEstadoSolicitudesModule() {
+  let requests = [];
+  try {
+    const payload = await apiFetch("/employee-requests");
+    requests = Array.isArray(payload.data) ? payload.data : [];
+  } catch { requests = []; }
+
+  const STATUS_LABELS = {
+    PENDIENTE: "Pendiente",
+    EN_PROCESO: "En proceso",
+    RESUELTA: "Resuelta",
+    RECHAZADA: "Rechazada",
+    CANCELADA: "Cancelada",
+  };
+  const STATUS_COLORS = {
+    PENDIENTE: "badge-warning",
+    EN_PROCESO: "badge-info",
+    RESUELTA: "badge-success",
+    RECHAZADA: "badge-danger",
+    CANCELADA: "badge-neutral",
+  };
+  const TYPE_LABELS = {
+    CERTIFICADO_LABORAL: "Certificado Laboral",
+    CARTA_PRESENTACION: "Carta de Presentación",
+    DESPRENDIBLE_PAGO: "Desprendible de Pago",
+    PAZ_Y_SALVO: "Paz y Salvo",
+    PERMISO: "Permiso",
+    VACACIONES: "Vacaciones",
+    CAMBIO_DATOS_PERSONALES: "Cambio de Datos",
+    SOLICITUD_DOCUMENTOS: "Solicitud Documentos",
+    QUEJA_RECLAMO: "Queja / Reclamo",
+    OTRO: "Otro",
+  };
+
+  const statusOptions = Object.entries(STATUS_LABELS).map(([k, v]) =>
+    `<option value="${k}">${v}</option>`
+  ).join("");
+
+  const rows = requests.map(r => `
+    <tr>
+      <td>${escapeHtml(r.employeeName || "—")}</td>
+      <td>${escapeHtml(r.documentNumber || "—")}</td>
+      <td>${escapeHtml(TYPE_LABELS[r.requestType] || r.requestType || "—")}</td>
+      <td>${escapeHtml(r.description || "—")}</td>
+      <td><span class="novedad-badge ${STATUS_COLORS[r.status] || ''}">${escapeHtml(STATUS_LABELS[r.status] || r.status || "—")}</span></td>
+      <td>${r.createdAt ? new Date(r.createdAt).toLocaleDateString("es-CO") : "—"}</td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-row btn-view-solicitud"
+          data-id="${r.id}"
+          data-status="${escapeAttr(r.status)}"
+          data-response="${escapeAttr(r.responseText || '')}"
+          data-emp="${escapeAttr(r.employeeName || '')}"
+          data-type="${escapeAttr(r.requestType || '')}"
+          data-desc="${escapeAttr(r.description || '')}">
+          Ver
+        </button>
+        ${["PENDIENTE","EN_PROCESO"].includes(r.status) ? `
+        <select class="btn btn-secondary btn-row solicitud-status-select" data-solicitud-id="${r.id}" style="max-width:130px">
+          <option value="">Cambiar estado</option>
+          ${statusOptions}
+        </select>` : ""}
+      </td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="payroll-module-wrap">
+      <section class="personnel-premium-hero">
+        <div>
+          <span class="personnel-premium-eyebrow">Solicitudes de Empleados</span>
+          <h2>Estado de Solicitudes</h2>
+          <p>Consulta y gestiona todas las solicitudes registradas en el sistema.</p>
+        </div>
+        <div class="topbar-actions" style="gap:.5rem">
+          <input type="text" id="solicSearch" class="search" placeholder="Buscar empleado..." style="max-width:200px"/>
+          <select id="solicStatusFilter" class="btn btn-secondary">
+            <option value="">Todos los estados</option>
+            ${statusOptions}
+          </select>
+          <button type="button" class="btn btn-secondary" id="solicRefreshBtn">Actualizar</button>
+        </div>
+      </section>
+
+      ${requests.length === 0
+        ? `<article class="info-card"><p>No hay solicitudes registradas aún.</p></article>`
+        : `<div class="table-wrap">
+            <table class="data-table" id="solicitudesTable">
+              <thead>
+                <tr>
+                  <th>Empleado</th>
+                  <th>Documento</th>
+                  <th>Tipo</th>
+                  <th>Descripción</th>
+                  <th>Estado</th>
+                  <th>Fecha</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="solicitudesBody">${rows}</tbody>
+            </table>
+          </div>`
+      }
+
+      <div id="solicitudDetailModal" class="modal-overlay hidden">
+        <div class="modal-card" style="max-width:520px">
+          <div class="modal-header">
+            <h3 id="solicModalTitle">Detalle de solicitud</h3>
+            <button type="button" class="modal-close" id="closeSolicModal">&#x2715;</button>
+          </div>
+          <div class="modal-body" id="solicModalBody"></div>
+          <div class="modal-footer">
+            <div id="solicResponseArea" class="hidden" style="width:100%">
+              <label for="solicResponseText" style="font-weight:600;display:block;margin-bottom:.4rem">Respuesta / Nota</label>
+              <textarea id="solicResponseText" rows="3" class="full" style="width:100%;margin-bottom:.5rem" placeholder="Escribe la respuesta o nota..."></textarea>
+              <button type="button" class="btn btn-primary" id="solicSaveResponseBtn">Guardar respuesta</button>
+            </div>
+            <button type="button" class="btn btn-secondary" id="closeSolicModal2">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireEstadoSolicitudesEvents() {
+  const TYPE_LABELS = {
+    CERTIFICADO_LABORAL: "Certificado Laboral",
+    CARTA_PRESENTACION: "Carta de Presentación",
+    DESPRENDIBLE_PAGO: "Desprendible de Pago",
+    PAZ_Y_SALVO: "Paz y Salvo",
+    PERMISO: "Permiso",
+    VACACIONES: "Vacaciones",
+    CAMBIO_DATOS_PERSONALES: "Cambio de Datos",
+    SOLICITUD_DOCUMENTOS: "Solicitud Documentos",
+    QUEJA_RECLAMO: "Queja / Reclamo",
+    OTRO: "Otro",
+  };
+  const STATUS_LABELS = {
+    PENDIENTE: "Pendiente",
+    EN_PROCESO: "En proceso",
+    RESUELTA: "Resuelta",
+    RECHAZADA: "Rechazada",
+    CANCELADA: "Cancelada",
+  };
+
+  const searchEl = document.getElementById("solicSearch");
+  const statusFilter = document.getElementById("solicStatusFilter");
+  const tbody = document.getElementById("solicitudesBody");
+
+  function filterRows() {
+    if (!tbody) return;
+    const q = (searchEl?.value || "").toLowerCase();
+    const st = (statusFilter?.value || "").toUpperCase();
+    Array.from(tbody.querySelectorAll("tr")).forEach(tr => {
+      const text = tr.textContent.toLowerCase();
+      const statusBadge = tr.querySelector(".novedad-badge");
+      const rowStatus = tr.querySelector("[data-status]")?.dataset.status || "";
+      const matchText = !q || text.includes(q);
+      const matchStatus = !st || rowStatus === st;
+      tr.style.display = matchText && matchStatus ? "" : "none";
+    });
+  }
+
+  searchEl?.addEventListener("input", filterRows);
+  statusFilter?.addEventListener("change", filterRows);
+
+  document.getElementById("solicRefreshBtn")?.addEventListener("click", async () => {
+    const html = await loadEstadoSolicitudesModule();
+    document.getElementById("workspace").innerHTML = html;
+    wireEstadoSolicitudesEvents();
+  });
+
+  const modal = document.getElementById("solicitudDetailModal");
+  const modalBody = document.getElementById("solicModalBody");
+  const modalTitle = document.getElementById("solicModalTitle");
+  const responseArea = document.getElementById("solicResponseArea");
+  let currentSolicitudId = null;
+
+  function openModal(btn) {
+    currentSolicitudId = btn.dataset.id;
+    const status = btn.dataset.status;
+    const emp = btn.dataset.emp;
+    const type = btn.dataset.type;
+    const desc = btn.dataset.desc;
+    const response = btn.dataset.response;
+
+    if (modalTitle) modalTitle.textContent = `Solicitud #${currentSolicitudId}`;
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div style="display:grid;gap:.5rem">
+          <p><strong>Empleado:</strong> ${escapeHtml(emp)}</p>
+          <p><strong>Tipo:</strong> ${escapeHtml(TYPE_LABELS[type] || type)}</p>
+          <p><strong>Estado:</strong> ${escapeHtml(STATUS_LABELS[status] || status)}</p>
+          <p><strong>Descripción:</strong> ${escapeHtml(desc)}</p>
+          ${response ? `<p><strong>Respuesta:</strong> ${escapeHtml(response)}</p>` : ""}
+        </div>
+      `;
+    }
+
+    if (responseArea) {
+      const editable = ["PENDIENTE", "EN_PROCESO"].includes(status);
+      responseArea.classList.toggle("hidden", !editable);
+      const textArea = document.getElementById("solicResponseText");
+      if (textArea) textArea.value = response || "";
+    }
+
+    modal?.classList.remove("hidden");
+  }
+
+  document.querySelectorAll(".btn-view-solicitud").forEach(btn => {
+    btn.addEventListener("click", () => openModal(btn));
+  });
+
+  document.getElementById("closeSolicModal")?.addEventListener("click", () => modal?.classList.add("hidden"));
+  document.getElementById("closeSolicModal2")?.addEventListener("click", () => modal?.classList.add("hidden"));
+  modal?.addEventListener("click", (e) => { if (e.target === modal) modal.classList.add("hidden"); });
+
+  document.getElementById("solicSaveResponseBtn")?.addEventListener("click", async () => {
+    if (!currentSolicitudId) return;
+    const responseText = document.getElementById("solicResponseText")?.value?.trim() || "";
+    try {
+      await apiFetch(`/employee-requests/${currentSolicitudId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ responseText }),
+      });
+      showSuccess("Respuesta guardada");
+      modal?.classList.add("hidden");
+      const html = await loadEstadoSolicitudesModule();
+      document.getElementById("workspace").innerHTML = html;
+      wireEstadoSolicitudesEvents();
+    } catch (err) {
+      showError(err.message || "No se pudo guardar la respuesta");
+    }
+  });
+
+  document.querySelectorAll(".solicitud-status-select").forEach(select => {
+    select.addEventListener("change", async () => {
+      const id = select.dataset.solicitudId;
+      const status = select.value;
+      if (!status) return;
+      try {
+        await apiFetch(`/employee-requests/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        });
+        showSuccess("Estado actualizado");
+        const html = await loadEstadoSolicitudesModule();
+        document.getElementById("workspace").innerHTML = html;
+        wireEstadoSolicitudesEvents();
+      } catch (err) {
+        showError(err.message || "No se pudo actualizar el estado");
+        select.value = "";
+      }
+    });
   });
 }
 
