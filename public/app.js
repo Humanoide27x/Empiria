@@ -1787,6 +1787,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
       <button type="button" class="employee-step-tab ${activeTab === "contratacion" ? "active" : ""}" data-step-tab="contratacion">Contratación</button>
       <button type="button" class="employee-step-tab ${activeTab === "seguimiento" ? "active" : ""}" data-step-tab="seguimiento">Seguimiento</button>
       <button type="button" class="employee-step-tab ${activeTab === "estudios" ? "active" : ""}" data-step-tab="estudios">Estudios</button>
+      <button type="button" class="employee-step-tab ${activeTab === "experiencia" ? "active" : ""}" data-step-tab="experiencia">Experiencia Laboral</button>
       <button type="button" class="employee-step-tab ${activeTab === "observaciones" ? "active" : ""}" data-step-tab="observaciones">Observaciones</button>
     </div>
   `;
@@ -2416,6 +2417,65 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
     `;
   }
 
+  if (activeTab === "experiencia") {
+    const experiencias = Array.isArray(state.personnelDraft.workExperience) ? state.personnelDraft.workExperience : [];
+    activeSectionHtml = `
+      <section class="personnel-section">
+        <div class="section-title-wrap">
+          <div>
+            <h4>Experiencia Laboral</h4>
+            <p class="section-helper-text">Historial de empleos anteriores del empleado</p>
+          </div>
+        </div>
+
+        <div class="form-grid form-grid-2" style="background:var(--panel-2);padding:1rem;border-radius:10px;margin-bottom:1rem">
+          <label>
+            <span>Empresa / Empleador</span>
+            <input id="expEmpresa" type="text" placeholder="Nombre de la empresa" />
+          </label>
+          <label>
+            <span>Cargo desempeñado</span>
+            <input id="expCargo" type="text" placeholder="Cargo o posición" />
+          </label>
+          <label>
+            <span>Fecha de inicio</span>
+            <input id="expFechaInicio" type="date" />
+          </label>
+          <label>
+            <span>Fecha de fin</span>
+            <input id="expFechaFin" type="date" placeholder="Dejar vacío si es actual" />
+          </label>
+          <label class="full">
+            <span>Funciones principales</span>
+            <textarea id="expFunciones" rows="3" placeholder="Describe brevemente las funciones realizadas..."></textarea>
+          </label>
+          <label>
+            <span>Motivo de retiro</span>
+            <input id="expMotivoRetiro" type="text" placeholder="Opcional" />
+          </label>
+        </div>
+        <div style="margin-bottom:1.2rem">
+          <button type="button" id="btnAddExperiencia" class="btn btn-primary btn-row">+ Agregar experiencia</button>
+        </div>
+
+        ${experiencias.length ? `
+        <div class="estudios-list">
+          ${experiencias.map((exp, i) => `
+            <div class="estudio-item">
+              <div class="estudio-item-info">
+                <strong>${escapeHtml(exp.empresa || "Empresa sin nombre")}</strong>
+                <span>${escapeHtml(exp.cargo || "")}${exp.fechaInicio ? " · " + escapeHtml(exp.fechaInicio) : ""}${exp.fechaFin ? " → " + escapeHtml(exp.fechaFin) : " (actual)"}</span>
+                ${exp.funciones ? `<span style="opacity:.7;font-size:12px">${escapeHtml(exp.funciones)}</span>` : ""}
+              </div>
+              <button type="button" class="btn-remove-experiencia" data-exp-index="${i}">Eliminar</button>
+            </div>
+          `).join("")}
+        </div>
+        ` : `<p class="obs-empty">No hay experiencia laboral registrada aún.</p>`}
+      </section>
+    `;
+  }
+
   if (activeTab === "observaciones") {
     const observations = Array.isArray(draftValue("observations", [])) ? draftValue("observations", []) : [];
     activeSectionHtml = `
@@ -2432,9 +2492,15 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <span>Nueva observación</span>
             <textarea id="newObservationText" rows="4" placeholder="Escribe aquí la observación..."></textarea>
           </label>
+          <label>
+            <span>Adjuntar archivo (PDF o imagen) — opcional</span>
+            <input id="obsAttachmentInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="margin-top:4px" />
+            <span style="font-size:11px;color:var(--text-faint)">El archivo se guarda en el historial laboral y no aparece en la hoja de vida.</span>
+          </label>
         </div>
         <div style="margin-top:10px">
           <button type="button" id="btnAddObservacion" class="btn btn-primary btn-row">Guardar observación</button>
+          <span id="obsUploadStatus" style="margin-left:.8rem;font-size:13px;color:var(--text-faint)"></span>
         </div>
 
         <div class="obs-history">
@@ -2443,6 +2509,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
               <div class="obs-item">
                 <div class="obs-item-meta">${escapeHtml(o.date ? new Date(o.date).toLocaleString("es-CO") : "—")} · ${escapeHtml(o.user || "—")}</div>
                 <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
+                ${o.attachmentUrl ? `<div class="obs-item-attachment"><a href="${escapeAttr(o.attachmentUrl)}" target="_blank" rel="noopener">📎 ${escapeHtml(o.attachmentName || "Archivo adjunto")}</a></div>` : ""}
               </div>
             `).join("")
             : `<p class="obs-empty">No hay observaciones registradas.</p>`
@@ -2572,17 +2639,76 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
       });
     });
 
-    // OBSERVACIONES — guardar
+    // EXPERIENCIA LABORAL — agregar
+    const btnAddExp = document.getElementById("btnAddExperiencia");
+    if (btnAddExp) {
+      btnAddExp.addEventListener("click", () => {
+        const empresa = (document.getElementById("expEmpresa")?.value || "").trim();
+        const cargo = (document.getElementById("expCargo")?.value || "").trim();
+        const fechaInicio = document.getElementById("expFechaInicio")?.value || "";
+        const fechaFin = document.getElementById("expFechaFin")?.value || "";
+        const funciones = (document.getElementById("expFunciones")?.value || "").trim();
+        const motivoRetiro = (document.getElementById("expMotivoRetiro")?.value || "").trim();
+        if (!empresa && !cargo) { showWarning("Ingresa al menos empresa o cargo."); return; }
+        if (!Array.isArray(state.personnelDraft.workExperience)) state.personnelDraft.workExperience = [];
+        state.personnelDraft.workExperience.push({ empresa, cargo, fechaInicio, fechaFin, funciones, motivoRetiro });
+        state.personnelCreateTab = "experiencia";
+        openModule("gestion_personal");
+      });
+    }
+
+    // EXPERIENCIA LABORAL — eliminar
+    document.querySelectorAll(".btn-remove-experiencia").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.dataset.expIndex, 10);
+        if (!Array.isArray(state.personnelDraft.workExperience)) return;
+        state.personnelDraft.workExperience.splice(idx, 1);
+        state.personnelCreateTab = "experiencia";
+        openModule("gestion_personal");
+      });
+    });
+
+    // OBSERVACIONES — guardar (con adjunto opcional)
     const btnAddObs = document.getElementById("btnAddObservacion");
     if (btnAddObs) {
-      btnAddObs.addEventListener("click", () => {
+      btnAddObs.addEventListener("click", async () => {
         const txt = (document.getElementById("newObservationText")?.value || "").trim();
         if (!txt) { showWarning("Escribe la observación antes de guardar."); return; }
+
+        const fileInput = document.getElementById("obsAttachmentInput");
+        const statusEl = document.getElementById("obsUploadStatus");
+        let attachmentUrl = "";
+        let attachmentName = "";
+
+        if (fileInput?.files?.length > 0) {
+          const file = fileInput.files[0];
+          attachmentName = file.name;
+          if (statusEl) statusEl.textContent = "Subiendo archivo...";
+          try {
+            const formData = new FormData();
+            formData.append("file", file);
+            const empId = state.personnelEditingId || state.personnelDraft.id || "";
+            formData.append("employeeId", empId);
+            const uploadRes = await fetch("/documents/upload", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${state.token}` },
+              body: formData,
+            });
+            const uploadData = await uploadRes.json();
+            if (uploadData.ok && uploadData.url) {
+              attachmentUrl = uploadData.url;
+            }
+          } catch (e) {
+            if (statusEl) statusEl.textContent = "No se pudo subir el archivo.";
+          }
+        }
+
         if (!Array.isArray(state.personnelDraft.observations)) state.personnelDraft.observations = [];
         state.personnelDraft.observations.push({
           text: txt,
           date: new Date().toISOString(),
           user: state.currentUser?.name || "Usuario",
+          ...(attachmentUrl ? { attachmentUrl, attachmentName } : {}),
         });
         state.personnelCreateTab = "observaciones";
         openModule("gestion_personal");
@@ -2949,6 +3075,7 @@ async function renderPersonnelTableModule() {
         "",
 
       studies: Array.isArray(found.studies) ? found.studies : [],
+      workExperience: Array.isArray(found.workExperience) ? found.workExperience : [],
       observations: Array.isArray(found.observations) ? found.observations : [],
       internalNotes: found.observaciones_internas || found.internalNotes || "",
 
@@ -3033,7 +3160,14 @@ async function renderPersonnelTableModule() {
 
     if (exportBtn) {
       exportBtn.addEventListener("click", () => {
-        showInfo("Esta función estará disponible próximamente.", "Exportación");
+        openExportPersonnelModal(filteredRows);
+      });
+    }
+
+    const importBtn = document.getElementById("btnImportPersonnel");
+    if (importBtn) {
+      importBtn.addEventListener("click", () => {
+        openImportPersonnelModal();
       });
     }
 
@@ -3094,6 +3228,7 @@ async function renderPersonnelTableModule() {
 
           <div class="personnel-premium-actions">
             <button type="button" id="btnNewEmployee" class="btn btn-primary">+ Nuevo empleado</button>
+            <button type="button" id="btnImportPersonnel" class="btn btn-secondary">Importar Excel</button>
             <button type="button" id="btnExportPersonnel" class="btn btn-secondary">Exportar</button>
           </div>
         </section>
@@ -3238,8 +3373,6 @@ async function renderPersonnelTableModule() {
 
         <section class="personnel-premium-table-card">
           <div class="personnel-table-top">
-            <span>${filteredRows.length} resultado${filteredRows.length !== 1 ? 's' : ''} de ${rows.length} registrados</span>
-          </div>
 
           <div class="personnel-table-wrap premium-table-wrap">
             <table class="personnel-table">
@@ -4084,6 +4217,7 @@ async function handleCreatePersonnel(event) {
 
       // 🔥 ESTUDIOS DINÁMICOS
       studies: state.personnelDraft.studies || [],
+      workExperience: state.personnelDraft.workExperience || [],
 
       // 🔹 OBSERVACIONES
       observations: state.personnelDraft.observations || [],
@@ -5718,11 +5852,11 @@ async function loadCoverageModule() {
         </section>
 
         <section class="coverage-pro-detail coverage-pro-detail-full">
-          <section class="coverage-history-horizontal">
-            <div class="coverage-history-horizontal-head">
-              <h3>Historial de archivos</h3>
-              <span>${history.length}</span>
-            </div>
+          <details class="coverage-history-accordion" ${history.length > 0 ? "open" : ""}>
+            <summary class="coverage-history-accordion-head">
+              <span>Historial de archivos</span>
+              <span class="coverage-history-count">${history.length} archivo${history.length !== 1 ? "s" : ""}</span>
+            </summary>
 
             <div class="coverage-history-scroll">
               ${
@@ -5747,7 +5881,7 @@ async function loadCoverageModule() {
                   : `<p class="soft">Aún no hay archivos cargados.</p>`
               }
             </div>
-          </section>
+          </details>
 
           <div class="coverage-pro-table-head">
             <div>
@@ -6174,6 +6308,14 @@ function wireNovedadesPersonalEvents() {
 // ============================================================
 // HOJA DE VIDA — Vista de CV completo
 // ============================================================
+function resolveMunicipalityName(value) {
+  if (!value) return "—";
+  const found = META_MUNICIPALITIES.find(
+    m => String(m.id) === String(value) || String(m.name).toUpperCase() === String(value).toUpperCase()
+  );
+  return found ? found.name : String(value);
+}
+
 function renderPersonnelCvModule() {
   const d = state.personnelDraft || {};
   const fullName = [d.firstName, d.secondName, d.firstLastName, d.secondLastName].filter(Boolean).join(" ").toUpperCase() || "SIN NOMBRE";
@@ -6186,17 +6328,19 @@ function renderPersonnelCvModule() {
       state.personnelViewMode = "table";
       await openModule("gestion_personal");
     });
+    document.getElementById("btnPrintCv")?.addEventListener("click", () => window.print());
   }, 0);
 
   const estudios = Array.isArray(d.studies) ? d.studies : [];
-  const observations = Array.isArray(d.observations) ? d.observations : [];
+  const experiencias = Array.isArray(d.workExperience) ? d.workExperience : [];
 
   return `
     <div style="padding: 16px;">
       <div class="cv-actions" style="padding: 0 0 16px; display:flex; gap:10px;">
         <button id="btnBackFromCv" type="button" class="btn btn-secondary">← Volver al listado</button>
+        <button id="btnPrintCv" type="button" class="btn btn-secondary">🖨 Imprimir / PDF</button>
       </div>
-      <div class="cv-shell">
+      <div class="cv-shell" id="cvPrintArea">
         <div class="cv-header">
           <div class="cv-avatar">${escapeHtml(initials)}</div>
           <div class="cv-header-info">
@@ -6228,37 +6372,18 @@ function renderPersonnelCvModule() {
               <div class="cv-field"><span>Correo electrónico</span><strong>${val(d.email)}</strong></div>
               <div class="cv-field"><span>Dirección</span><strong>${val(d.address)}</strong></div>
               <div class="cv-field"><span>Barrio</span><strong>${val(d.neighborhood)}</strong></div>
-              <div class="cv-field"><span>Municipio de residencia</span><strong>${val(d.residenceMunicipality)}</strong></div>
+              <div class="cv-field"><span>Municipio de residencia</span><strong>${escapeHtml(resolveMunicipalityName(d.residenceMunicipality))}</strong></div>
               <div class="cv-field"><span>Estado civil</span><strong>${val(d.civilStatus)}</strong></div>
             </div>
           </div>
 
           <div class="cv-section">
-            <div class="cv-section-title">Vinculación y Contratación</div>
+            <div class="cv-section-title">Seguridad Social</div>
             <div class="cv-grid">
-              <div class="cv-field"><span>Estado laboral</span><strong>${val(d.status)}</strong></div>
-              <div class="cv-field"><span>Gestor de Zona</span><strong>${val(d.gestorZona)}</strong></div>
-              <div class="cv-field"><span>Tipo de contrato</span><strong>${val(d.contractType)}</strong></div>
-              <div class="cv-field"><span>Tipo de tiempo</span><strong>${val(d.workTimeType)}</strong></div>
-              <div class="cv-field"><span>Fecha de ingreso</span><strong>${fmtDate(d.startDate)}</strong></div>
-              <div class="cv-field"><span>Fecha inicio cobertura</span><strong>${fmtDate(d.coverageStartDate)}</strong></div>
-              ${d.terminationDate ? `<div class="cv-field"><span>Fecha de retiro</span><strong>${fmtDate(d.terminationDate)}</strong></div>` : ""}
               <div class="cv-field"><span>EPS</span><strong>${val(d.eps)}</strong></div>
               <div class="cv-field"><span>Fondo de pensiones</span><strong>${val(d.pensionFund)}</strong></div>
             </div>
           </div>
-
-          ${d.educationalMunicipality ? `
-          <div class="cv-section">
-            <div class="cv-section-title">Asignación Institucional</div>
-            <div class="cv-grid">
-              <div class="cv-field"><span>Municipio</span><strong>${val(d.educationalMunicipality)}</strong></div>
-              <div class="cv-field"><span>Institución</span><strong>${val(d.institution)}</strong></div>
-              <div class="cv-field"><span>Sede</span><strong>${val(d.site)}</strong></div>
-              <div class="cv-field"><span>Modalidad</span><strong>${val(d.educationalModality)}</strong></div>
-            </div>
-          </div>
-          ` : ""}
 
           ${estudios.length ? `
           <div class="cv-section">
@@ -6267,6 +6392,19 @@ function renderPersonnelCvModule() {
               <div class="cv-study-item">
                 <strong>${escapeHtml(s.degree || "Sin título")}</strong>
                 <span>${escapeHtml(s.educationLevel || "")}${s.institution ? " · " + escapeHtml(s.institution) : ""}${s.year ? " · " + escapeHtml(String(s.year)) : ""}</span>
+              </div>
+            `).join("")}
+          </div>
+          ` : ""}
+
+          ${experiencias.length ? `
+          <div class="cv-section">
+            <div class="cv-section-title">Experiencia Laboral</div>
+            ${experiencias.map(exp => `
+              <div class="cv-study-item">
+                <strong>${escapeHtml(exp.empresa || "Empresa sin nombre")}</strong>
+                <span>${escapeHtml(exp.cargo || "")}${exp.fechaInicio ? " · " + escapeHtml(exp.fechaInicio) : ""}${exp.fechaFin ? " → " + escapeHtml(exp.fechaFin) : exp.fechaInicio ? " (actual)" : ""}</span>
+                ${exp.funciones ? `<span style="font-size:12px;opacity:.75">${escapeHtml(exp.funciones)}</span>` : ""}
               </div>
             `).join("")}
           </div>
@@ -6281,18 +6419,6 @@ function renderPersonnelCvModule() {
               ${d.foodHandlingExamIssueDate ? `<div class="cv-field"><span>Examen — Expedición</span><strong>${fmtDate(d.foodHandlingExamIssueDate)}</strong></div>` : ""}
               ${d.foodHandlingExamExpirationDate ? `<div class="cv-field"><span>Examen — Vencimiento</span><strong>${fmtDate(d.foodHandlingExamExpirationDate)}</strong></div>` : ""}
             </div>
-          </div>
-          ` : ""}
-
-          ${observations.length ? `
-          <div class="cv-section">
-            <div class="cv-section-title">Observaciones</div>
-            ${observations.slice().reverse().map(o => `
-              <div class="obs-item" style="margin-bottom:8px">
-                <div class="obs-item-meta">${escapeHtml(o.date ? new Date(o.date).toLocaleString("es-CO") : "—")} · ${escapeHtml(o.user || "—")}</div>
-                <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
-              </div>
-            `).join("")}
           </div>
           ` : ""}
 
@@ -7414,6 +7540,218 @@ if (elements.accessForm) {
         <p>${error.message}</p>
       `;
     }
+  });
+}
+
+// ============================================================
+// GESTIÓN DE PERSONAL — Exportar con selección de columnas
+// ============================================================
+function openExportPersonnelModal(rows) {
+  const EXPORT_COLS = [
+    { key: "documentNumber",      label: "Cédula" },
+    { key: "fullName",            label: "Nombre completo" },
+    { key: "cargo_real",          label: "Cargo" },
+    { key: "status",              label: "Estado laboral" },
+    { key: "municipality",        label: "Municipio" },
+    { key: "institution",         label: "Institución" },
+    { key: "site",                label: "Sede" },
+    { key: "educationalModality", label: "Modalidad" },
+    { key: "phone",               label: "Celular" },
+    { key: "email",               label: "Correo" },
+    { key: "eps",                 label: "EPS" },
+    { key: "pensionFund",         label: "Fondo de pensiones" },
+    { key: "contractType",        label: "Tipo de contrato" },
+    { key: "startDate",           label: "Fecha de ingreso" },
+    { key: "gestorZona",          label: "Gestor de Zona" },
+  ];
+
+  // Collect unique institutions in the current data
+  const institutions = [...new Set(rows.map(r => r.institution || r.institucion_educativa || "").filter(Boolean))].sort();
+
+  const existingModal = document.getElementById("exportPersonnelModal");
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "exportPersonnelModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:560px">
+      <div class="modal-header">
+        <h3>Exportar personal</h3>
+        <button type="button" class="modal-close" id="closeExportModal">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:.8rem;font-size:13px;color:var(--text-faint)">Selecciona las columnas que deseas exportar:</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem .8rem;margin-bottom:1rem">
+          ${EXPORT_COLS.map(c => `
+            <label style="display:flex;align-items:center;gap:.4rem;font-size:13px;cursor:pointer">
+              <input type="checkbox" class="export-col-check" value="${c.key}" checked style="accent-color:var(--accent)"/>
+              ${escapeHtml(c.label)}
+            </label>
+          `).join("")}
+        </div>
+        ${institutions.length > 0 ? `
+        <div style="border-top:1px solid var(--border);padding-top:.8rem;margin-top:.4rem">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:.4rem">Filtrar por institución (opcional):</label>
+          <select id="exportInstitutionFilter" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;font-size:13px">
+            <option value="">Todas las instituciones</option>
+            ${institutions.map(i => `<option value="${escapeAttr(i)}">${escapeHtml(i)}</option>`).join("")}
+          </select>
+        </div>` : ""}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="doExportPersonnel">Exportar CSV</button>
+        <button type="button" class="btn btn-secondary" id="closeExportModal2">Cancelar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  document.getElementById("closeExportModal").addEventListener("click", close);
+  document.getElementById("closeExportModal2").addEventListener("click", close);
+  modal.addEventListener("click", e => { if (e.target === modal) close(); });
+
+  document.getElementById("doExportPersonnel").addEventListener("click", () => {
+    const selected = [...document.querySelectorAll(".export-col-check:checked")].map(c => c.value);
+    if (!selected.length) { showWarning("Selecciona al menos una columna."); return; }
+
+    const instFilter = document.getElementById("exportInstitutionFilter")?.value || "";
+    let exportRows = rows;
+    if (instFilter) {
+      exportRows = rows.filter(r => {
+        const inst = r.institution || r.institucion_educativa || "";
+        return String(inst).toUpperCase() === instFilter.toUpperCase();
+      });
+    }
+
+    const colDefs = EXPORT_COLS.filter(c => selected.includes(c.key));
+    const header = colDefs.map(c => `"${c.label}"`).join(",");
+
+    const csvRows = exportRows.map(r => {
+      return colDefs.map(c => {
+        let val = "";
+        if (c.key === "fullName") {
+          val = getPersonnelFullName(r);
+        } else if (c.key === "municipality") {
+          val = getPersonnelMunicipality(r);
+        } else if (c.key === "documentNumber") {
+          val = getPersonnelDocument(r);
+        } else if (c.key === "status") {
+          val = getPersonnelWorkStatus(r);
+        } else {
+          val = r[c.key] || r[c.key.replace(/([A-Z])/g, "_$1").toLowerCase()] || "";
+        }
+        return `"${String(val || "").replace(/"/g, '""')}"`;
+      }).join(",");
+    });
+
+    const csv = [header, ...csvRows].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `personal_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    close();
+    showSuccess(`${exportRows.length} registros exportados`);
+  });
+}
+
+// ============================================================
+// GESTIÓN DE PERSONAL — Importar desde Excel con plantilla
+// ============================================================
+function openImportPersonnelModal() {
+  const existingModal = document.getElementById("importPersonnelModal");
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "importPersonnelModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:520px">
+      <div class="modal-header">
+        <h3>Importar personal desde Excel</h3>
+        <button type="button" class="modal-close" id="closeImportModal">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:1rem;padding:.8rem 1rem;background:var(--panel-2);border-radius:8px;font-size:13px">
+          <p style="font-weight:600;margin-bottom:.4rem">Pasos para importar:</p>
+          <ol style="margin-left:1.2rem;line-height:1.7">
+            <li>Descarga la plantilla Excel con el botón de abajo.</li>
+            <li>Completa los datos respetando los encabezados.</li>
+            <li>Guarda el archivo y súbelo aquí.</li>
+          </ol>
+        </div>
+        <button type="button" id="btnDownloadTemplate" class="btn btn-secondary" style="width:100%;margin-bottom:1rem">⬇ Descargar plantilla Excel</button>
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:.4rem">Subir archivo Excel:</label>
+        <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;font-size:13px" />
+        <p id="importResult" style="margin-top:.8rem;font-size:13px"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="doImportPersonnel">Importar</button>
+        <button type="button" class="btn btn-secondary" id="closeImportModal2">Cancelar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  document.getElementById("closeImportModal").addEventListener("click", close);
+  document.getElementById("closeImportModal2").addEventListener("click", close);
+  modal.addEventListener("click", e => { if (e.target === modal) close(); });
+
+  document.getElementById("btnDownloadTemplate").addEventListener("click", () => {
+    const headers = [
+      "primer_nombre","segundo_nombre","primer_apellido","segundo_apellido",
+      "tipo_documento","numero_documento",
+      "estado","cargo_real","municipio",
+      "eps","fondo_de_pensiones",
+      "tipo_contrato","fecha_inicio","celular","correo"
+    ];
+    const example = [
+      "JUAN","CARLOS","PEREZ","GARCIA",
+      "CC","12345678",
+      "ACTIVO","OPERARIO MANIPULADOR DE ALIMENTOS","Acacías",
+      "COMPENSAR","COLPENSIONES",
+      "Indefinido","2024-01-01","3101234567","juan@email.com"
+    ];
+    const csvContent = "﻿" + headers.join(",") + "\n" + example.map(v => `"${v}"`).join(",");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "plantilla_importacion_personal.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("doImportPersonnel").addEventListener("click", async () => {
+    const fileInput = document.getElementById("importExcelFile");
+    const resultEl = document.getElementById("importResult");
+    if (!fileInput?.files?.length) { showWarning("Selecciona un archivo Excel."); return; }
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = e.target.result.split(",")[1];
+      if (resultEl) resultEl.textContent = "Importando...";
+      try {
+        const res = await apiFetch("/personnel/import", {
+          method: "POST",
+          body: JSON.stringify({ fileBase64: base64, fileName: file.name }),
+        });
+        const created = res.data?.created || 0;
+        const updated = res.data?.updated || 0;
+        const errors = res.data?.errors || [];
+        if (resultEl) resultEl.innerHTML = `<span style="color:green">✔ ${created} creados, ${updated} actualizados${errors.length ? `, ${errors.length} errores` : ""}</span>`;
+        showSuccess(`Importación completada: ${created} creados, ${updated} actualizados`);
+        setTimeout(() => { close(); openModule("gestion_personal"); }, 1500);
+      } catch (err) {
+        if (resultEl) resultEl.innerHTML = `<span style="color:red">✖ ${escapeHtml(err.message)}</span>`;
+      }
+    };
+    reader.readAsDataURL(file);
   });
 }
 
