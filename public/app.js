@@ -78,6 +78,10 @@ const state = {
     modality: "",
   },
 
+  gestorFormOpen: false,
+  nominaPeriod: "",
+  nominaCalculated: false,
+
   coverageSelectedUploadId: null,
   coverageActiveTab: "cobertura", // "cobertura" | "novedades"
 
@@ -153,15 +157,16 @@ const moduleViews = {
   },
 
   nomina_novedades: {
-    title: "Nómina y Novedades",
+    title: "Nómina",
     route: "/payroll-changes",
     routeMethod: "POST",
     submodules: [
-      { key: "registrar_novedad", title: "Registrar novedad" },
+      { key: "calcular_nomina",    title: "Calcular Nómina" },
+      { key: "registrar_novedad",  title: "Registrar novedad" },
       { key: "consultar_novedades", title: "Consultar novedades" },
       { key: "novedades_personal", title: "Novedades del Personal" },
-      { key: "desprendibles", title: "Desprendibles" },
-      { key: "certificaciones", title: "Certificaciones" },
+      { key: "desprendibles",      title: "Desprendibles" },
+      { key: "certificaciones",    title: "Certificaciones" },
     ],
   },
   capacitaciones_asistencia: {
@@ -510,6 +515,49 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+function printHtml(element, title) {
+  if (!element) { showWarning("No se encontró el contenido para imprimir."); return; }
+  const win = window.open("", "_blank", "width=960,height=720");
+  if (!win) { showWarning("El navegador bloqueó la ventana emergente. Permite ventanas emergentes e intenta de nuevo."); return; }
+  win.document.write(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${title || "EMPIRIA"}</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <style>
+    body { margin: 0; padding: 24px; background: #fff; }
+    @media print { @page { margin: 1.5cm; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+  ${element.outerHTML}
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 400);
+    });
+  <\/script>
+</body>
+</html>`);
+  win.document.close();
+}
+
+function exportToExcel(headers, dataRows, filename) {
+  const th = headers.map(h => `<th style="background:#0f172a;color:#fff;font-weight:bold;padding:6px 10px;white-space:nowrap">${String(h).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</th>`).join("");
+  const tr = dataRows.map(row =>
+    `<tr>${row.map(c => `<td style="padding:5px 8px;border:1px solid #e2e8f0;white-space:nowrap">${String(c ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</td>`).join("")}</tr>`
+  ).join("");
+  const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:x='urn:schemas-microsoft-com:office:excel' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='UTF-8'/></head><body><table border='1'><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></body></html>`;
+  const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename + ".xls";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function renderOptions(items, currentValue = "", placeholder = "Selecciona") {
   return `
     <option value="">${placeholder}</option>
@@ -574,7 +622,7 @@ function getModuleMeta(moduleKey) {
       `),
     },
     nomina_novedades: {
-      label: "Nómina y Novedades",
+      label: "Nómina",
       icon: iconSvg(`
         <rect x="5.5" y="6" width="13" height="12" rx="2"></rect>
         <path d="M9 10.2c.4-.8 1.2-1.2 2.1-1.2 1.1 0 1.9.5 1.9 1.4 0 2-3.3 1.3-3.3 3.1 0 .9.8 1.5 2.1 1.5 1 0 1.9-.4 2.5-1.1"></path>
@@ -1009,110 +1057,475 @@ function renderEmptyWorkspace() {
   `;
 }
 
-async function loadDashboardModule() {
-  const payload = await apiFetch("/dashboard-summary");
-  const stats = payload.summary;
+// \u2500\u2500 Dashboard real-time state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+let _dbCharts = {};
+let _dbRefreshTimer = null;
+let _dbMunicipality = "";
 
-  const total     = stats.totalPersonnel    || 0;
-  const activos   = stats.activePersonnel   || 0;
-  const novedad   = stats.noveltyPersonnel  || 0;
-  const inactivos = Math.max(0, total - activos - novedad);
-  const municipios = stats.visibleMunicipalities || 0;
-  const contratos  = stats.visibleContracts || 0;
-
-  const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
-
-  const recent = Array.isArray(payload.recentPersonnel) ? payload.recentPersonnel : [];
-
-  const initials = (name) => {
-    const parts = String(name || "").trim().split(" ").filter(Boolean);
-    return parts.length >= 2
-      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-      : String(name || "?")[0].toUpperCase();
-  };
-
-  const statusBadge = (status) => {
-    const s = String(status || "").toLowerCase();
-    if (s === "activo")  return '<span class="dashboard-status-badge dsb-activo">Activo</span>';
-    if (s === "novedad") return '<span class="dashboard-status-badge dsb-novedad">Novedad</span>';
-    return '<span class="dashboard-status-badge dsb-inactivo">Inactivo</span>';
-  };
-
-  const recentRows = recent.map((item) => {
-    const name = item.fullName || item.nombre_completo || "Sin nombre";
-    const pos  = item.position || item.cargo_real || "";
-    const mun  = item.municipality || item.municipio || "";
-    return `
-      <div class="dashboard-recent-row" onclick="(async()=>{ state.personnelViewMode='edit'; state.personnelEditingId=${JSON.stringify(item.id||"")}; await openModule('gestion_personal'); })()">
-        <div class="dashboard-avatar">${initials(name)}</div>
-        <div>
-          <div class="dashboard-recent-name">${escapeHtml(name)}</div>
-          <div class="dashboard-recent-sub">${escapeHtml(pos)}${mun ? ' &mdash; ' + escapeHtml(mun) : ''}</div>
-        </div>
-        ${statusBadge(item.status)}
-      </div>
-    `;
-  }).join("");
-
-  return `
-    <div class="dashboard-stats-v2">
-      <div class="stat-card-v2 blue">
-        <div class="stat-label">Total personal</div>
-        <div class="stat-value">${total}</div>
-        <div class="stat-sub">${municipios} municipio${municipios !== 1 ? 's' : ''} &mdash; ${contratos} contrato${contratos !== 1 ? 's' : ''}</div>
-      </div>
-      <div class="stat-card-v2 green">
-        <div class="stat-label">Activos</div>
-        <div class="stat-value">${activos}</div>
-        <div class="stat-sub">${pct(activos)}% del total</div>
-      </div>
-      <div class="stat-card-v2 amber">
-        <div class="stat-label">Con novedad</div>
-        <div class="stat-value">${novedad}</div>
-        <div class="stat-sub">${pct(novedad)}% del total</div>
-      </div>
-      <div class="stat-card-v2 slate">
-        <div class="stat-label">Inactivos</div>
-        <div class="stat-value">${inactivos}</div>
-        <div class="stat-sub">${pct(inactivos)}% del total</div>
-      </div>
-    </div>
-
-    <div class="dashboard-chart-wrap">
-      <div class="dashboard-chart-title">Distribuci\u00f3n del personal</div>
-      <div class="dashboard-bar-chart">
-        <div class="db-bar-row">
-          <div class="db-bar-label">Activos</div>
-          <div class="db-bar-track">
-            <div class="db-bar-fill activo" style="width:${pct(activos)}%">${pct(activos) > 10 ? pct(activos) + '%' : ''}</div>
-          </div>
-          <div class="db-bar-count">${activos}</div>
-        </div>
-        <div class="db-bar-row">
-          <div class="db-bar-label">Con novedad</div>
-          <div class="db-bar-track">
-            <div class="db-bar-fill novedad" style="width:${pct(novedad)}%">${pct(novedad) > 10 ? pct(novedad) + '%' : ''}</div>
-          </div>
-          <div class="db-bar-count">${novedad}</div>
-        </div>
-        <div class="db-bar-row">
-          <div class="db-bar-label">Inactivos</div>
-          <div class="db-bar-track">
-            <div class="db-bar-fill inactivo" style="width:${pct(inactivos)}%">${pct(inactivos) > 10 ? pct(inactivos) + '%' : ''}</div>
-          </div>
-          <div class="db-bar-count">${inactivos}</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="dashboard-recent">
-      <div class="dashboard-recent-header">Personal reciente visible</div>
-      ${recent.length
-        ? recentRows
-        : '<div style="padding:20px;color:#6b7280;font-size:14px;">No hay personal visible para este usuario.</div>'}
-    </div>
-  `;
+function _clearDashboardTimers() {
+  if (_dbRefreshTimer) { clearInterval(_dbRefreshTimer); _dbRefreshTimer = null; }
+  for (const c of Object.values(_dbCharts)) { try { c.destroy(); } catch {} }
+  _dbCharts = {};
+  _dbMunicipality = "";
 }
+
+function loadChartJs() {
+  return new Promise((resolve) => {
+    if (window.Chart) { resolve(); return; }
+    if (!document.getElementById("chartjs-script")) {
+      const s = document.createElement("script");
+      s.id = "chartjs-script";
+      s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js";
+      s.onload = resolve;
+      s.onerror = resolve;
+      document.head.appendChild(s);
+    } else { resolve(); }
+  });
+}
+
+const NOVELTY_LABELS = {
+  INCAPACIDAD: "Incapacidad", VACACIONES: "Vacaciones",
+  LICENCIA_REMUNERADA: "Lic. Remunerada", LICENCIA_NO_REMUNERADA: "Lic. No Remunerada",
+  SUSPENSION: "Suspensi\u00f3n", AUSENCIA: "Ausencia", CAMBIO_CARGO: "Cambio Cargo",
+  CAMBIO_SALARIO: "Cambio Salario", RETIRO: "Retiro", OTRO: "Otro",
+};
+
+function fmtPct(n) { return n === null || n === undefined ? "\u2014" : Math.min(n, 999) + "%"; }
+function coverageColor(pct) {
+  if (pct === null) return "#94a3b8";
+  return pct >= 90 ? "#16a34a" : pct >= 70 ? "#d97706" : "#dc2626";
+}
+function coverageClass(pct) {
+  if (pct === null) return "db2-badge-gray";
+  return pct >= 90 ? "db2-badge-green" : pct >= 70 ? "db2-badge-yellow" : "db2-badge-red";
+}
+
+function _renderDashboardKpis(k) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set("db2-v-tc",      `${k.contractedTc||0} / ${k.requiredTc||0}`);
+  set("db2-sub-tc",    k.pctTc !== null && k.pctTc !== undefined ? `${k.pctTc}% completado` : "Sin datos de cobertura");
+  set("db2-v-mt",      `${k.contractedMt||0} / ${k.requiredMt||0}`);
+  set("db2-sub-mt",    k.pctMt !== null && k.pctMt !== undefined ? `${k.pctMt}% completado` : "Sin datos de cobertura");
+  set("db2-v-pct20",   k.tcPct20 || 0);
+  set("db2-sub-pct20", `20% de ${k.requiredTc||0} TC requeridos`);
+  set("db2-v-cupos",   (k.totalCupos||0).toLocaleString("es-CO"));
+  set("db2-sub-cupos", `${k.municipalities||0} municipios`);
+  set("db2-v-female",   k.femaleCount || 0);
+  set("db2-sub-female", `TC: ${k.femaleTc||0} · MT: ${k.femaleMt||0}`);
+  set("db2-v-male",     k.maleCount || 0);
+  set("db2-sub-male",   `TC: ${k.maleTc||0} · MT: ${k.maleMt||0}`);
+  set("db2-v-active",   k.activePersonnel || 0);
+  set("db2-sub-active", `${k.totalPersonnel||0} total — ${k.inactivePersonnel||0} inactivos`);
+  set("db2-v-retiros",   k.retirosThisYear || 0);
+  set("db2-sub-retiros", `${k.retirosPct||0}% del total · ${new Date().getFullYear()}`);
+  set("db2-v-obra",  k.ctObraLabor   || 0);
+  set("db2-v-fijo",  k.ctTerminoFijo || 0);
+  set("db2-v-sedes",      k.totalSedes || 0);
+  set("db2-sub-sedes",    `${k.municipalities||0} municipios`);
+  set("db2-v-sedes-mt",   k.sedesConManipuladora || 0);
+  set("db2-sub-sedes-mt", `${k.sedesSinManipuladora||0} sin manipuladora`);
+  const tcProg = document.getElementById("db2-prog-tc");
+  const mtProg = document.getElementById("db2-prog-mt");
+  if (tcProg) { tcProg.style.width = Math.min(k.pctTc??0, 100) + "%"; tcProg.style.background = coverageColor(k.pctTc); }
+  if (mtProg) { mtProg.style.width = Math.min(k.pctMt??0, 100) + "%"; mtProg.style.background = coverageColor(k.pctMt); }
+  const gv = document.getElementById("db2-gender-center-val");
+  const sv = document.getElementById("db2-status-center-val");
+  if (gv) gv.textContent = (k.femaleCount||0) + (k.maleCount||0);
+  if (sv) sv.textContent = k.totalPersonnel || 0;
+  // Donut legend values (update alongside chart refresh)
+  set('db2-v-female2',  k.femaleCount || 0);
+  set('db2-v-male2',    k.maleCount   || 0);
+  set('db2-v-active2',  k.activePersonnel   || 0);
+  set('db2-v-inactive2',k.inactivePersonnel || 0);
+  set('db2-v-novelty2', k.noveltyPersonnel  || 0);
+}
+
+function _renderMunFilter(municipalities, current) {
+  const container = document.getElementById("db2-mun-filter");
+  if (!container) return;
+  const all = ["", ...municipalities];
+  container.innerHTML = `<span class="db2-mun-filter-label">Filtrar:</span>` + all.map(m => {
+    const active = m === current ? " db2-mun-chip-active" : "";
+    return `<button class="db2-mun-chip${active}" data-mun="${escapeHtml(m)}">${m || "Todos los municipios"}</button>`;
+  }).join("");
+  container.querySelectorAll(".db2-mun-chip").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const mun = btn.dataset.mun;
+      if (mun === _dbMunicipality) return;
+      _dbMunicipality = mun;
+      await _refreshDashboard();
+    });
+  });
+}
+
+function _renderPyramidChart(ageGenderByBracket, brackets, Chart) {
+  const canvas = document.getElementById("db2-chart-age");
+  if (!canvas || !Chart) return;
+  if (_dbCharts.age) { try { _dbCharts.age.destroy(); } catch {} }
+  const femaleData = brackets.map(b => -(ageGenderByBracket[b]?.female || 0));
+  const maleData   = brackets.map(b =>  (ageGenderByBracket[b]?.male   || 0));
+  const maxVal = Math.max(...femaleData.map(Math.abs), ...maleData, 1);
+  _dbCharts.age = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: brackets,
+      datasets: [
+        { label: "Mujeres", data: femaleData, backgroundColor: "#ec489966", borderColor: "#ec4899", borderWidth: 1.5, borderRadius: 3 },
+        { label: "Hombres", data: maleData,   backgroundColor: "#6366f166", borderColor: "#6366f1", borderWidth: 1.5, borderRadius: 3 },
+      ],
+    },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {
+          min: -(maxVal + Math.ceil(maxVal * 0.15)),
+          max:   maxVal + Math.ceil(maxVal * 0.15),
+          ticks: { callback: v => Math.abs(v), font: { size: 11 }, color: "#64748b" },
+          grid: { color: "#f1f5f9" },
+        },
+        y: { ticks: { font: { size: 12 }, color: "#374151" }, grid: { display: false } },
+      },
+      plugins: {
+        legend: { display: true, position: "top", labels: { font: { size: 12 }, padding: 16, usePointStyle: true, pointStyle: "circle" } },
+        tooltip: { callbacks: { label: ctx => `  ${ctx.dataset.label}: ${Math.abs(ctx.parsed.x)} personas` } },
+      },
+    },
+  });
+}
+
+function _renderGenderChart(kpis, Chart) {
+  const canvas = document.getElementById("db2-chart-gender");
+  if (!canvas || !Chart) return;
+  if (_dbCharts.gender) { try { _dbCharts.gender.destroy(); } catch {} }
+  const female = kpis.femaleCount || 0;
+  const male   = kpis.maleCount   || 0;
+  if (!female && !male) return;
+  _dbCharts.gender = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: ["Mujeres", "Hombres"],
+      datasets: [{ data: [female, male], backgroundColor: ["#ec4899", "#6366f1"], borderColor: "#fff", borderWidth: 3, hoverOffset: 8 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "66%",
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `  ${ctx.label}: ${ctx.parsed}` } },
+      },
+    },
+  });
+}
+
+function _renderStatusChart(kpis, Chart) {
+  const canvas = document.getElementById("db2-chart-status");
+  if (!canvas || !Chart) return;
+  if (_dbCharts.status) { try { _dbCharts.status.destroy(); } catch {} }
+  const active  = kpis.activePersonnel   || 0;
+  const inactive= kpis.inactivePersonnel || 0;
+  const novelty = kpis.noveltyPersonnel  || 0;
+  _dbCharts.status = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: ["Activos", "Inactivos", "Novedad"],
+      datasets: [{ data: [active, inactive, novelty], backgroundColor: ["#22c55e", "#ef4444", "#f59e0b"], borderColor: "#fff", borderWidth: 3, hoverOffset: 8 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "66%",
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `  ${ctx.label}: ${ctx.parsed}` } },
+      },
+    },
+  });
+}
+
+async function _initDashboardCharts(payload) {
+  await loadChartJs();
+  const Chart = window.Chart;
+  if (!Chart) return;
+  for (const c of Object.values(_dbCharts)) { try { c.destroy(); } catch {} }
+  _dbCharts = {};
+  const kpis = payload.kpis || {};
+  if (payload.ageGenderByBracket && payload.ageBrackets) {
+    _renderPyramidChart(payload.ageGenderByBracket, payload.ageBrackets, Chart);
+  }
+  _renderGenderChart(kpis, Chart);
+  _renderStatusChart(kpis, Chart);
+}
+
+async function _refreshDashboard() {
+  const url = _dbMunicipality
+    ? `/dashboard-summary?municipality=${encodeURIComponent(_dbMunicipality)}`
+    : "/dashboard-summary";
+  const fresh = await apiFetch(url);
+  const k = fresh.kpis || {};
+  _renderDashboardKpis(k);
+  _renderMunFilter(fresh.municipalitiesList || [], _dbMunicipality);
+  await loadChartJs();
+  const Chart = window.Chart;
+  if (Chart) {
+    if (fresh.ageGenderByBracket && fresh.ageBrackets) _renderPyramidChart(fresh.ageGenderByBracket, fresh.ageBrackets, Chart);
+    _renderGenderChart(k, Chart);
+    _renderStatusChart(k, Chart);
+  }
+  const tsEl = document.getElementById("db2-last-update");
+  if (tsEl) tsEl.textContent = new Date().toLocaleTimeString("es-CO");
+}
+
+async function loadDashboardModule() {
+
+  _clearDashboardTimers();
+
+  const payload = await apiFetch("/dashboard-summary");
+  const kpis = payload.kpis || {};
+
+  const html = `
+<div class="personnel-premium-module">
+<article class="personnel-premium-card">
+<div class="db2-wrap">
+
+  <section class="personnel-premium-hero">
+    <div>
+      <span class="personnel-premium-eyebrow">Módulo operativo</span>
+      <h2>Dashboard</h2>
+      <p>Estado operativo, personal, cobertura y nómina en tiempo real.</p>
+    </div>
+    <div class="personnel-premium-actions">
+      <button id="db2-btn-refresh" class="btn btn-secondary">Actualizar datos</button>
+    </div>
+  </section>
+
+  <div id="db2-mun-filter" class="db2-mun-filter"></div>
+
+  <div class="db2-kpi-row db2-kpi-row-4">
+    <div class="db2-kpi-card db2-kpi-accent-green">
+      <div class="db2-kpi-label">Personal TC Contratado / Requerido</div>
+      <div class="db2-kpi-value" id="db2-v-tc">${kpis.contractedTc||0} / ${kpis.requiredTc||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-tc">${kpis.pctTc !== null && kpis.pctTc !== undefined ? kpis.pctTc+'% completado' : 'Sin datos de cobertura'}</div>
+      <div class="db2-kpi-prog"><div class="db2-kpi-prog-bar" id="db2-prog-tc" style="width:${Math.min(kpis.pctTc??0,100)}%;background:${coverageColor(kpis.pctTc)}"></div></div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-teal">
+      <div class="db2-kpi-label">Personal MT Contratado / Requerido</div>
+      <div class="db2-kpi-value" id="db2-v-mt">${kpis.contractedMt||0} / ${kpis.requiredMt||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-mt">${kpis.pctMt !== null && kpis.pctMt !== undefined ? kpis.pctMt+'% completado' : 'Sin datos de cobertura'}</div>
+      <div class="db2-kpi-prog"><div class="db2-kpi-prog-bar" id="db2-prog-mt" style="width:${Math.min(kpis.pctMt??0,100)}%;background:${coverageColor(kpis.pctMt)}"></div></div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-blue">
+      <div class="db2-kpi-label">20% TC Requerido</div>
+      <div class="db2-kpi-value" id="db2-v-pct20">${kpis.tcPct20||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-pct20">20% de ${kpis.requiredTc||0} TC requeridos</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-blue">
+      <div class="db2-kpi-label">Raciones activas</div>
+      <div class="db2-kpi-value" id="db2-v-cupos">${(kpis.totalCupos||0).toLocaleString()}</div>
+      <div class="db2-kpi-sub" id="db2-sub-cupos">${kpis.municipalities||0} municipios</div>
+    </div>
+  </div>
+
+  <div class="db2-kpi-row">
+    <div class="db2-kpi-card db2-kpi-accent-pink">
+      <div class="db2-kpi-label">Mujeres contratadas</div>
+      <div class="db2-kpi-value" id="db2-v-female">${kpis.femaleCount||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-female">TC: ${kpis.femaleTc||0} · MT: ${kpis.femaleMt||0}</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-indigo">
+      <div class="db2-kpi-label">Hombres contratados</div>
+      <div class="db2-kpi-value" id="db2-v-male">${kpis.maleCount||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-male">TC: ${kpis.maleTc||0} · MT: ${kpis.maleMt||0}</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-green">
+      <div class="db2-kpi-label">Personal activo</div>
+      <div class="db2-kpi-value" id="db2-v-active">${kpis.activePersonnel||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-active">${kpis.totalPersonnel||0} total — ${kpis.inactivePersonnel||0} inactivos</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-red">
+      <div class="db2-kpi-label">Retiros / Renuncias</div>
+      <div class="db2-kpi-value" id="db2-v-retiros">${kpis.retirosThisYear||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-retiros">${kpis.retirosPct||0}% del total · ${new Date().getFullYear()}</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-amber">
+      <div class="db2-kpi-label">Contratos Obra / Labor</div>
+      <div class="db2-kpi-value" id="db2-v-obra">${kpis.ctObraLabor||0}</div>
+      <div class="db2-kpi-sub">vigentes</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-amber">
+      <div class="db2-kpi-label">Contratos Término Fijo</div>
+      <div class="db2-kpi-value" id="db2-v-fijo">${kpis.ctTerminoFijo||0}</div>
+      <div class="db2-kpi-sub">vigentes</div>
+    </div>
+  </div>
+
+  <div class="db2-kpi-row db2-kpi-row-2">
+    <div class="db2-kpi-card db2-kpi-accent-teal">
+      <div class="db2-kpi-label">Sedes PAE totales</div>
+      <div class="db2-kpi-value" id="db2-v-sedes">${kpis.totalSedes||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-sedes">${kpis.municipalities||0} municipios</div>
+    </div>
+    <div class="db2-kpi-card db2-kpi-accent-indigo">
+      <div class="db2-kpi-label">Sedes con manipuladora</div>
+      <div class="db2-kpi-value" id="db2-v-sedes-mt">${kpis.sedesConManipuladora||0}</div>
+      <div class="db2-kpi-sub" id="db2-sub-sedes-mt">${kpis.sedesSinManipuladora||0} sin manipuladora</div>
+    </div>
+  </div>
+
+  <div class="db2-charts-3col">
+    <div class="db2-chart-card">
+      <div class="db2-card-header">Género del personal</div>
+      <div class="db2-donut-wrap">
+        <canvas id="db2-chart-gender"></canvas>
+        <div class="db2-donut-center">
+          <div class="db2-donut-center-val" id="db2-gender-center-val">${(kpis.femaleCount||0)+(kpis.maleCount||0)}</div>
+          <div class="db2-donut-center-lbl">total</div>
+        </div>
+      </div>
+      <div class="db2-donut-legend">
+        <div class="db2-donut-legend-item">
+          <span class="db2-donut-legend-dot" style="background:#ec4899"></span>
+          <span>Mujeres</span>
+          <span class="db2-donut-legend-val" id="db2-v-female2">${kpis.femaleCount||0}</span>
+        </div>
+        <div class="db2-donut-legend-item">
+          <span class="db2-donut-legend-dot" style="background:#6366f1"></span>
+          <span>Hombres</span>
+          <span class="db2-donut-legend-val" id="db2-v-male2">${kpis.maleCount||0}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="db2-chart-card">
+      <div class="db2-card-header">Estado del personal</div>
+      <div class="db2-donut-wrap">
+        <canvas id="db2-chart-status"></canvas>
+        <div class="db2-donut-center">
+          <div class="db2-donut-center-val" id="db2-status-center-val">${kpis.totalPersonnel||0}</div>
+          <div class="db2-donut-center-lbl">total</div>
+        </div>
+      </div>
+      <div class="db2-donut-legend">
+        <div class="db2-donut-legend-item">
+          <span class="db2-donut-legend-dot" style="background:#22c55e"></span>
+          <span>Activos</span>
+          <span class="db2-donut-legend-val" id="db2-v-active2">${kpis.activePersonnel||0}</span>
+        </div>
+        <div class="db2-donut-legend-item">
+          <span class="db2-donut-legend-dot" style="background:#ef4444"></span>
+          <span>Inactivos</span>
+          <span class="db2-donut-legend-val" id="db2-v-inactive2">${kpis.inactivePersonnel||0}</span>
+        </div>
+        <div class="db2-donut-legend-item">
+          <span class="db2-donut-legend-dot" style="background:#f59e0b"></span>
+          <span>Novedad</span>
+          <span class="db2-donut-legend-val" id="db2-v-novelty2">${kpis.noveltyPersonnel||0}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="db2-chart-card">
+      <div class="db2-card-header">Distribución de edades — pirámide poblacional</div>
+      <div class="db2-chart-area" style="height:290px;padding:12px 8px 12px 12px">
+        <canvas id="db2-chart-age"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="db2-refresh-note">
+    Última actualización: <span id="db2-last-update">${new Date().toLocaleTimeString("es-CO")}</span>
+    &nbsp;&bull;&nbsp; Actualización automática cada 60 s
+  </div>
+
+</div>
+</article>
+</div>`;
+
+  setTimeout(async () => {
+    _renderDashboardKpis(kpis);
+    _renderMunFilter(payload.municipalitiesList || [], _dbMunicipality);
+    await _initDashboardCharts(payload);
+
+    const refreshBtn = document.getElementById("db2-btn-refresh");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "Actualizando…";
+        try {
+          await _refreshDashboard();
+          showSuccess("Dashboard actualizado");
+        } catch { showError("No se pudo actualizar"); }
+        finally {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = "Actualizar datos";
+        }
+      });
+    }
+
+    _dbRefreshTimer = setInterval(async () => {
+      try { await _refreshDashboard(); } catch { /* silent */ }
+    }, 60000);
+  }, 80);
+
+  return html;
+}
+
+// \u2500\u2500 Map coordinates for Meta municipalities (centroid lat/lng) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const MAP_MUN_COORDS = [
+  { name: "Villavicencio",        lat: 4.1420,  lng: -73.6266 },
+  { name: "Acac\u00edas",              lat: 3.9891,  lng: -73.7575 },
+  { name: "Barranca de Up\u00eda",     lat: 4.5731,  lng: -72.9628 },
+  { name: "Cabuyaro",             lat: 4.2917,  lng: -72.7853 },
+  { name: "Castilla la Nueva",    lat: 3.8806,  lng: -73.6658 },
+  { name: "Cubarral",             lat: 3.8447,  lng: -73.9481 },
+  { name: "Cumaral",              lat: 4.2703,  lng: -73.4931 },
+  { name: "El Calvario",          lat: 4.3706,  lng: -73.7033 },
+  { name: "El Castillo",          lat: 3.5461,  lng: -73.9458 },
+  { name: "El Dorado",            lat: 3.6642,  lng: -73.3714 },
+  { name: "Fuente de Oro",        lat: 3.4614,  lng: -73.6261 },
+  { name: "Granada",              lat: 3.5367,  lng: -73.7192 },
+  { name: "Guamal",               lat: 3.8900,  lng: -73.7694 },
+  { name: "La Macarena",          lat: 2.1803,  lng: -73.7836 },
+  { name: "La Uribe",             lat: 3.2269,  lng: -74.3517 },
+  { name: "Lejan\u00edas",             lat: 3.5217,  lng: -74.0211 },
+  { name: "Mapirip\u00e1n",            lat: 2.8942,  lng: -72.1450 },
+  { name: "Mesetas",              lat: 3.3783,  lng: -74.0433 },
+  { name: "Puerto Concordia",     lat: 2.6136,  lng: -72.7617 },
+  { name: "Puerto Gait\u00e1n",        lat: 4.3133,  lng: -72.0806 },
+  { name: "Puerto Lleras",        lat: 3.2686,  lng: -73.3803 },
+  { name: "Puerto L\u00f3pez",         lat: 4.0853,  lng: -72.9542 },
+  { name: "Puerto Rico",          lat: 3.1833,  lng: -73.5706 },
+  { name: "Restrepo",             lat: 4.2578,  lng: -73.5703 },
+  { name: "San Carlos de Guaroa", lat: 3.7100,  lng: -73.2325 },
+  { name: "San Juan de Arama",    lat: 3.3936,  lng: -73.8856 },
+  { name: "San Juanito",          lat: 4.4508,  lng: -73.6608 },
+  { name: "San Mart\u00edn",           lat: 3.6961,  lng: -73.6986 },
+  { name: "Vista Hermosa",        lat: 3.1214,  lng: -74.0328 },
+];
+
+function normalizeMunName(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function loadLeaflet() {
+  return new Promise((resolve) => {
+    if (window.L) { resolve(); return; }
+    if (!document.getElementById("leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(link);
+    }
+    if (!document.getElementById("leaflet-js")) {
+      const script = document.createElement("script");
+      script.id = "leaflet-js";
+      script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      script.onload = resolve;
+      script.onerror = resolve;
+      document.head.appendChild(script);
+    } else {
+      resolve();
+    }
+  });
+}
+
 
 function normalizeText(value) {
   return String(value || "")
@@ -2445,6 +2858,10 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <span>Fecha de fin</span>
             <input id="expFechaFin" type="date" placeholder="Dejar vacío si es actual" />
           </label>
+          <label>
+            <span>Días trabajados</span>
+            <input id="expDias" type="text" readonly placeholder="Se calcula automáticamente" style="background:var(--panel-2);cursor:default;color:var(--text-soft)" />
+          </label>
           <label class="full">
             <span>Funciones principales</span>
             <textarea id="expFunciones" rows="3" placeholder="Describe brevemente las funciones realizadas..."></textarea>
@@ -2464,7 +2881,7 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <div class="estudio-item">
               <div class="estudio-item-info">
                 <strong>${escapeHtml(exp.empresa || "Empresa sin nombre")}</strong>
-                <span>${escapeHtml(exp.cargo || "")}${exp.fechaInicio ? " · " + escapeHtml(exp.fechaInicio) : ""}${exp.fechaFin ? " → " + escapeHtml(exp.fechaFin) : " (actual)"}</span>
+                <span>${escapeHtml(exp.cargo || "")}${exp.fechaInicio ? " · " + escapeHtml(exp.fechaInicio) : ""}${exp.fechaFin ? " → " + escapeHtml(exp.fechaFin) : " (actual)"}${exp.dias != null ? " · " + exp.dias + " días" : ""}</span>
                 ${exp.funciones ? `<span style="opacity:.7;font-size:12px">${escapeHtml(exp.funciones)}</span>` : ""}
               </div>
               <button type="button" class="btn-remove-experiencia" data-exp-index="${i}">Eliminar</button>
@@ -2639,6 +3056,23 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
       });
     });
 
+    // EXPERIENCIA LABORAL — calculadora de días
+    const calcExpDias = () => {
+      const inicio = document.getElementById("expFechaInicio")?.value;
+      const fin = document.getElementById("expFechaFin")?.value;
+      const diasEl = document.getElementById("expDias");
+      if (!diasEl) return;
+      if (inicio && fin && fin >= inicio) {
+        const ms = new Date(fin) - new Date(inicio);
+        const d = Math.round(ms / 86400000);
+        diasEl.value = d + (d === 1 ? " día" : " días");
+      } else {
+        diasEl.value = "";
+      }
+    };
+    document.getElementById("expFechaInicio")?.addEventListener("change", calcExpDias);
+    document.getElementById("expFechaFin")?.addEventListener("change", calcExpDias);
+
     // EXPERIENCIA LABORAL — agregar
     const btnAddExp = document.getElementById("btnAddExperiencia");
     if (btnAddExp) {
@@ -2649,9 +3083,12 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
         const fechaFin = document.getElementById("expFechaFin")?.value || "";
         const funciones = (document.getElementById("expFunciones")?.value || "").trim();
         const motivoRetiro = (document.getElementById("expMotivoRetiro")?.value || "").trim();
+        const dias = (fechaInicio && fechaFin && fechaFin >= fechaInicio)
+          ? Math.round((new Date(fechaFin) - new Date(fechaInicio)) / 86400000)
+          : null;
         if (!empresa && !cargo) { showWarning("Ingresa al menos empresa o cargo."); return; }
         if (!Array.isArray(state.personnelDraft.workExperience)) state.personnelDraft.workExperience = [];
-        state.personnelDraft.workExperience.push({ empresa, cargo, fechaInicio, fechaFin, funciones, motivoRetiro });
+        state.personnelDraft.workExperience.push({ empresa, cargo, fechaInicio, fechaFin, dias, funciones, motivoRetiro });
         state.personnelCreateTab = "experiencia";
         openModule("gestion_personal");
       });
@@ -2835,6 +3272,7 @@ async function renderPersonnelTableModule() {
   const institutionFilterValue = state.personnelFilters.institution || "";
   const siteFilterValue = state.personnelFilters.site || "";
   const modalityFilterValue = state.personnelFilters.modality || "";
+  const sortValue = state.personnelFilters.sort || "";
 
   const normalize = (value) =>
     String(value || "")
@@ -2906,6 +3344,30 @@ async function renderPersonnelTableModule() {
 
     return true;
   });
+
+  // Ordenar según selección del usuario
+  if (sortValue) {
+    filteredRows.sort((a, b) => {
+      const nameA = getPersonnelFullName(a);
+      const nameB = getPersonnelFullName(b);
+      if (sortValue === "nombre_az") return nameA.localeCompare(nameB, "es");
+      if (sortValue === "nombre_za") return nameB.localeCompare(nameA, "es");
+      if (sortValue === "cargo_az") return getPersonnelRole(a).localeCompare(getPersonnelRole(b), "es");
+      if (sortValue === "estado") return getPersonnelWorkStatus(a).localeCompare(getPersonnelWorkStatus(b), "es");
+      if (sortValue === "municipio") return getPersonnelMunicipality(a).localeCompare(getPersonnelMunicipality(b), "es");
+      if (sortValue === "fecha_desc") {
+        const dA = a.startDate || a.start_date || a.fecha_inicio || "";
+        const dB = b.startDate || b.start_date || b.fecha_inicio || "";
+        return dB.localeCompare(dA);
+      }
+      if (sortValue === "fecha_asc") {
+        const dA = a.startDate || a.start_date || a.fecha_inicio || "";
+        const dB = b.startDate || b.start_date || b.fecha_inicio || "";
+        return dA.localeCompare(dB);
+      }
+      return 0;
+    });
+  }
 
   const municipalityOptions = META_MUNICIPALITIES.map(m => m.name);
   const gestorZonaOptions = Array.from(
@@ -3107,6 +3569,7 @@ async function renderPersonnelTableModule() {
         institution:  document.getElementById("personnelFilterInstitution")?.value || "",
         site:         document.getElementById("personnelFilterSite")?.value || "",
         modality:     document.getElementById("personnelFilterModality")?.value || "",
+        sort:         document.getElementById("personnelSort")?.value || "",
       };
       state.personnelPage = 1;
       await openModule("gestion_personal");
@@ -3116,8 +3579,10 @@ async function renderPersonnelTableModule() {
     const siteInput = document.getElementById("personnelFilterSite");
     const modalityInput = document.getElementById("personnelFilterModality");
 
+    const sortInput = document.getElementById("personnelSort");
+
     // Selects: re-render inmediato
-    [statusInput, hvStatusInput, municipalityInput, gestorZonaInput, institutionInput, siteInput, modalityInput].forEach((el) => {
+    [statusInput, hvStatusInput, municipalityInput, gestorZonaInput, institutionInput, siteInput, modalityInput, sortInput].forEach((el) => {
       if (!el) return;
       el.addEventListener("change", applyPersonnelFilters);
     });
@@ -3141,6 +3606,7 @@ async function renderPersonnelTableModule() {
           institution: "",
           site: "",
           modality: "",
+          sort: "",
         };
 
         await openModule("gestion_personal");
@@ -3366,9 +3832,18 @@ async function renderPersonnelTableModule() {
               .join("")}
           </select>
 
-          <button type="button" id="clearPersonnelFilters" class="btn btn-secondary">
-            Limpiar
-          </button>
+          <select id="personnelSort">
+            <option value="">Ordenar por...</option>
+            <option value="nombre_az" ${sortValue === "nombre_az" ? "selected" : ""}>Nombre A-Z</option>
+            <option value="nombre_za" ${sortValue === "nombre_za" ? "selected" : ""}>Nombre Z-A</option>
+            <option value="cargo_az" ${sortValue === "cargo_az" ? "selected" : ""}>Cargo A-Z</option>
+            <option value="estado" ${sortValue === "estado" ? "selected" : ""}>Estado</option>
+            <option value="municipio" ${sortValue === "municipio" ? "selected" : ""}>Municipio</option>
+            <option value="fecha_desc" ${sortValue === "fecha_desc" ? "selected" : ""}>Ingreso (reciente)</option>
+            <option value="fecha_asc" ${sortValue === "fecha_asc" ? "selected" : ""}>Ingreso (antiguo)</option>
+          </select>
+
+          <button type="button" id="clearPersonnelFilters" class="btn btn-secondary btn-icon-only" title="Limpiar filtros">✕</button>
         </section>
 
         <section class="personnel-premium-table-card">
@@ -3998,121 +4473,25 @@ async function loadEmployeeDocumentsModule() {
 async function handleCreatePersonnel(event) {
   event.preventDefault();
 
-  // ===============================
-  // VALIDACIONES FINALES EMPIRIA
-  // ===============================
-
   const d = state.personnelDraft;
 
-  // 🔹 Nombre y documento
-  if (!d.firstName || !d.firstLastName) {
-    showWarning("El nombre del empleado es obligatorio."); return;
-    return;
+  // Mínimos obligatorios independientemente de la pestaña activa
+  if (!String(d.firstName || "").trim() || !String(d.firstLastName || "").trim()) {
+    showWarning("El nombre y apellido del empleado son obligatorios (pestaña Identificación)."); return;
+  }
+  if (!String(d.documentNumber || "").trim()) {
+    showWarning("El número de documento es obligatorio (pestaña Identificación)."); return;
   }
 
-  if (!d.documentNumber) {
-    showWarning("El número de documento es obligatorio."); return;
-    return;
-  }
-
-  // 🔹 Licitación
+  // Validaciones condicionales (solo cuando el campo correspondiente está activo)
   if (d.presentedInOffer === "true" && !d.offerPosition) {
-    showWarning("Debe seleccionar el cargo presentado en la oferta."); return;
-    return;
+    showWarning("Selecciona el cargo presentado en la oferta (pestaña Licitación)."); return;
   }
-
-  // 🔹 Cargo real obligatorio
-  if (!d.cargo_real) {
-    showWarning("Debe seleccionar el cargo real."); return;
-    return;
+  if (d.sisben === "true" && (!d.sisbenIssueDate || !d.sisbenExpirationDate)) {
+    showWarning("Completa las fechas del SISBEN (pestaña Seguimiento)."); return;
   }
-
-  // 🔹 Institucional (solo manipulador)
-  if (String(d.cargo_real).toUpperCase() === "OPERARIO MANIPULADOR DE ALIMENTOS") {
-    if (!d.educationalMunicipality || !d.institution || !d.site || !d.educationalModality) {
-      showWarning("Debe completar todos los campos del tab Institucional."); return;
-      return;
-    }
-  }
-
-  // 🔹 Contratación
-  if (!d.contractType || !d.startDate || !d.coverageStartDate) {
-    showWarning("Debe completar la información de contratación."); return;
-    return;
-  }
-
-  // 🔹 Seguridad social
-  if (!d.eps || !d.pensionFund) {
-    showWarning("Debe seleccionar EPS y fondo de pensiones."); return;
-    return;
-  }
-
-  // 🔹 SISBEN
-  if (d.sisben === "true") {
-    if (!d.sisbenIssueDate || !d.sisbenExpirationDate) {
-      showWarning("Debe completar las fechas del SISBEN."); return;
-      return;
-    }
-  }
-
-  // 🔹 Certificado de residencia
-  if (d.hasResidenceCertificate === "true") {
-    if (!d.residenceCertificateIssueDate || !d.residenceCertificateExpiration) {
-      showWarning("Debe completar las fechas del certificado de residencia."); return;
-      return;
-    }
-  }
-
-  // 🔹 Estudios vacíos
-  if (Array.isArray(d.studies)) {
-    const invalidStudy = d.studies.some(
-      (s) =>
-        !s.educationLevel &&
-        !s.degree &&
-        !s.institution &&
-        !s.date
-    );
-
-    if (invalidStudy) {
-      showWarning("Hay estudios vacíos. Complételos o elimínelos."); return;
-      return;
-    }
-  }
-
-  // 🔹 Observaciones vacías
-  if (Array.isArray(d.observations)) {
-    const invalidObs = d.observations.some((o) => !o.text || !o.text.trim());
-
-    if (invalidObs) {
-      showWarning("Hay observaciones vacías."); return;
-      return;
-    }
-  }
-  
-  const form = event.currentTarget;
-
-  if (!validatePersonnelForm(form)) {
-    showWarning("Faltan campos obligatorios por diligenciar."); return;
-    return;
-  }
-
-  if (
-    !String(state.personnelDraft.firstName || "").trim() ||
-    !String(state.personnelDraft.firstLastName || "").trim()
-  ) {
-    const firstNameField = form.querySelector('[name="firstName"]');
-    const firstLastNameField = form.querySelector('[name="firstLastName"]');
-
-    if (firstNameField && !String(firstNameField.value || "").trim()) {
-      firstNameField.classList.add("input-error");
-    }
-
-    if (firstLastNameField && !String(firstLastNameField.value || "").trim()) {
-      firstLastNameField.classList.add("input-error");
-    }
-
-    showWarning("El nombre y el apellido son obligatorios."); return;
-    return;
+  if (d.hasResidenceCertificate === "true" && (!d.residenceCertificateIssueDate || !d.residenceCertificateExpiration)) {
+    showWarning("Completa las fechas del certificado de residencia (pestaña Seguimiento)."); return;
   }
 
     const payload = {
@@ -4337,6 +4716,21 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   // NOMINA
   // ─────────────────────────────
   if (moduleKey === "nomina_novedades") {
+    const userRole = state.currentUser?.role || "";
+    const isGestor = userRole === "gestores_auxiliares";
+
+    // Gestores de zona: mostrar solo la interfaz móvil de novedades
+    if (isGestor) {
+      const html = await loadGestorNovedadesModule();
+      wireGestorNovedadesEvents();
+      return html;
+    }
+
+    if (submoduleKey === "calcular_nomina") {
+      const html = await loadCalcularNominaModule();
+      wireCalcularNominaEvents();
+      return html;
+    }
     if (submoduleKey === "registrar_novedad") {
       const html = await loadRegistrarNovedadModule();
       wireRegistrarNovedadEvents();
@@ -4362,12 +4756,10 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       wireCertificacionesEvents();
       return html;
     }
-    return `
-      <article class="info-card">
-        <h3>${prettyLabel(submoduleKey)}</h3>
-        <p>Este submódulo estará disponible próximamente.</p>
-      </article>
-    `;
+    // Default: load calcular nomina for TH/admin, gestor interface for gestores
+    const html = await loadCalcularNominaModule();
+    wireCalcularNominaEvents();
+    return html;
   }
 
 
@@ -4665,21 +5057,28 @@ async function loadConsultarNovedadesModule() {
           <tbody>
             ${filtered.length ? filtered.map(n => `
               <tr>
-                <td class="payroll-name-cell">${escapeHtml(n.employeeName)}</td>
+                <td class="payroll-name-cell">
+                  <div style="font-weight:600">${escapeHtml(n.employeeName)}</div>
+                  <div style="font-size:10px;color:#9ca3af">${escapeHtml(n.createdByName || "")}</div>
+                </td>
                 <td>${escapeHtml(n.documentNumber)}</td>
                 <td><span class="novelty-type-chip">${typeLabel(n.noveltyType)}</span></td>
                 <td>${fmtDate(n.startDate)}</td>
                 <td>${fmtDate(n.endDate)}</td>
                 <td>${n.days || "-"}</td>
-                <td>${statusBadge(n.status)}</td>
                 <td>
-                  <div class="payroll-actions-cell">
+                  ${statusBadge(n.status)}
+                  ${n.reviewNotes ? `<div style="font-size:10px;color:#6b7280;margin-top:2px">${escapeHtml(n.reviewNotes)}</div>` : ""}
+                </td>
+                <td>
+                  <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+                    ${n.supportDocumentUrl ? `<a href="${escapeAttr(n.supportDocumentUrl)}" target="_blank" class="nov-action-btn" style="background:#dbeafe;color:#1e40af;text-decoration:none">📎 Doc</a>` : ""}
                     ${n.status === "PENDIENTE" ? `
-                      <button class="btn-aprobar" data-nov-id="${n.id}">Aprobar</button>
-                      <button class="btn-rechazar" data-nov-id="${n.id}">Rechazar</button>
+                      <button class="nov-action-btn nov-btn-approve btn-aprobar" data-nov-id="${n.id}">✓ Aprobar</button>
+                      <button class="nov-action-btn nov-btn-reject btn-rechazar" data-nov-id="${n.id}">✗ Rechazar</button>
                     ` : ""}
-                    ${n.status !== "ANULADA" && n.status !== "APROBADA" ? `
-                      <button class="btn-anular" data-nov-id="${n.id}">Anular</button>
+                    ${n.status !== "ANULADA" ? `
+                      <button class="nov-action-btn nov-btn-annul btn-anular" data-nov-id="${n.id}">Anular</button>
                     ` : ""}
                   </div>
                 </td>
@@ -4955,7 +5354,7 @@ function wireDesprendiblesEvents() {
     const btnImprimir = document.getElementById("btnImprimirDesp");
     if (btnImprimir) {
       btnImprimir.addEventListener("click", () => {
-        window.print();
+        printHtml(document.getElementById("desprendiblePrint"), "Desprendible de Nómina");
       });
     }
 
@@ -5089,7 +5488,7 @@ function wireCertificacionesEvents() {
     const btnImprimir = document.getElementById("btnImprimirCert");
     if (btnImprimir) {
       btnImprimir.addEventListener("click", () => {
-        window.print();
+        printHtml(document.getElementById("certPrint"), "Certificación Laboral");
       });
     }
 
@@ -5098,6 +5497,463 @@ function wireCertificacionesEvents() {
       certEmpEl.addEventListener("change", () => {
         if (!state.certDraft) state.certDraft = {};
         state.certDraft.employeeId = certEmpEl.value;
+      });
+    }
+  }, 0);
+}
+
+// ============================================================
+// NÓMINA — Interfaz Gestor de Zona (vista móvil)
+// ============================================================
+async function loadGestorNovedadesModule() {
+  let novedades = [];
+  try {
+    const res = await apiFetch("/payroll/novelties");
+    novedades = Array.isArray(res.data) ? res.data : [];
+  } catch { novedades = []; }
+
+  const userId = state.currentUser?.id;
+  const myNovedades = novedades.filter(n =>
+    String(n.createdByUserId) === String(userId) ||
+    String(n.createdByName || "").toUpperCase() === String(state.currentUser?.name || state.currentUser?.username || "").toUpperCase()
+  );
+
+  const now = new Date();
+  const periodStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  const monthLabel = now.toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+
+  const statusBadge = (s) => {
+    const map = {
+      PENDIENTE: ["gsb-pending",  "Pendiente"],
+      APROBADA:  ["gsb-approved", "Aprobada"],
+      RECHAZADA: ["gsb-rejected", "Rechazada"],
+      ANULADA:   ["gsb-annulled", "Anulada"],
+    };
+    const [cls, lbl] = map[s] || ["gsb-pending", s];
+    return `<span class="gestor-status ${cls}">${lbl}</span>`;
+  };
+
+  const typeLabel = (t) => ({
+    INCAPACIDAD:"Incapacidad", VACACIONES:"Vacaciones",
+    LICENCIA_REMUNERADA:"Lic. remunerada", LICENCIA_NO_REMUNERADA:"Lic. no remunerada",
+    SUSPENSION:"Suspensión", AUSENCIA:"Ausencia", CAMBIO_CARGO:"Cambio de cargo",
+    CAMBIO_SALARIO:"Cambio de salario", RETIRO:"Retiro", OTRO:"Otro",
+  }[t] || t);
+
+  const pending  = myNovedades.filter(n => n.status === "PENDIENTE").length;
+  const approved = myNovedades.filter(n => n.status === "APROBADA").length;
+  const rejected = myNovedades.filter(n => n.status === "RECHAZADA").length;
+
+  const showForm = state.gestorFormOpen || false;
+
+  const formHtml = showForm ? `
+    <div class="gestor-form-sheet" id="gestorFormSheet">
+      <p class="gestor-form-title">Nueva novedad</p>
+      <div class="gestor-form-grid">
+        <label class="gestor-label">
+          Empleado <span style="color:#ef4444">*</span>
+          <input id="gNovEmpSearch" type="text" class="gestor-input" placeholder="Buscar por nombre o documento..." autocomplete="off" />
+          <select id="gNovEmpId" class="gestor-select" style="margin-top:4px">
+            <option value="">— Selecciona empleado —</option>
+          </select>
+        </label>
+        <label class="gestor-label">
+          Tipo de novedad <span style="color:#ef4444">*</span>
+          <select id="gNovType" class="gestor-select">
+            <option value="">Selecciona tipo</option>
+            <option value="INCAPACIDAD">Incapacidad</option>
+            <option value="VACACIONES">Vacaciones</option>
+            <option value="LICENCIA_REMUNERADA">Licencia remunerada</option>
+            <option value="LICENCIA_NO_REMUNERADA">Licencia no remunerada</option>
+            <option value="SUSPENSION">Suspensión</option>
+            <option value="AUSENCIA">Ausencia injustificada</option>
+            <option value="CAMBIO_CARGO">Cambio de cargo</option>
+            <option value="RETIRO">Retiro</option>
+            <option value="OTRO">Otro</option>
+          </select>
+        </label>
+        <label class="gestor-label">
+          Fecha inicio <span style="color:#ef4444">*</span>
+          <input id="gNovStart" type="date" class="gestor-input" />
+        </label>
+        <label class="gestor-label">
+          Fecha fin
+          <input id="gNovEnd" type="date" class="gestor-input" />
+        </label>
+        <label class="gestor-label">
+          Días
+          <input id="gNovDays" type="number" min="1" class="gestor-input" placeholder="Ej: 3" />
+        </label>
+        <label class="gestor-label">
+          Documento soporte (PDF/imagen)
+          <input id="gNovDoc" type="file" accept=".pdf,.jpg,.jpeg,.png" class="gestor-input" style="padding:6px" />
+        </label>
+        <label class="gestor-label" style="grid-column:1/-1">
+          Observaciones
+          <textarea id="gNovObs" class="gestor-textarea" rows="3" placeholder="Describe el motivo de la novedad..."></textarea>
+        </label>
+      </div>
+      <div class="gestor-btn-row" style="margin-top:14px">
+        <button id="gNovCancelBtn" class="btn btn-secondary" style="flex:1">Cancelar</button>
+        <button id="gNovSaveBtn" class="btn btn-primary" style="flex:2">Registrar novedad</button>
+      </div>
+    </div>
+  ` : "";
+
+  const cardsHtml = myNovedades.length === 0 ? `
+    <div class="gestor-empty">
+      <span class="gestor-empty-icon">📋</span>
+      No tienes novedades registradas.<br>Usa el botón + para agregar una.
+    </div>
+  ` : myNovedades.map(n => `
+    <div class="gestor-card">
+      <div class="gestor-card-top">
+        <div>
+          <div class="gestor-card-name">${escapeHtml(n.employeeName || "—")}</div>
+          <div class="gestor-card-doc">CC ${escapeHtml(n.documentNumber || "")}</div>
+        </div>
+        ${statusBadge(n.status)}
+      </div>
+      <div class="gestor-card-type">${escapeHtml(typeLabel(n.noveltyType))}</div>
+      <div class="gestor-card-meta">
+        ${n.startDate ? "Desde " + new Date(n.startDate).toLocaleDateString("es-CO") : ""}
+        ${n.days ? " · " + n.days + " día(s)" : ""}
+      </div>
+      ${n.reviewNotes ? `<div class="gestor-card-obs">Resp.: ${escapeHtml(n.reviewNotes)}</div>` : ""}
+      ${n.supportDocumentUrl ? `<div class="gestor-card-obs"><a href="${escapeAttr(n.supportDocumentUrl)}" target="_blank" style="color:#3b82f6;text-decoration:none">📎 Ver documento</a></div>` : ""}
+    </div>
+  `).join("");
+
+  return `
+    <div class="gestor-wrap">
+      <div class="gestor-hero">
+        <h2>Mis Novedades</h2>
+        <p>Registra y consulta tus novedades de nómina</p>
+        <div class="gestor-month-pill">📅 ${monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1)}</div>
+      </div>
+      <div class="gestor-stats-row">
+        <div class="gestor-stat">
+          <div class="gestor-stat-num" style="color:#f59e0b">${pending}</div>
+          <div class="gestor-stat-lbl">Pendientes</div>
+        </div>
+        <div class="gestor-stat">
+          <div class="gestor-stat-num" style="color:#16a34a">${approved}</div>
+          <div class="gestor-stat-lbl">Aprobadas</div>
+        </div>
+        <div class="gestor-stat">
+          <div class="gestor-stat-num" style="color:#dc2626">${rejected}</div>
+          <div class="gestor-stat-lbl">Rechazadas</div>
+        </div>
+      </div>
+      ${formHtml}
+      <div class="gestor-list" id="gestorNovList">${cardsHtml}</div>
+    </div>
+    ${!showForm ? '<button class="gestor-fab" id="gestorFab" title="Nueva novedad">+</button>' : ""}
+  `;
+}
+
+function wireGestorNovedadesEvents() {
+  setTimeout(async () => {
+    const fab = document.getElementById("gestorFab");
+    if (fab) {
+      fab.addEventListener("click", async () => {
+        state.gestorFormOpen = true;
+        await openModule("nomina_novedades");
+      });
+    }
+
+    const cancelBtn = document.getElementById("gNovCancelBtn");
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", async () => {
+        state.gestorFormOpen = false;
+        await openModule("nomina_novedades");
+      });
+    }
+
+    // Employee search
+    let allPersonnel = [];
+    try {
+      const pp = await apiFetch("/personnel");
+      allPersonnel = Array.isArray(pp.data) ? pp.data : Array.isArray(pp.personnel) ? pp.personnel : [];
+    } catch {}
+
+    const empSearch = document.getElementById("gNovEmpSearch");
+    const empSelect = document.getElementById("gNovEmpId");
+
+    function populateEmpOptions(filter) {
+      if (!empSelect) return;
+      const filtered = filter
+        ? allPersonnel.filter(e => {
+            const n = String(e.fullName || e.full_name || "").toUpperCase();
+            const d = String(e.documentNumber || e.numero_documento || "");
+            const q = filter.toUpperCase();
+            return n.includes(q) || d.includes(q);
+          }).slice(0, 20)
+        : [];
+      empSelect.innerHTML = `<option value="">— Selecciona empleado —</option>` +
+        filtered.map(e => {
+          const name = e.fullName || e.full_name || "";
+          const doc  = e.documentNumber || e.numero_documento || "";
+          return `<option value="${escapeAttr(String(e.id))}">${escapeHtml(name)} — ${escapeHtml(doc)}</option>`;
+        }).join("");
+    }
+
+    if (empSearch) {
+      empSearch.addEventListener("input", () => populateEmpOptions(empSearch.value));
+    }
+
+    const saveBtn = document.getElementById("gNovSaveBtn");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async () => {
+        const employeeId = empSelect?.value;
+        const noveltyType = document.getElementById("gNovType")?.value;
+        const startDate   = document.getElementById("gNovStart")?.value;
+        const endDate     = document.getElementById("gNovEnd")?.value;
+        const days        = document.getElementById("gNovDays")?.value;
+        const observations = document.getElementById("gNovObs")?.value;
+        const docFile     = document.getElementById("gNovDoc")?.files?.[0];
+
+        if (!employeeId)  { showWarning("Selecciona un empleado."); return; }
+        if (!noveltyType) { showWarning("Selecciona el tipo de novedad."); return; }
+        if (!startDate)   { showWarning("La fecha de inicio es obligatoria."); return; }
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Registrando...";
+
+        try {
+          // Convert doc to base64 if provided
+          let supportDocumentUrl = "";
+          if (docFile) {
+            supportDocumentUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = e => resolve(e.target.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(docFile);
+            });
+          }
+
+          await apiFetch("/payroll/novelties", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              employeeId, noveltyType, startDate,
+              endDate: endDate || null,
+              days: days || null,
+              observations: observations || "",
+              supportDocumentUrl,
+            }),
+          });
+
+          state.gestorFormOpen = false;
+          showSuccess("Novedad registrada. Talento Humano la revisará pronto.", "Enviado");
+          await openModule("nomina_novedades");
+        } catch (err) {
+          showError(err.message || "No se pudo registrar la novedad.");
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Registrar novedad";
+        }
+      });
+    }
+  }, 0);
+}
+
+// ============================================================
+// NÓMINA — Calcular Nómina (para TH y Administrador)
+// ============================================================
+async function loadCalcularNominaModule() {
+  const now = new Date();
+  const defaultPeriod = state.nominaPeriod || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  let result = null;
+  let calcError = "";
+  if (state.nominaCalculated) {
+    try {
+      result = await apiFetch(`/payroll/calculate?period=${encodeURIComponent(defaultPeriod)}`);
+    } catch (e) {
+      calcError = e.message || "Error al calcular la nómina";
+    }
+  }
+
+  const modalBadge = (cls) => {
+    const map = {
+      CAARES1:"modal-caares1 CAARES1", CAARES2:"modal-caares2 CAARES2",
+      CAARES3:"modal-caares3 CAARES3", CAARES4:"modal-caares4 CAARES4",
+      CAA1:"modal-caa1 CAA1", CAA2:"modal-caa2 CAA2", RI:"modal-ri RI",
+    };
+    const [cssClass, label] = (map[cls] || `modal-caa1 ${cls}`).split(" ");
+    return `<span class="payroll-badge-modal ${cssClass}">${label||cls}</span>`;
+  };
+
+  const fmt = (n) => (n || 0).toLocaleString("es-CO", { style:"currency", currency:"COP", maximumFractionDigits:0 });
+
+  const alertsHtml = result?.alerts?.length ? `
+    <div class="payroll-alert-list">
+      ${result.alerts.map(a => `
+        <div class="payroll-alert-item alert-${a.severity || "warning"}">
+          <span class="payroll-alert-icon">${a.severity === "error" ? "⚠️" : a.severity === "info" ? "ℹ️" : "⚡"}</span>
+          <div class="payroll-alert-body">
+            <strong>${escapeHtml(a.employeeName)}</strong>
+            ${escapeHtml(a.message)}
+            ${a.liquidacion ? `<br><small>Liquidación estimada: ${fmt(a.liquidacion.total)}</small>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
+
+  const tableHtml = result?.payrollLines?.length ? `
+    <div class="payroll-table-wrap">
+      <table class="payroll-calc-table">
+        <thead>
+          <tr>
+            <th>Empleado</th><th>Municipio</th><th>Modalidad</th><th>Tipo</th><th class="num">Días</th>
+            <th class="num">Sal. Base</th><th class="num">Aux. Transp.</th><th class="num">Total Dev.</th>
+            <th class="num">Ded. Salud</th><th class="num">Ded. Pens.</th><th class="num">Desc. Nov.</th>
+            <th class="num">Neto Pagar</th><th>Observaciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${result.payrollLines.map(l => `
+            <tr class="${l.hasAlert ? (l.isRetiro ? "row-retiro" : "row-alert") : ""}">
+              <td>
+                <div style="font-weight:600;font-size:12px">${escapeHtml(l.employeeName)}</div>
+                <div style="font-size:10px;color:#9ca3af">${escapeHtml(l.documentNumber)}</div>
+              </td>
+              <td style="font-size:11px">${escapeHtml(l.municipality || "—")}</td>
+              <td>${modalBadge(l.modalityClass)}</td>
+              <td style="font-size:11px">${escapeHtml(l.workTimeType)}</td>
+              <td class="num">${l.workedDays}</td>
+              <td class="num">${fmt(l.baseSalary)}</td>
+              <td class="num">${fmt(l.transportAllowance)}</td>
+              <td class="num" style="font-weight:600">${fmt(l.totalDevengado)}</td>
+              <td class="num" style="color:#dc2626">${fmt(l.deduccionSalud)}</td>
+              <td class="num" style="color:#dc2626">${fmt(l.deduccionPension)}</td>
+              <td class="num" style="color:#dc2626">${l.novedadDescuento > 0 ? fmt(l.novedadDescuento) : "—"}</td>
+              <td class="num" style="font-weight:700;color:${l.netoPagar < 0 ? "#dc2626" : "#16a34a"}">${fmt(l.netoPagar)}</td>
+              <td>
+                ${l.observations?.length ? `<ul class="payroll-obs-list">${l.observations.map(o => `<li>${escapeHtml(o)}</li>`).join("")}</ul>` : "—"}
+                ${l.isRetiro && l.liquidacion ? `<div style="margin-top:4px;font-size:10px;color:#1d4ed8;font-weight:600">Liquidación: ${fmt(l.liquidacion.total)}</div>` : ""}
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="7" style="text-align:right;padding-right:12px">TOTALES (${result.totals?.employees || 0} empleados)</td>
+            <td class="num">${fmt(result.totals?.totalDevengado)}</td>
+            <td class="num" colspan="2"></td>
+            <td class="num"></td>
+            <td class="num" style="font-size:15px;color:#16a34a">${fmt(result.totals?.netoPagar)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  ` : (state.nominaCalculated && !calcError ? `<article class="info-card"><p>No se encontraron empleados para el período seleccionado.</p></article>` : "");
+
+  return `
+    <div class="payroll-module-wrap">
+      <section class="personnel-premium-hero">
+        <div>
+          <span class="personnel-premium-eyebrow">Módulo de Nómina</span>
+          <h2>Calcular Nómina</h2>
+          <p>Liquidación mensual según modalidad, novedades aprobadas y ley colombiana.</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="month" id="nominaPeriodInput" class="payroll-input" value="${escapeAttr(defaultPeriod)}" style="max-width:180px" />
+          <button id="btnCalcularNomina" class="btn btn-primary">Calcular</button>
+          ${result ? `<button class="btn btn-secondary" id="btnExportarNomina" data-period="${escapeAttr(defaultPeriod)}">⬇ Exportar CSV</button>` : ""}
+        </div>
+      </section>
+
+      ${calcError ? `<div class="payroll-alert-item alert-error" style="margin-bottom:8px"><span class="payroll-alert-icon">⚠️</span><div>${escapeHtml(calcError)}</div></div>` : ""}
+
+      ${result ? `
+        <div class="payroll-total-row">
+          <div class="payroll-total-card">
+            <div class="payroll-total-label">Empleados</div>
+            <div class="payroll-total-value">${result.totals?.employees || 0}</div>
+          </div>
+          <div class="payroll-total-card accent-blue">
+            <div class="payroll-total-label">Total Devengado</div>
+            <div class="payroll-total-value">${fmt(result.totals?.totalDevengado)}</div>
+          </div>
+          <div class="payroll-total-card accent-red">
+            <div class="payroll-total-label">Total Deducciones</div>
+            <div class="payroll-total-value">${fmt(result.totals?.totalDeducciones)}</div>
+          </div>
+          <div class="payroll-total-card accent-green">
+            <div class="payroll-total-label">Total Neto a Pagar</div>
+            <div class="payroll-total-value">${fmt(result.totals?.netoPagar)}</div>
+          </div>
+        </div>
+        ${alertsHtml ? `<div><div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">⚠ Alertas de revisión manual</div>${alertsHtml}</div>` : ""}
+      ` : ""}
+
+      ${tableHtml}
+
+      ${!state.nominaCalculated ? `
+        <article class="info-card" style="text-align:center;padding:40px">
+          <div style="font-size:48px;margin-bottom:12px">🧮</div>
+          <h3>Calcular nómina del período</h3>
+          <p>Selecciona el mes y presiona <strong>Calcular</strong> para generar la liquidación.</p>
+        </article>
+      ` : ""}
+    </div>
+  `;
+}
+
+function wireCalcularNominaEvents() {
+  setTimeout(() => {
+    const periodInput = document.getElementById("nominaPeriodInput");
+    if (periodInput) {
+      periodInput.addEventListener("change", () => {
+        state.nominaPeriod = periodInput.value;
+        state.nominaCalculated = false;
+      });
+    }
+
+    const btnCalc = document.getElementById("btnCalcularNomina");
+    if (btnCalc) {
+      btnCalc.addEventListener("click", async () => {
+        state.nominaPeriod = document.getElementById("nominaPeriodInput")?.value || state.nominaPeriod;
+        state.nominaCalculated = true;
+        btnCalc.disabled = true;
+        btnCalc.textContent = "Calculando...";
+        try {
+          await openModule("nomina_novedades");
+        } finally {
+          const btn = document.getElementById("btnCalcularNomina");
+          if (btn) { btn.disabled = false; btn.textContent = "Calcular"; }
+        }
+      });
+    }
+
+    const exportBtn = document.getElementById("btnExportarNomina");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", async () => {
+        const period = exportBtn.dataset.period || state.nominaPeriod || "";
+        exportBtn.disabled = true;
+        exportBtn.textContent = "Exportando...";
+        try {
+          const res = await fetch(`/payroll/export?period=${encodeURIComponent(period)}`, {
+            headers: { Authorization: `Bearer ${state.token}` },
+          });
+          if (!res.ok) throw new Error("Error al exportar");
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          a.href = url;
+          a.download = `nomina-${period}.csv`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+          showSuccess("Archivo de nómina descargado.", "Exportado");
+        } catch (err) {
+          showError(err.message || "No se pudo exportar la nómina.");
+        } finally {
+          if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = "⬇ Exportar CSV"; }
+        }
       });
     }
   }, 0);
@@ -5527,10 +6383,10 @@ async function loadCoverageModule() {
 
   const getChangeIcon = (value) => {
     const status = normalize(value);
-    if (status === "SUBIO") return `<svg class="change-icon change-up" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`;
-    if (status === "BAJO")  return `<svg class="change-icon change-down" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-    if (status === "SIN_CAMBIO") return `<svg class="change-icon change-same" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
-    return `<span class="change-icon change-none">—</span>`;
+    if (status === "SUBIO")     return `<span class="cov-arrow cov-arrow-up"   aria-label="Subió">▲</span>`;
+    if (status === "BAJO")      return `<span class="cov-arrow cov-arrow-down" aria-label="Bajó">▼</span>`;
+    if (status === "SIN_CAMBIO") return `<span class="cov-arrow cov-arrow-same" aria-label="Sin cambio">=</span>`;
+    return `<span class="cov-arrow cov-arrow-none">—</span>`;
   };
 
   const getChangeClass = (value) => {
@@ -5985,6 +6841,7 @@ async function loadCoverageModule() {
                   <th>Cobertura</th>
                   <th>Δ Cupos</th>
                   <th>Cambio</th>
+                  <th>Act.</th>
                 </tr>
               </thead>
 
@@ -6038,17 +6895,15 @@ async function loadCoverageModule() {
                                 ${cuposDelta === null ? "-" : formatNumber(cuposDelta)}
                               </td>
 
-                              <td class="change-cell">
-                                ${getChangeIcon(row.change_status)}
-                                ${row.update_origin !== "HEREDADO" ? `<svg class="updated-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
-                              </td>
+                              <td class="change-cell">${getChangeIcon(row.change_status)}</td>
+                              <td class="act-cell">${row.update_origin !== "HEREDADO" ? `<svg class="updated-check-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ""}</td>
                             </tr>
                           `;
                         })
                         .join("")
                     : `
                       <tr>
-                        <td colspan="14" class="empty">
+                        <td colspan="15" class="empty">
                           No hay registros que requieran personal para mostrar.
                         </td>
                       </tr>
@@ -6328,7 +7183,9 @@ function renderPersonnelCvModule() {
       state.personnelViewMode = "table";
       await openModule("gestion_personal");
     });
-    document.getElementById("btnPrintCv")?.addEventListener("click", () => window.print());
+    document.getElementById("btnPrintCv")?.addEventListener("click", () => {
+      printHtml(document.getElementById("cvPrintArea"), "Hoja de Vida");
+    });
   }, 0);
 
   const estudios = Array.isArray(d.studies) ? d.studies : [];
@@ -6429,6 +7286,7 @@ function renderPersonnelCvModule() {
 }
 
 async function openModule(moduleKey) {
+  if (moduleKey !== "dashboard") _clearDashboardTimers();
   state.activeModule = moduleKey;
   state.expandedModule = moduleKey;
 
@@ -6465,7 +7323,8 @@ async function openModule(moduleKey) {
 
   const hideWorkspaceHeader =
     moduleKey === "gestion_personal" ||
-    moduleKey === "cobertura_calculadora";
+    moduleKey === "cobertura_calculadora" ||
+    moduleKey === "dashboard";
     
   if (elements.workspace) {
     elements.workspace.innerHTML = hideWorkspaceHeader
@@ -6737,6 +7596,7 @@ async function renderDashboard(user, access) {
 }
 
 function resetDashboard() {
+  _clearDashboardTimers();
   state.currentUser = null;
   state.access = null;
   state.activeModule = null;
@@ -7600,7 +8460,7 @@ function openExportPersonnelModal(rows) {
         </div>` : ""}
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="doExportPersonnel">Exportar CSV</button>
+        <button type="button" class="btn btn-primary" id="doExportPersonnel">Exportar Excel</button>
         <button type="button" class="btn btn-secondary" id="closeExportModal2">Cancelar</button>
       </div>
     </div>
@@ -7626,36 +8486,19 @@ function openExportPersonnelModal(rows) {
     }
 
     const colDefs = EXPORT_COLS.filter(c => selected.includes(c.key));
-    const header = colDefs.map(c => `"${c.label}"`).join(",");
+    const headers = colDefs.map(c => c.label);
 
-    const csvRows = exportRows.map(r => {
-      return colDefs.map(c => {
-        let val = "";
-        if (c.key === "fullName") {
-          val = getPersonnelFullName(r);
-        } else if (c.key === "municipality") {
-          val = getPersonnelMunicipality(r);
-        } else if (c.key === "documentNumber") {
-          val = getPersonnelDocument(r);
-        } else if (c.key === "status") {
-          val = getPersonnelWorkStatus(r);
-        } else {
-          val = r[c.key] || r[c.key.replace(/([A-Z])/g, "_$1").toLowerCase()] || "";
-        }
-        return `"${String(val || "").replace(/"/g, '""')}"`;
-      }).join(",");
-    });
+    const dataRows = exportRows.map(r => colDefs.map(c => {
+      if (c.key === "fullName")       return getPersonnelFullName(r);
+      if (c.key === "municipality")   return getPersonnelMunicipality(r);
+      if (c.key === "documentNumber") return getPersonnelDocument(r);
+      if (c.key === "status")         return getPersonnelWorkStatus(r);
+      return r[c.key] || r[c.key.replace(/([A-Z])/g, "_$1").toLowerCase()] || "";
+    }));
 
-    const csv = [header, ...csvRows].join("\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `personal_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportToExcel(headers, dataRows, `personal_${new Date().toISOString().slice(0,10)}`);
     close();
-    showSuccess(`${exportRows.length} registros exportados`);
+    showSuccess(`${exportRows.length} registros exportados a Excel`);
   });
 }
 
@@ -7684,7 +8527,7 @@ function openImportPersonnelModal() {
             <li>Guarda el archivo y súbelo aquí.</li>
           </ol>
         </div>
-        <button type="button" id="btnDownloadTemplate" class="btn btn-secondary" style="width:100%;margin-bottom:1rem">⬇ Descargar plantilla Excel</button>
+        <button type="button" id="btnDownloadTemplate" class="btn btn-secondary" style="width:100%;margin-bottom:1rem">⬇ Descargar plantilla (.xls)</button>
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:.4rem">Subir archivo Excel:</label>
         <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;font-size:13px" />
         <p id="importResult" style="margin-top:.8rem;font-size:13px"></p>
@@ -7703,28 +8546,21 @@ function openImportPersonnelModal() {
   modal.addEventListener("click", e => { if (e.target === modal) close(); });
 
   document.getElementById("btnDownloadTemplate").addEventListener("click", () => {
-    const headers = [
+    const templateHeaders = [
       "primer_nombre","segundo_nombre","primer_apellido","segundo_apellido",
       "tipo_documento","numero_documento",
       "estado","cargo_real","municipio",
       "eps","fondo_de_pensiones",
       "tipo_contrato","fecha_inicio","celular","correo"
     ];
-    const example = [
+    const exampleRow = [
       "JUAN","CARLOS","PEREZ","GARCIA",
       "CC","12345678",
       "ACTIVO","OPERARIO MANIPULADOR DE ALIMENTOS","Acacías",
       "COMPENSAR","COLPENSIONES",
       "Indefinido","2024-01-01","3101234567","juan@email.com"
     ];
-    const csvContent = "﻿" + headers.join(",") + "\n" + example.map(v => `"${v}"`).join(",");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "plantilla_importacion_personal.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    exportToExcel(templateHeaders, [exampleRow], "plantilla_importacion_personal");
   });
 
   document.getElementById("doImportPersonnel").addEventListener("click", async () => {

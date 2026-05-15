@@ -36,9 +36,9 @@ function parseResourceFromRequest(url) {
 
 function getDefaultResourceForUser(user, req) {
   return {
-    tenantId: getTenantIdFromRequest(req, user),
-    companyId: user?.companyId ?? null,
-    contractId: user?.contractId ?? null,
+    tenantId:   getTenantIdFromRequest(req, user),
+    companyId:  user?.companyId  ?? user?.company_id  ?? null,
+    contractId: user?.contractId ?? user?.contract_id ?? null,
     municipality:
       Array.isArray(user?.assignedMunicipalities) &&
       user.assignedMunicipalities.length
@@ -47,11 +47,29 @@ function getDefaultResourceForUser(user, req) {
   };
 }
 
-function mergeResource(userResource, requestResource) {
+// Returns true for non-admin users that have no company/contract assigned (demo users).
+function isDemoUser(user) {
+  const role       = (user?.role || "").toLowerCase();
+  const companyId  = user?.companyId  ?? user?.company_id  ?? null;
+  const contractId = user?.contractId ?? user?.contract_id ?? null;
+  return role !== "administrador" && !companyId && !contractId;
+}
+
+function mergeResource(userResource, requestResource, user) {
+  // For users bound to a specific company/contract, ignore URL params for those fields.
+  // This prevents contract-scoped users from querying other companies via query string.
+  if (userResource.companyId || userResource.contractId) {
+    return {
+      tenantId:     requestResource.tenantId ?? userResource.tenantId,
+      companyId:    userResource.companyId,
+      contractId:   userResource.contractId,
+      municipality: requestResource.municipality ?? userResource.municipality,
+    };
+  }
   return {
-    tenantId: requestResource.tenantId ?? userResource.tenantId,
-    companyId: requestResource.companyId ?? userResource.companyId,
-    contractId: requestResource.contractId ?? userResource.contractId,
+    tenantId:     requestResource.tenantId ?? userResource.tenantId,
+    companyId:    requestResource.companyId ?? userResource.companyId,
+    contractId:   requestResource.contractId ?? userResource.contractId,
     municipality: requestResource.municipality ?? userResource.municipality,
   };
 }
@@ -68,7 +86,7 @@ function withModuleProtection(moduleKey, action, handler) {
       const user = auth.user;
       const defaultResource = getDefaultResourceForUser(user, req);
       const requestResource = parseResourceFromRequest(url);
-      const resource = mergeResource(defaultResource, requestResource);
+      const resource = mergeResource(defaultResource, requestResource, user);
 
       const access = evaluateModuleAccess(user, moduleKey, action, resource);
 
@@ -96,4 +114,5 @@ module.exports = {
   withModuleProtection,
   getDefaultResourceForUser,
   parseResourceFromRequest,
+  isDemoUser,
 };

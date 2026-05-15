@@ -13,9 +13,17 @@ const { handleDashboardRoutes } = require("./modules/dashboard/dashboard.routes"
 const { handleTrainingsRoutes } = require("./modules/trainings/trainings.routes");
 const { handleReportsRoutes } = require("./modules/reports/reports.routes");
 const { handleRequirementRoutes } = require("./modules/requirements/requirements.routes");
+const { handleCoverageRoutes } = require("./modules/coverage/coverage.routes");
+const { handlePayrollRoutes } = require("./modules/payroll/payroll.routes");
+const { handleEmployeeRequestsRoutes } = require("./modules/requests/requests.routes");
+const { handleEducationRoutes } = require("./modules/education/education.routes");
+const { handleNovedades } = require("./modules/novedades/novedades.controller");
+const { handleCalculatorRoutes } = require("./modules/calculator/calculator.routes");
+const { handleModuleConfigRoutes } = require("./modules/config/module_config.routes");
 
 const { requireAuth } = require("./modules/auth/auth.helpers");
 const { handleSaveDraft } = require("./modules/employees/drafts.controller");
+const { getDraftsByEmployee } = require("./modules/employees/drafts.repository");
 
 const { withModuleProtection } = require("./http/protection");
 const { readJsonBody } = require("./http/request");
@@ -43,11 +51,8 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
+  ".pdf": "application/pdf",
 };
-
-const { handleEducationRoutes } = require("./modules/education/education.routes");
-const { handleGetDrafts } = require("./modules/employees/drafts.controller");
-const { getDraftsByEmployee } = require("./modules/employees/drafts.repository");
 
 function getContentType(filePath) {
   const extension = path.extname(filePath).toLowerCase();
@@ -64,7 +69,7 @@ function serveStaticFileByPath(res, filePath) {
     "Content-Type": getContentType(filePath),
   });
 
-  res.end(fs.readFileSync(filePath));
+  fs.createReadStream(filePath).pipe(res);
 }
 
 function tryServePublicAsset(req, res, url) {
@@ -99,6 +104,47 @@ function tryServePublicAsset(req, res, url) {
   }
 
   return false;
+}
+
+function tryServeUploadedDocument(req, res, url) {
+  if (req.method !== "GET") {
+    return false;
+  }
+
+  const UPLOAD_DIRS = {
+    "/uploads/documents/": path.resolve(process.cwd(), "uploads", "documents"),
+    "/uploads/novedades/":  path.resolve(process.cwd(), "uploads", "novedades"),
+  };
+
+  const matchedPrefix = Object.keys(UPLOAD_DIRS).find(p => url.pathname.startsWith(p));
+  if (!matchedPrefix) return false;
+
+  const uploadsRoot = UPLOAD_DIRS[matchedPrefix];
+  const requestedFile = decodeURIComponent(url.pathname.replace(matchedPrefix, ""));
+  const safeFileName  = path.basename(requestedFile);
+  const filePath      = path.resolve(uploadsRoot, safeFileName);
+
+  if (!filePath.startsWith(uploadsRoot)) {
+    sendNotFound(res);
+    return true;
+  }
+
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    sendNotFound(res);
+    return true;
+  }
+
+  const ext = path.extname(safeFileName).toLowerCase();
+  const mimeMap = { ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp" };
+  const contentType = mimeMap[ext] || "application/octet-stream";
+
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Disposition": `inline; filename="${safeFileName}"`,
+  });
+
+  fs.createReadStream(filePath).pipe(res);
+  return true;
 }
 
 function handleModules(req, res) {
@@ -162,7 +208,7 @@ async function handleAccessCheck(req, res, url) {
     if (!moduleKey) {
       sendJson(res, 400, {
         ok: false,
-        message: "Debes enviar el nombre del modulo",
+        message: "Debes enviar el nombre del módulo",
       });
       return;
     }
@@ -192,21 +238,21 @@ const protectedModuleRoutes = [
     path: "/documents",
     moduleKey: MODULES.EMPLOYEE_FILES,
     action: ACTIONS.VIEW,
-    label: "Modulo de gestion documental disponible para este usuario",
+    label: "Módulo de gestión documental disponible para este usuario",
   },
   {
     method: "GET",
     path: "/coverage",
     moduleKey: MODULES.COVERAGE,
     action: ACTIONS.VIEW,
-    label: "Modulo de cobertura disponible para este usuario",
+    label: "Módulo de cobertura disponible para este usuario",
   },
   {
     method: "POST",
     path: "/payroll-changes",
     moduleKey: MODULES.PAYROLL,
     action: ACTIONS.REGISTER,
-    label: "Registro de novedades de nomina permitido para este usuario",
+    label: "Registro de novedades de nómina permitido para este usuario",
   },
 ];
 
@@ -215,6 +261,10 @@ async function requestHandler(req, res) {
   const url = new URL(req.url, baseUrl);
 
   if (tryServePublicAsset(req, res, url)) {
+    return;
+  }
+
+  if (tryServeUploadedDocument(req, res, url)) {
     return;
   }
 
@@ -227,7 +277,6 @@ async function requestHandler(req, res) {
   const educationHandled = await handleEducationRoutes(req, res, url);
   if (educationHandled) return;
 
-  // GUARDAR BORRADOR DE SECCIÓN
   if (req.method === "POST" && url.pathname === "/employee-drafts") {
     await withModuleProtection(
       MODULES.PERSONNEL,
@@ -240,12 +289,11 @@ async function requestHandler(req, res) {
     return;
   }
 
-  // CONSULTAR BORRADORES POR EMPLEADO
   if (req.method === "GET" && url.pathname.startsWith("/employee-drafts/")) {
     await withModuleProtection(
       MODULES.PERSONNEL,
       ACTIONS.VIEW,
-      async (innerReq, innerRes, innerUrl, user) => {
+      async (innerReq, innerRes, innerUrl) => {
         const employeeId = innerUrl.pathname.split("/")[2];
         const drafts = await getDraftsByEmployee(employeeId);
 
@@ -261,6 +309,26 @@ async function requestHandler(req, res) {
 
   const requirementsHandled = await handleRequirementRoutes(req, res, url);
   if (requirementsHandled) return;
+
+  const coverageHandled = await handleCoverageRoutes(req, res, url);
+  if (coverageHandled) return;
+
+  if (url.pathname.startsWith("/novedades")) {
+    await handleNovedades(req, res, url);
+    return;
+  }
+
+  const payrollHandled = await handlePayrollRoutes(req, res, url);
+  if (payrollHandled) return;
+
+  const employeeRequestsHandled = await handleEmployeeRequestsRoutes(req, res, url);
+  if (employeeRequestsHandled) return;
+
+  const calculatorHandled = await handleCalculatorRoutes(req, res, url);
+  if (calculatorHandled) return;
+
+  const moduleConfigHandled = await handleModuleConfigRoutes(req, res, url);
+  if (moduleConfigHandled) return;
 
   const employeesHandled = await handleEmployeesRoutes(req, res, url);
   if (employeesHandled) return;
@@ -336,6 +404,7 @@ function createServer() {
 
 module.exports = {
   createServer,
+  requestHandler,
 };
 
 const PORT = process.env.PORT || 3000;

@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
     rel="stylesheet"
   />
 
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=4" />
 </head>
 <body>
   <div class="bg-blur blur-a"></div>
@@ -90,76 +90,170 @@
 
     <!-- APP -->
     <section id="dashboard" class="dashboard hidden">
-      <!-- SIDEBAR -->
-      <aside class="sidebar">
-        <div class="sidebar-brand">
-          <div class="brand-logo small">
-            <img src="/logo-e.png" class="logo-sidebar" alt="E de Empiria" />
+
+      <!-- TOPBAR — span completo fila 1 -->
+      <header class="topbar-pro">
+          <!-- LEFT: toggle + brand mark -->
+          <div class="tb-left">
+            <button class="tb-ham" id="sidebarToggle" aria-label="Menú">
+              <span></span><span></span><span></span>
+            </button>
+            <div class="tb-brand-mark">
+              <img src="/logoempiria.png" class="tb-brand-img" alt="Empiria" />
+              <div class="tb-brand-text">
+                <span class="tb-brand-name">EMPIRIA</span>
+                <span class="tb-brand-sub">Gestión Integral de Talento Humano</span>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <p class="brand-title">EMPIRIA</p>
-            <p class="brand-subtitle">Gestión integral</p>
+          <!-- CENTER: context chips -->
+          <div class="tb-context" id="tbContext">
+            <div class="tb-module-head">
+              <div class="tb-module-copy">
+                <span class="tb-chip-lbl">Módulo abierto</span>
+                <strong id="topModuleName" class="tb-module-title">Inicio</strong>
+                <span id="topModuleBreadcrumb" class="tb-module-breadcrumb">Inicio</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: search + actions + user -->
+          <div class="tb-right">
+            <div id="tbPayrollControls" class="tb-payroll-controls hidden"></div>
+
+            <button class="tb-search-trigger" id="globalSearchTrigger" aria-label="Buscar (Ctrl+K)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Buscar...</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+
+            <div class="tb-actions-group">
+              <!-- Campanita: Alertas -->
+              <div class="tb-dd-wrap" id="notifWrap">
+                <button class="tb-icon-btn" id="notifBtn" aria-label="Notificaciones">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  <span class="tb-notif-badge hidden" id="notifBadge">0</span>
+                </button>
+                <div class="tb-dropdown tb-notif-dd" id="notifDropdown">
+                  <div class="tb-dd-head">
+                    <strong>Alertas</strong>
+                    <span class="ck-panel-badge ck-badge-gray" id="tb-alert-count">—</span>
+                  </div>
+                  <div id="tb-alerts-list" class="tb-notif-list">
+                    <div class="tb-dd-empty"><p>Cargando…</p></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Reloj: Actividad reciente -->
+              <div class="tb-dd-wrap" id="activityWrap">
+                <button class="tb-icon-btn" id="activityBtn" aria-label="Actividad reciente">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </button>
+                <div class="tb-dropdown tb-activity-dd" id="activityDropdown">
+                  <div class="tb-dd-head"><strong>Actividad Reciente</strong></div>
+                  <div id="tb-activity-list" class="tb-notif-list">
+                    <div class="tb-dd-empty"><p>Cargando…</p></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tb-dd-wrap" id="qaWrap">
+                <button class="tb-icon-btn tb-icon-primary" id="quickActionsBtn" aria-label="Acciones rápidas" title="Nuevo">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <div class="tb-dropdown" id="qaDropdown">
+                  <div class="tb-dd-head"><strong>Acciones rápidas</strong></div>
+                  <button class="tb-qa-item" id="qaNuevoEmpleado" type="button">
+                    <span class="tb-qa-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></span>
+                    <div><strong>Nuevo empleado</strong><p>Gestión del personal</p></div>
+                  </button>
+                  <button class="tb-qa-item" id="qaRegistrarNovedad" type="button">
+                    <span class="tb-qa-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></span>
+                    <div><strong>Registrar novedad</strong><p>Nómina y novedades</p></div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="tb-dd-wrap" id="userMenuWrap">
+              <button class="tb-user-pill" id="userProfileBtn">
+                <span class="tb-avatar" id="userAvatar">U</span>
+                <div class="tb-user-pill-info">
+                  <span id="topUser" class="tb-pill-name">-</span>
+                </div>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="tb-dropdown tb-user-dd" id="userDropdown">
+                <div class="tb-dd-user-head">
+                  <span class="tb-avatar-lg" id="userAvatarLg">U</span>
+                  <div>
+                    <strong id="userDropName">Usuario</strong>
+                    <p id="userDropRole" class="tb-dd-role">-</p>
+                  </div>
+                </div>
+                <div class="tb-dd-div"></div>
+                <button class="tb-dd-item" id="ddMiPerfil" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  Mi perfil
+                </button>
+                <button class="tb-dd-item" id="ddSeguridad" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Seguridad / MFA
+                </button>
+                <div class="tb-dd-div"></div>
+                <button class="tb-dd-item tb-dd-danger" id="tbLogoutBtn" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+      <!-- SIDEBAR -->
+      <aside class="sidebar" id="sidebarEl">
+        <div class="sidebar-brand">
+          <img src="/logoempiria.png" class="sb-logo-only" alt="Empiria" />
+          <div class="sb-brand-copy">
+            <strong class="sb-brand-title">EMPIRIA</strong>
+            <span class="sb-brand-subtitle">PAE &amp; Talento Humano</span>
           </div>
         </div>
 
-        <div class="sidebar-user">
-          <p class="sidebar-label">Usuario</p>
-          <strong id="welcomeName">Usuario</strong>
-          <span id="welcomeRole" class="soft"></span>
+        <div class="sb-user-info">
+          <div class="sb-user-avatar" id="sidebarAvatar">U</div>
+          <div class="sb-user-details">
+            <strong id="welcomeName">Cargando...</strong>
+            <span id="welcomeRole" class="sb-user-role"></span>
+          </div>
         </div>
 
         <nav id="moduleNav" class="sidebar-nav"></nav>
 
+        <div class="sb-context-card" id="sidebarContextCard">
+          <span class="sb-context-eyebrow">Empresa activa</span>
+          <div class="sb-context-primary">
+            <strong id="sbCompany">-</strong>
+            <span id="sbContract">-</span>
+          </div>
+          <div class="sb-context-item">
+            <span class="sb-context-label">Municipios a cargo</span>
+            <strong id="sbMunicipality">Sin restricción</strong>
+          </div>
+        </div>
+
         <div class="sidebar-footer">
-          <button id="logoutButton" class="btn btn-secondary btn-full" type="button">
-            Cerrar sesión
+          <button id="logoutButton" class="sb-logout-btn" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span class="sb-logout-text">Cerrar sesión</span>
           </button>
         </div>
       </aside>
 
       <!-- PANEL PRINCIPAL -->
       <section class="main-panel">
-        <!-- TOPBAR -->
-        <header class="topbar-pro">
-          <div class="topbar-center topbar-inline">
-            <div class="topbar-item topbar-item-company">
-              <span>Empresa:</span>
-              <strong id="topCompany" title="-">-</strong>
-            </div>
-
-            <div class="topbar-separator" aria-hidden="true">|</div>
-
-            <div class="topbar-item topbar-item-contract">
-              <span>Contrato:</span>
-              <strong id="topContract" title="-">-</strong>
-            </div>
-
-            <div class="topbar-separator" aria-hidden="true">|</div>
-
-            <div class="topbar-item topbar-item-municipality">
-              <span>Municipios:</span>
-              <strong id="topMunicipality" title="Sin restricción">Sin restricción</strong>
-            </div>
-          </div>
-
-          <div class="topbar-actions">
-            <input
-              class="search"
-              type="text"
-              placeholder="Buscar personal, documentos..."
-              aria-label="Buscar"
-            />
-
-            <div class="notif" aria-hidden="true">🔔</div>
-
-            <div class="user-menu" title="Usuario actual">
-              <span>Usuario:</span>
-              <strong id="topUser">-</strong>
-            </div>
-          </div>
-        </header>
-
         <!-- RESUMEN -->
         <section class="summary-grid hidden" aria-hidden="true"></section>
 
@@ -361,6 +455,28 @@
     </section>
   </main>
 
-  <script src="/app.js"></script>
+  <!-- GLOBAL SEARCH OVERLAY -->
+  <div class="gs-overlay hidden" id="globalSearch">
+    <div class="gs-backdrop" id="gsBackdrop"></div>
+    <div class="gs-modal">
+      <div class="gs-input-row">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.3"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="gs-input" id="gsInput" placeholder="Buscar módulos, empleados, contratos..." autocomplete="off" spellcheck="false" />
+        <kbd class="gs-esc-kbd">ESC</kbd>
+      </div>
+      <div class="gs-body" id="gsResults">
+        <div class="gs-empty-state">
+          <p class="gs-hint">Busca módulos del sistema, empleados por nombre o cédula...</p>
+          <div class="gs-shortcuts">
+            <span><kbd>↑</kbd><kbd>↓</kbd> Navegar</span>
+            <span><kbd>↵</kbd> Abrir</span>
+            <span><kbd>ESC</kbd> Cerrar</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
 </body>
 </html>

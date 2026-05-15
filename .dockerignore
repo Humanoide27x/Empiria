@@ -1,0 +1,30 @@
+node_modules
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+
+# Datos locales que no van a producción
+uploads/
+backups/
+data/*.json
+data/*.backup.json
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Dev tooling
+*.md
+!README.md
+.claude/
+replace_dashboard.js
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Dump de DB local (nunca al contenedor)
+empiria_db.sql
+*.sql.gz

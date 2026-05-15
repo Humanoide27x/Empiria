@@ -1,5 +1,45 @@
 const { createSession, removeSession } = require("../../auth/tokens");
 const { describeUserAccess } = require("../../auth/access");
+const pool = require("../../db/pool");
+
+// Modules only the global admin can see (users with no contractId/companyId)
+const GLOBAL_ADMIN_ONLY = new Set(["administracion_configuraciones"]);
+
+// Modules whose visibility can be toggled per-contract in the config panel
+const CONFIGURABLE_MODULES = new Set([
+  "gestion_personal",
+  "nomina_novedades",
+  "cobertura_calculadora",
+  "calculadora_personal",
+]);
+
+async function applyContractModules(access, user) {
+  const contractId = user?.contractId ?? user?.contract_id ?? null;
+  if (!contractId) return access;
+
+  // Strip modules that are exclusively for the global admin
+  let modules = access.modules.filter((m) => !GLOBAL_ADMIN_ONLY.has(m.module));
+
+  try {
+    const result = await pool.query(
+      "SELECT modules FROM contract_settings WHERE contract_id = $1 LIMIT 1",
+      [contractId]
+    );
+    const contractModules = result.rows[0]?.modules;
+    if (contractModules && typeof contractModules === "object") {
+      modules = modules.filter((m) => {
+        if (CONFIGURABLE_MODULES.has(m.module)) {
+          return contractModules[m.module] !== false;
+        }
+        return true;
+      });
+    }
+  } catch {
+    // fall back — global-admin-only modules are still stripped
+  }
+
+  return { ...access, modules };
+}
 
 const {
   enableMfaForUser,
@@ -213,12 +253,14 @@ async function handleLogin(req, res) {
       userAgent,
     });
 
+    const access = await applyContractModules(describeUserAccess(user), user);
+
     sendJson(res, 200, {
       ok: true,
       message: "Inicio de sesion exitoso",
       token,
       user: sanitizeUser(user),
-      access: describeUserAccess(user),
+      access,
     });
   } catch (error) {
     console.error("Error en login:", error);
@@ -254,7 +296,7 @@ function handleLogout(req, res) {
   });
 }
 
-function handleMe(req, res) {
+async function handleMe(req, res) {
   if (req.method !== "GET") {
     sendMethodNotAllowed(res);
     return;
@@ -266,10 +308,12 @@ function handleMe(req, res) {
     return;
   }
 
+  const access = await applyContractModules(describeUserAccess(auth.user), auth.user);
+
   sendJson(res, 200, {
     ok: true,
     user: sanitizeUser(auth.user),
-    access: describeUserAccess(auth.user),
+    access,
   });
 }
 

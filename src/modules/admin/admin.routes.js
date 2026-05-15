@@ -5,7 +5,25 @@ const {
   handleAccessLogs,
 } = require("./admin.controller");
 
+const { handlePositionRoutes } = require("./positions/positions.routes");
+const { handleClientsRoutes }  = require("../config/clients/clients.routes");
+
 async function handleAdminRoutes(req, res, url) {
+  // Configuración → Clientes / Contratos / Cargos / Documentos
+  if (url.pathname.startsWith("/config/")) {
+    const handled = await handleClientsRoutes(req, res, url);
+    if (handled) return true;
+  }
+
+  // Positions module
+  if (url.pathname.startsWith("/admin/positions") ||
+      url.pathname.startsWith("/admin/position-payroll-values") ||
+      url.pathname.startsWith("/admin/position-document-requirements") ||
+      url.pathname === "/admin/document-types") {
+    const handled = await handlePositionRoutes(req, res, url);
+    if (handled) return true;
+  }
+
   if (url.pathname === "/admin/reset-mfa") {
     handleAdminResetMfa(req, res);
     return true;

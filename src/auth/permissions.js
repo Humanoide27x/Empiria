@@ -23,6 +23,8 @@ const MODULES = Object.freeze({
   REPORTS: "informes_reportes",
   EMPLOYEE_REQUESTS: "solicitudes_empleados",
   ADMIN_SETTINGS: "administracion_configuraciones",
+  CALCULATOR: "calculadora_personal",
+  PERSONNEL_CALCULATOR: "calculadora_personal",
 });
 
 const ACTIONS = Object.freeze({
@@ -197,6 +199,15 @@ const ADMIN_SETTINGS_PERMISSIONS = Object.freeze({
   ]),
 });
 
+const CALCULATOR_PERMISSIONS = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE],
+  features: Object.freeze([
+    "calcular_personal_caa",
+    "calcular_personal_caares",
+    "calcular_personal_ri",
+  ]),
+});
+
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMINISTRATOR]: {
     scope: SCOPE_RULES.ALL,
@@ -225,6 +236,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.REPORTS]: REPORTS_PERMISSIONS,
       [MODULES.EMPLOYEE_REQUESTS]: EMPLOYEE_REQUESTS_PERMISSIONS,
       [MODULES.ADMIN_SETTINGS]: ADMIN_SETTINGS_PERMISSIONS,
+      [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
     },
   },
 
@@ -273,6 +285,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       },
 
       [MODULES.EMPLOYEE_REQUESTS]: EMPLOYEE_REQUESTS_PERMISSIONS,
+      [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
     },
   },
 
@@ -314,6 +327,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "cambio_personal_pdf_hoja_vida",
         ]),
       },
+      [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
     },
   },
 
@@ -351,6 +365,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "indicadores",
         ]),
       },
+      [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
     },
   },
 
@@ -396,6 +411,7 @@ const ROLE_PERMISSIONS = Object.freeze({
           "trazabilidad_asistencia",
         ]),
       },
+      [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
     },
   },
 

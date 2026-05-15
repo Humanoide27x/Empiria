@@ -1,13 +1,16 @@
 const { sendJson } = require("../../http/response");
 const { readJsonBody } = require("../../http/request");
-const { withModuleProtection } = require("../../http/protection");
-const pool = require("../../db/pool");
+const { withModuleProtection, isDemoUser } = require("../../http/protection");
 
 const {
-  getPersonnel,
-  createPersonnel,
-  updatePersonnel,
-} = require("../../data/personnel");
+  getEmployees,
+  createEmployee,
+  updateEmployee,
+  updateEmployeePhoto,
+  importEmployeesFromExcel,
+} = require("../../db/employees.repository");
+
+const pool = require("../../db/pool");
 
 function toTitleCase(value) {
   return String(value || "")
@@ -18,24 +21,30 @@ function toTitleCase(value) {
 async function getEducationalCatalog() {
   const result = await pool.query(`
     SELECT
-      m.name AS municipality,
-      i.name AS institution,
-      s.name AS site,
-      sm.modality AS modality
+      TRIM(m.name) AS municipality,
+      TRIM(i.name) AS institution,
+      TRIM(s.name) AS site,
+      TRIM(sm.modality) AS modality
     FROM municipalities m
     JOIN institutions i ON i.municipality_id = m.id
     JOIN educational_sites s ON s.institution_id = i.id
     JOIN site_modalities sm ON sm.site_id = s.id
+    WHERE m.name IS NOT NULL
+      AND i.name IS NOT NULL
+      AND s.name IS NOT NULL
+      AND sm.modality IS NOT NULL
     ORDER BY m.name, i.name, s.name, sm.modality
   `);
 
   const catalog = {};
 
   for (const row of result.rows) {
-    const municipality = toTitleCase(row.municipality);
-    const institution = row.institution;
-    const site = row.site;
-    const modality = row.modality;
+    const municipality = String(row.municipality || "").trim();
+    const institution = String(row.institution || "").trim();
+    const site = String(row.site || "").trim();
+    const modality = String(row.modality || "").trim();
+
+    if (!municipality || !institution || !site || !modality) continue;
 
     if (!catalog[municipality]) catalog[municipality] = {};
     if (!catalog[municipality][institution]) catalog[municipality][institution] = {};
@@ -49,14 +58,87 @@ async function getEducationalCatalog() {
   return catalog;
 }
 
+async function handleContractPositions(req, res, contractId) {
+  const { requireAuth } = require("../auth/auth.helpers");
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const { rows } = await pool.query(
+    `SELECT positions FROM contract_settings WHERE contract_id = $1`,
+    [contractId]
+  );
+  const positions = Array.isArray(rows[0]?.positions) ? rows[0].positions : [];
+  sendJson(res, 200, { ok: true, positions });
+}
+
 function handlePersonnel(req, res) {
+  // ==============================
+  // IMPORTAR PERSONAL
+  // ==============================
+  if (req.method === "POST" && req.url === "/personnel/import") {
+    return withModuleProtection(
+      "gestion_personal",
+      "create",
+      async (req, res) => {
+        try {
+          const body = await readJsonBody(req);
+
+          if (!body.fileBase64) {
+            return sendJson(res, 400, {
+              ok: false,
+              message: "Debes enviar el archivo Excel.",
+            });
+          }
+
+          const result = await importEmployeesFromExcel({
+            fileBase64: body.fileBase64,
+            fileName: body.fileName || "personal.xlsx",
+            defaults: {
+              companyId: body.companyId,
+              contractId: body.contractId,
+            },
+          });
+
+          return sendJson(res, 200, {
+            ok: true,
+            data: result,
+            message: "Importación realizada correctamente",
+          });
+        } catch (error) {
+          return sendJson(res, 400, {
+            ok: false,
+            message: error.message || "Error importando personal",
+          });
+        }
+      }
+    )(req, res);
+  }
+
+  // ==============================
+  // GET PERSONAL
+  // ==============================
   if (req.method === "GET") {
     return withModuleProtection(
       "gestion_personal",
       "view",
-      async (req, res) => {
-        const data = await getPersonnel();
-        const educationalCatalog = await getEducationalCatalog();
+      async (req, res, url, user, resource) => {
+        if (isDemoUser(user)) {
+          return sendJson(res, 200, { data: [], educationalCatalog: {} });
+        }
+
+        const filters = {};
+        if (resource?.companyId) filters.companyId = resource.companyId;
+        if (resource?.contractId) filters.contractId = resource.contractId;
+        if (resource?.tenantId) filters.tenantId = resource.tenantId;
+
+        const data = await getEmployees(filters);
+
+        let educationalCatalog = {};
+        try {
+          educationalCatalog = await getEducationalCatalog();
+        } catch (error) {
+          console.error("ERROR CATALOGO EDUCATIVO:", error);
+        }
 
         return sendJson(res, 200, {
           data,
@@ -66,18 +148,66 @@ function handlePersonnel(req, res) {
     )(req, res);
   }
 
+  // ==============================
+  // CREAR
+  // ==============================
   if (req.method === "POST") {
     return withModuleProtection(
       "gestion_personal",
       "create",
-      async (req, res) => {
+      async (req, res, url, user, resource) => {
         const body = await readJsonBody(req);
-        const created = await createPersonnel(body);
+
+        if (!body.fullName && !(body.firstName || body.primer_nombre)) {
+          return sendJson(res, 400, {
+            ok: false,
+            message: "El nombre del empleado es obligatorio.",
+          });
+        }
+
+        if (!body.documentNumber && !body.numero_documento) {
+          return sendJson(res, 400, {
+            ok: false,
+            message: "El número de documento es obligatorio.",
+          });
+        }
+
+        // Inyectar companyId/contractId del contexto si no vienen en el body
+        if (!body.companyId && !body.company_id && resource?.companyId) {
+          body.companyId = resource.companyId;
+        }
+        if (!body.contractId && !body.contract_id && resource?.contractId) {
+          body.contractId = resource.contractId;
+        }
+
+        const created = await createEmployee(body);
         return sendJson(res, 201, { data: created });
       }
     )(req, res);
   }
 
+  // ==============================
+  // FOTO DE PERFIL
+  // ==============================
+  if (req.method === "PATCH" && req.url === "/personnel/photo") {
+    return withModuleProtection(
+      "gestion_personal",
+      "update",
+      async (req, res) => {
+        const body = await readJsonBody(req);
+        const { id, photoUrl } = body;
+        if (!id) return sendJson(res, 400, { ok: false, message: "ID requerido" });
+        if (!photoUrl) return sendJson(res, 400, { ok: false, message: "photoUrl requerida" });
+        const updated = await updateEmployeePhoto(id, photoUrl);
+        if (!updated) return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+        return sendJson(res, 200, { ok: true });
+      }
+    )(req, res);
+  }
+
+  // ==============================
+  // ACTUALIZAR
+  // ==============================
   if (req.method === "PUT") {
     return withModuleProtection(
       "gestion_personal",
@@ -93,7 +223,7 @@ function handlePersonnel(req, res) {
           });
         }
 
-        const updated = await updatePersonnel(id, body);
+        const updated = await updateEmployee(id, body);
 
         if (!updated) {
           return sendJson(res, 404, {
@@ -119,4 +249,5 @@ function handlePersonnel(req, res) {
 
 module.exports = {
   handlePersonnel,
+  handleContractPositions,
 };

@@ -1,314 +1,116 @@
-const crypto = require("crypto");
-const { ROLES, normalizeRole } = require("../auth/permissions");
-const { readCollection, writeCollection } = require("./store");
+/**
+ * src/data/users.js — Capa de compatibilidad con caché en memoria
+ *
+ * Mantiene la API SÍNCRONA original que necesitan auth.helpers.js y otros
+ * módulos legacy, pero carga y escribe los datos desde/hacia PostgreSQL.
+ *
+ * Patrón:
+ *  - Lee: sincrónico desde caché en RAM (refrescada cada 60 s desde PG)
+ *  - Escribe: async a PG e invalida la caché inmediatamente
+ */
 
-const USERS_FILE = "users.json";
-const COMPANIES_FILE = "companies.json";
-const CONTRACTS_FILE = "contracts.json";
+const repo = require("../db/users.repository");
 
-function safeString(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
+// ── Caché en memoria ──────────────────────────────────────────────────────────
 
-function normalizeUsername(value) {
-  return safeString(value).toLowerCase();
-}
+let _cache = [];            // array de usuarios normalizados
+let _lastRefresh = 0;       // timestamp del último refresh
+const REFRESH_INTERVAL = 60_000; // 60 segundos
 
-function normalizeMunicipalities(value) {
-  if (!Array.isArray(value)) {
-    return [];
+async function refreshCache() {
+  try {
+    const users = await repo.getUsers();
+    _cache = users;
+    _lastRefresh = Date.now();
+  } catch (err) {
+    console.error("[users.js] Error al refrescar caché de usuarios:", err.message);
   }
-
-  return value
-    .map((item) => safeString(item))
-    .filter(Boolean);
 }
 
-function hashPassword(password) {
-  return crypto.createHash("sha256").update(String(password)).digest("hex");
-}
+// Carga inicial al importar el módulo
+refreshCache();
+
+// Refresca cada 60 segundos
+setInterval(refreshCache, REFRESH_INTERVAL).unref();
+
+// ── API síncrona (para código legacy) ────────────────────────────────────────
 
 function getUsers() {
-  const users = readCollection(USERS_FILE);
-  return Array.isArray(users) ? users : [];
-}
-
-function saveUsers(users) {
-  return writeCollection(USERS_FILE, Array.isArray(users) ? users : []);
-}
-
-function getCompanies() {
-  const companies = readCollection(COMPANIES_FILE);
-  return Array.isArray(companies) ? companies : [];
-}
-
-function getContracts() {
-  const contracts = readCollection(CONTRACTS_FILE);
-  return Array.isArray(contracts) ? contracts : [];
-}
-
-function sanitizeUser(user) {
-  if (!user) {
-    return null;
-  }
-
-  const { passwordHash, mfaSecret, ...safeUser } = user;
-  return safeUser;
-}
-
-function findUserByCredentials(username, password) {
-  const normalizedUsername = normalizeUsername(username);
-  const passwordHash = hashPassword(password);
-
-  return (
-    getUsers().find(
-      (user) =>
-        normalizeUsername(user.username) === normalizedUsername &&
-        user.passwordHash === passwordHash
-    ) || null
-  );
+  return _cache;
 }
 
 function findUserById(userId) {
-  return (
-    getUsers().find((user) => Number(user.id) === Number(userId)) || null
-  );
+  return _cache.find((u) => Number(u.id) === Number(userId)) || null;
 }
 
 function findUserByUsername(username) {
-  const normalizedUsername = normalizeUsername(username);
+  const normalized = String(username || "").trim().toLowerCase();
+  return _cache.find((u) => String(u.username || "").toLowerCase() === normalized) || null;
+}
 
+function hashPassword(password) {
+  return repo.hashPassword(password);
+}
+
+function findUserByCredentials(username, password) {
+  const hash = hashPassword(password);
+  const normalized = String(username || "").trim().toLowerCase();
   return (
-    getUsers().find(
-      (user) => normalizeUsername(user.username) === normalizedUsername
+    _cache.find(
+      (u) =>
+        String(u.username || "").toLowerCase() === normalized &&
+        u.password_hash === hash &&
+        u.active !== false
     ) || null
   );
 }
 
-function getNextUserId(users) {
-  const ids = users
-    .map((user) => Number(user.id))
-    .filter((id) => Number.isFinite(id));
-
-  return ids.length ? Math.max(...ids) + 1 : 1;
+function sanitizeUser(user) {
+  return repo.sanitizeUser(user);
 }
 
-function validateRole(role) {
-  return Object.values(ROLES).includes(normalizeRole(role));
+function getCompanies() {
+  // Mantenido para compatibilidad — retorna vacío (usar companies.repository.js)
+  return [];
 }
 
-function createUser(payload) {
-  const users = getUsers();
-
-  const username = normalizeUsername(payload.username);
-  const password = String(payload.password || "");
-  const name = safeString(payload.name);
-  const role = normalizeRole(payload.role);
-
-  if (!username || !password || !name || !role) {
-    throw new Error("Faltan datos obligatorios del usuario");
-  }
-
-  if (findUserByUsername(username)) {
-    throw new Error("El nombre de usuario ya existe");
-  }
-
-  if (!validateRole(role)) {
-    throw new Error("El rol enviado no existe");
-  }
-
-  const newUser = {
-    id: getNextUserId(users),
-    username,
-    passwordHash: hashPassword(password),
-    name,
-    role,
-    companyId:
-      payload.companyId === "" || payload.companyId == null
-        ? null
-        : Number(payload.companyId),
-    contractId:
-      payload.contractId === "" || payload.contractId == null
-        ? null
-        : Number(payload.contractId),
-    assignedMunicipalities: normalizeMunicipalities(
-      payload.assignedMunicipalities
-    ),
-
-    mfaEnabled: false,
-    mfaSecret: null,
-    mfaConfirmedAt: null,
-  };
-
-  users.push(newUser);
-  saveUsers(users);
-
-  return sanitizeUser(newUser);
+function getContracts() {
+  // Mantenido para compatibilidad — retorna vacío (usar contracts.repository.js)
+  return [];
 }
 
-function updateUser(userId, payload) {
-  const users = getUsers();
-  const index = users.findIndex((user) => Number(user.id) === Number(userId));
+// ── API async (para código nuevo) ────────────────────────────────────────────
 
-  if (index === -1) {
-    throw new Error("Usuario no encontrado");
-  }
-
-  const nextUsername = Object.prototype.hasOwnProperty.call(payload, "username")
-    ? normalizeUsername(payload.username)
-    : users[index].username;
-
-  const nextRole = Object.prototype.hasOwnProperty.call(payload, "role")
-    ? normalizeRole(payload.role)
-    : users[index].role;
-
-  if (!validateRole(nextRole)) {
-    throw new Error("El rol enviado no existe");
-  }
-
-  const existingUser = findUserByUsername(nextUsername);
-
-  if (
-    nextUsername &&
-    existingUser &&
-    Number(existingUser.id) !== Number(users[index].id)
-  ) {
-    throw new Error("El nombre de usuario ya existe");
-  }
-
-  const updatedUser = {
-    ...users[index],
-    ...(Object.prototype.hasOwnProperty.call(payload, "username")
-      ? { username: nextUsername }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "name")
-      ? { name: safeString(payload.name) }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "role")
-      ? { role: nextRole }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "companyId")
-      ? {
-          companyId:
-            payload.companyId === "" || payload.companyId == null
-              ? null
-              : Number(payload.companyId),
-        }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "contractId")
-      ? {
-          contractId:
-            payload.contractId === "" || payload.contractId == null
-              ? null
-              : Number(payload.contractId),
-        }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "assignedMunicipalities")
-      ? {
-          assignedMunicipalities: normalizeMunicipalities(
-            payload.assignedMunicipalities
-          ),
-        }
-      : {}),
-    ...(payload.password
-      ? { passwordHash: hashPassword(payload.password) }
-      : {}),
-
-    ...(Object.prototype.hasOwnProperty.call(payload, "mfaEnabled")
-      ? { mfaEnabled: Boolean(payload.mfaEnabled) }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "mfaSecret")
-      ? { mfaSecret: payload.mfaSecret || null }
-      : {}),
-    ...(Object.prototype.hasOwnProperty.call(payload, "mfaConfirmedAt")
-      ? { mfaConfirmedAt: payload.mfaConfirmedAt || null }
-      : {}),
-  };
-
-  users[index] = updatedUser;
-  saveUsers(users);
-
-  return sanitizeUser(updatedUser);
+async function saveMfaSecret(userId, secret) {
+  await repo.saveMfaSecret(userId, secret);
+  await refreshCache();
 }
 
-function resetMfaForUser(userId) {
-  const users = getUsers();
-  const index = users.findIndex((user) => Number(user.id) === Number(userId));
-
-  if (index === -1) {
-    throw new Error("Usuario no encontrado");
-  }
-
-  users[index] = {
-    ...users[index],
-    mfaEnabled: false,
-    mfaSecret: null,
-    mfaConfirmedAt: null,
-  };
-
-  saveUsers(users);
-
-  return sanitizeUser(users[index]);
+async function enableMfaForUser(userId) {
+  await repo.enableMfaForUser(userId);
+  await refreshCache();
 }
 
-function saveMfaSecret(userId, secret) {
-  const users = getUsers();
-  const index = users.findIndex((user) => Number(user.id) === Number(userId));
-
-  if (index === -1) {
-    throw new Error("Usuario no encontrado");
-  }
-
-  users[index] = {
-    ...users[index],
-    mfaSecret: secret,
-    mfaEnabled: false,
-    mfaConfirmedAt: null,
-  };
-
-  saveUsers(users);
-  return sanitizeUser(users[index]);
+async function disableMfaForUser(userId) {
+  await repo.disableMfaForUser(userId);
+  await refreshCache();
 }
 
-function enableMfaForUser(userId) {
-  const users = getUsers();
-  const index = users.findIndex((user) => Number(user.id) === Number(userId));
-
-  if (index === -1) {
-    throw new Error("Usuario no encontrado");
-  }
-
-  if (!users[index].mfaSecret) {
-    throw new Error("Primero debes generar el secreto MFA");
-  }
-
-  users[index] = {
-    ...users[index],
-    mfaEnabled: true,
-    mfaConfirmedAt: new Date().toISOString(),
-  };
-
-  saveUsers(users);
-  return sanitizeUser(users[index]);
+async function resetMfaForUser(userId) {
+  await repo.resetMfaForUser(userId);
+  await refreshCache();
 }
 
-function disableMfaForUser(userId) {
-  const users = getUsers();
-  const index = users.findIndex((user) => Number(user.id) === Number(userId));
+async function createUser(payload) {
+  const user = await repo.createUser(payload);
+  await refreshCache();
+  return user;
+}
 
-  if (index === -1) {
-    throw new Error("Usuario no encontrado");
-  }
-
-  users[index] = {
-    ...users[index],
-    mfaEnabled: false,
-    mfaSecret: null,
-    mfaConfirmedAt: null,
-  };
-
-  saveUsers(users);
-  return sanitizeUser(users[index]);
+async function updateUser(userId, payload) {
+  const user = await repo.updateUser(userId, payload);
+  await refreshCache();
+  return user;
 }
 
 module.exports = {
@@ -321,9 +123,10 @@ module.exports = {
   getCompanies,
   getContracts,
   getUsers,
+  hashPassword,
   sanitizeUser,
   saveMfaSecret,
   updateUser,
   resetMfaForUser,
-  hashPassword,
+  refreshCache,        // exportado para uso en tests y admin
 };

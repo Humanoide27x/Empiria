@@ -1,4 +1,9 @@
 function readJsonBody(req) {
+  // When running under Express, body is already parsed by express.json()
+  if (req.body !== undefined && req.body !== null) {
+    return Promise.resolve(typeof req.body === "object" ? req.body : {});
+  }
+
   return new Promise((resolve, reject) => {
     let body = "";
 
