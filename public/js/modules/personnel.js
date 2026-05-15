@@ -2183,13 +2183,14 @@ function hydratePersonnelDraft(found) {
 
     educationalMunicipality:
       found.educationalMunicipality || found.educational_municipality ||
-      found.municipio_educativo     || found.municipio_institucional  || "",
-    institution:       found.institution        || found.institucion_educativa || "",
-    site:              found.site               || found.sede_educativa        || "",
-    educationalModality: found.educationalModality || found.modalidad          || "",
+      found.municipio_educativo     || found.municipio_institucional  ||
+      found.municipalityName        || found.municipality_name        || found.municipio || "",
+    institution:       found.institution || found.institutionName || found.institution_name || found.institucion_educativa || "",
+    site:              found.site        || found.siteName        || found.site_name        || found.sede_educativa        || "",
+    educationalModality: found.educationalModality || found.modality || found.modalidad || "",
 
     contractType: found.tipo_contrato || found.contractType || "",
-    workTimeType: found.workTimeType  || found.work_time_type || found.tipo_tiempo || "",
+    workTimeType: found.workTimeType  || found.work_time_type || found.workdayType || found.workday_type || found.tipo_tiempo || "",
 
     startDate:         found.fecha_inicio_real  || found.startDate         || "",
     coverageStartDate: found.coverageStartDate  || found.coverage_start_date || found.fecha_inicio_cobertura || "",
