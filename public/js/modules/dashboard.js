@@ -628,24 +628,18 @@ function normalizeLegacySummary(payload = {}) {
 }
 
 async function loadDashboardSummary() {
-  const params = new URLSearchParams();
-  if (_selectedMunicipalityId) params.set("municipality_id", _selectedMunicipalityId);
-  const url = `/dashboard/summary${params.toString() ? `?${params.toString()}` : ""}`;
+  const legacyParams = new URLSearchParams();
 
-  try {
-    const response = await apiFetch(url);
-    return response?.data || {};
-  } catch (error) {
-    if (error?.status !== 401 && error?.status !== 403 && error?.status !== 404) {
-      throw error;
-    }
-
-    const legacyParams = new URLSearchParams();
-    if (_selectedMunicipalityId) legacyParams.set("municipality", _selectedMunicipalityId);
-    const legacyUrl = `/dashboard-summary${legacyParams.toString() ? `?${legacyParams.toString()}` : ""}`;
-    const legacyResponse = await apiFetch(legacyUrl);
-    return normalizeLegacySummary(legacyResponse);
+  if (_selectedMunicipalityId) {
+    legacyParams.set("municipality", _selectedMunicipalityId);
   }
+
+  const legacyUrl = `/dashboard-summary${
+    legacyParams.toString() ? `?${legacyParams.toString()}` : ""
+  }`;
+
+  const legacyResponse = await apiFetch(legacyUrl);
+  return normalizeLegacySummary(legacyResponse);
 }
 
 async function renderDashboardWorkspace(showToast = false) {

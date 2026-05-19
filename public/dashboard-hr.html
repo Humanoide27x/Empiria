@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Operacional HR</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { height: 100%; overflow: hidden; }
+
+    body {
+      height: 100%;
+      /* Allow horizontal scroll on narrow viewports, never vertical */
+      overflow-x: auto;
+      overflow-y: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      background: #f5f5f3;
+      color: #1a1a1a;
+      line-height: 1.4;
+    }
+
+    /* ── App shell ────────────────────────────────────────────────────────────*/
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      min-width: 920px;
+      padding: 10px;
+      gap: 8px;
+    }
+
+    /* ── Row 1: Topbar ────────────────────────────────────────────────────────*/
+    #topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: white;
+      border: 0.5px solid rgba(0,0,0,0.1);
+      border-radius: 10px;
+      padding: 10px 14px;
+      flex-shrink: 0;
+    }
+    #topbar .title { font-size: 14px; font-weight: 600; flex: 1; white-space: nowrap; }
+    #topbar-mun    { font-size: 12px; color: #aaa; white-space: nowrap; }
+
+    #municipioSelect {
+      font-family: inherit; font-size: 12px;
+      padding: 5px 10px;
+      border: 0.5px solid rgba(0,0,0,0.2); border-radius: 6px;
+      background: white; color: #1a1a1a; cursor: pointer;
+      min-width: 210px; max-width: 280px;
+    }
+    #municipioSelect:focus { outline: none; border-color: #378ADD; }
+    #municipioSelect:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    #btnActualizar {
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      padding: 5px 14px;
+      background: #378ADD; color: white;
+      border: none; border-radius: 6px; cursor: pointer;
+      white-space: nowrap; display: flex; align-items: center; gap: 6px;
+      transition: background 0.15s;
+    }
+    #btnActualizar:hover   { background: #2c71c4; }
+    #btnActualizar:active  { background: #2260aa; }
+    #btnActualizar:disabled { opacity: 0.55; cursor: not-allowed; }
+    #btn-spin-icon { font-size: 14px; line-height: 1; }
+
+    @keyframes spinning { to { transform: rotate(360deg); } }
+    .spinning { display: inline-block !important; animation: spinning 0.8s linear infinite; }
+
+    /* ── Row 2: KPI grid ──────────────────────────────────────────────────────*/
+    #kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .kpi-card {
+      background: white; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 10px;
+      padding: 12px 14px; min-height: 84px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .kpi-label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #888; margin-bottom: 2px;
+    }
+    .kpi-value { font-size: 28px; font-weight: 700; line-height: 1.05; color: #1a1a1a; }
+    .kpi-sub   { font-size: 11px; font-weight: 500; margin-top: 4px; }
+    #kpi-footer {
+      grid-column: 1 / -1;
+      font-size: 10px; color: #ccc; text-align: right; padding: 0 4px; margin-top: -4px;
+    }
+
+    /* ── Row 3: flex:1 ────────────────────────────────────────────────────────*/
+    #row3 {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 8px; flex: 1; min-height: 0;
+    }
+
+    /* ── Row 4 ────────────────────────────────────────────────────────────────*/
+    #row4 {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 8px; height: 200px; flex-shrink: 0;
+    }
+
+    /* ── Card base ────────────────────────────────────────────────────────────*/
+    .card {
+      background: white; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 10px;
+      padding: 10px 12px; overflow: hidden;
+      display: flex; flex-direction: column; min-height: 0;
+    }
+    .card-title {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #888; margin-bottom: 8px; flex-shrink: 0;
+    }
+    .card-body { flex: 1; overflow: auto; min-height: 0; }
+    .card-body::-webkit-scrollbar { width: 4px; }
+    .card-body::-webkit-scrollbar-track { background: transparent; }
+    .card-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+    /* ── Semantic colours ─────────────────────────────────────────────────────*/
+    .c-verde    { color: #1D9E75; }
+    .c-amarillo { color: #EF9F27; }
+    .c-rojo     { color: #E24B4A; }
+    .c-azul     { color: #378ADD; }
+    .c-gray     { color: #aaa; }
+
+    /* ── Empty state ──────────────────────────────────────────────────────────*/
+    .empty-state {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; font-size: 12px; color: #bbb;
+    }
+
+    /* ── Gauge (col-estado) ───────────────────────────────────────────────────*/
+    .gauge-wrap {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; gap: 6px;
+    }
+    .gauge-svg    { display: block; }
+    .gauge-status { font-size: 13px; font-weight: 600; }
+    .gauge-legend {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      justify-content: center; font-size: 10px; color: #999; margin-top: 4px;
+    }
+    .gauge-legend span { display: flex; align-items: center; gap: 4px; }
+    .ldot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Cobertura ────────────────────────────────────────────────────────────*/
+    .cov-list { display: flex; flex-direction: column; gap: 7px; }
+    .cov-row  { display: flex; align-items: center; gap: 8px; }
+    .cov-name {
+      font-size: 11px; width: 100px; min-width: 100px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #444;
+    }
+    .cov-bar-wrap { flex: 1; height: 5px; background: #f0f0ee; border-radius: 3px; overflow: hidden; }
+    .cov-bar { height: 100%; border-radius: 3px; transition: width 0.5s ease; min-width: 2px; }
+    .cov-pct { font-size: 11px; font-weight: 600; width: 34px; text-align: right; flex-shrink: 0; }
+
+    .cov-single { text-align: center; padding: 8px 0; }
+    .cov-single-pct { font-size: 40px; font-weight: 700; line-height: 1; }
+    .cov-single-name { font-size: 11px; color: #888; margin-top: 4px; margin-bottom: 12px; }
+    .cov-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .cov-stat {
+      background: #f8f8f6; border-radius: 6px; padding: 7px 6px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    .cov-stat-val { font-size: 18px; font-weight: 700; }
+    .cov-stat-lbl { font-size: 10px; color: #888; }
+
+    /* ── Cumpleaños ───────────────────────────────────────────────────────────*/
+    .bday-list { display: flex; flex-direction: column; gap: 5px; }
+    .bday-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; border-radius: 6px;
+      background: #fafaf8; border-left: 3px solid transparent;
+    }
+    .bday-today { border-left-color: #378ADD; background: #f0f7ff; }
+    .bday-info  { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+    .bday-name  { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bday-cargo { font-size: 10px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bday-fecha { font-size: 12px; font-weight: 700; color: #378ADD; white-space: nowrap; margin-left: 10px; flex-shrink: 0; }
+
+    /* ── Género ───────────────────────────────────────────────────────────────*/
+    .gender-wrap {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 100%; padding: 4px 0; gap: 8px;
+    }
+    .gender-stat { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+    .gender-stat-left  { align-items: flex-start; }
+    .gender-stat-right { align-items: flex-end; }
+    .gender-stat .gs-pct  { font-size: 22px; font-weight: 500; line-height: 1; }
+    .gender-stat .gs-lbl  { font-size: 11px; color: #888; }
+    .gender-stat .gs-cnt  { font-size: 11px; color: #888; }
+
+    /* ── Área ─────────────────────────────────────────────────────────────────*/
+    .area-list { display: flex; flex-direction: column; gap: 8px; }
+    .area-row  { display: flex; align-items: center; gap: 8px; }
+    .area-name {
+      font-size: 11px; color: #888;
+      min-width: 80px; width: 80px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .area-bar-wrap { flex: 1; height: 4px; background: #f0f0ee; border-radius: 2px; overflow: hidden; }
+    .area-bar { height: 100%; border-radius: 2px; transition: width 0.5s ease; min-width: 2px; }
+    .area-pct { font-size: 11px; color: #444; min-width: 28px; text-align: right; flex-shrink: 0; }
+
+    /* ── Loader overlay ───────────────────────────────────────────────────────*/
+    #loader {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(245,245,243,0.82);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #loader.hidden { display: none; }
+    #loader::after {
+      content: ''; width: 30px; height: 30px;
+      border: 3px solid rgba(55,138,221,0.25); border-top-color: #378ADD;
+      border-radius: 50%; animation: spin 0.65s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Error overlay ────────────────────────────────────────────────────────*/
+    #error-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(245,245,243,0.88);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 14px;
+    }
+    #error-overlay.hidden { display: none; }
+    #error-msg { font-size: 13px; color: #E24B4A; max-width: 380px; text-align: center; }
+    #error-retry {
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      padding: 6px 18px; background: #E24B4A; color: white;
+      border: none; border-radius: 6px; cursor: pointer;
+    }
+    #error-retry:hover { background: #c93e3d; }
+
+    /* ── Skeleton shimmer ─────────────────────────────────────────────────────*/
+    @keyframes shimmer {
+      from { background-position: 200% 0; }
+      to   { background-position: -200% 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="app">
+
+    <!-- Row 1: Topbar -->
+    <header id="topbar">
+      <span class="title">Dashboard Operacional HR</span>
+      <span id="topbar-mun"></span>
+      <select id="municipioSelect" aria-label="Filtrar por municipio">
+        <option value="">Todos los municipios</option>
+      </select>
+      <button id="btnActualizar" type="button">
+        <span id="btn-spin-icon" aria-hidden="true">↻</span>Actualizar
+      </button>
+    </header>
+
+    <!-- Row 2: KPI cards -->
+    <section id="kpis" aria-label="Indicadores clave">
+      <div class="kpi-card" id="kpi-activos"></div>
+      <div class="kpi-card" id="kpi-tc"></div>
+      <div class="kpi-card" id="kpi-mt"></div>
+      <div class="kpi-card" id="kpi-tcpct"></div>
+      <p id="kpi-footer"></p>
+    </section>
+
+    <!-- Row 3: Estado | Cobertura | Cumpleaños -->
+    <section id="row3">
+      <div class="card" id="col-estado"></div>
+      <div class="card" id="col-cobertura"></div>
+      <div class="card" id="col-cumpleanos"></div>
+    </section>
+
+    <!-- Row 4: Género | Edad | Área -->
+    <section id="row4">
+      <div class="card" id="col-genero"></div>
+      <div class="card" id="col-edad"></div>
+      <div class="card" id="col-area"></div>
+    </section>
+
+  </div>
+
+  <div id="loader" aria-label="Cargando datos…"></div>
+  <div id="error-overlay" class="hidden">
+    <span id="error-msg"></span>
+    <button id="error-retry" type="button">Reintentar</button>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let currentMunicipioId = null;
+    let lastUpdate         = null;
+    let ageChartInst       = null;
+    let _toastEl           = null;
+
+    // ── DOM refs ──────────────────────────────────────────────────────────────
+    const $loader = document.getElementById('loader');
+    const $errBox = document.getElementById('error-overlay');
+    const $errMsg = document.getElementById('error-msg');
+    const $btn    = document.getElementById('btnActualizar');
+    const $sel    = document.getElementById('municipioSelect');
+    const $icon   = document.getElementById('btn-spin-icon');
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
+    function getToken() { return localStorage.getItem('empiria_token') || ''; }
+    function authHeaders() {
+      const h = { 'Content-Type': 'application/json' };
+      const t = getToken();
+      if (t) h['Authorization'] = `Bearer ${t}`;
+      return h;
+    }
+
+    // ── fetchData(municipioId) ────────────────────────────────────────────────
+    async function fetchData(municipioId = null) {
+      const headers    = authHeaders();
+      const summaryUrl = municipioId != null
+        ? `/dashboard/summary?municipality_id=${municipioId}`
+        : '/dashboard/summary';
+
+      const [sRes, kRes] = await Promise.all([
+        fetch(summaryUrl,        { headers }),
+        fetch('/dashboard/kpis', { headers }),
+      ]);
+
+      if (!sRes.ok) { const b = await sRes.json().catch(() => ({})); throw new Error(b.message || `Error ${sRes.status}`); }
+      if (!kRes.ok) { const b = await kRes.json().catch(() => ({})); throw new Error(b.message || `Error ${kRes.status}`); }
+
+      const [summary, kpis] = await Promise.all([sRes.json(), kRes.json()]);
+      if (!summary.ok) throw new Error(summary.message || 'Error en /dashboard/summary');
+      if (!kpis.ok)    throw new Error(kpis.message    || 'Error en /dashboard/kpis');
+      return { summary, kpis };
+    }
+
+    // ── normalizeData ─────────────────────────────────────────────────────────
+    function normalizeData({ summary, kpis }) {
+      const d = summary.data || {};
+      const k = kpis.data   || {};
+
+      const gMap = {};
+      (d.employeesByGender || []).forEach(g => { gMap[g.label] = Number(g.value || 0); });
+      const mN = gMap['Mujeres'] || 0;
+      const hN = gMap['Hombres'] || 0;
+      const gT = mN + hN;
+
+      const aMap = {};
+      (d.employeesByAgeRange || []).forEach(a => { aMap[a.label] = Number(a.value || 0); });
+
+      const areaRows  = d.employeesByArea || [];
+      const areaTotal = areaRows.reduce((s, a) => s + Number(a.value || 0), 0);
+
+      return {
+        activos:   d.activeEmployees     || 0,
+        tcReq:     d.requiredTc          || 0,
+        tcCont:    d.contractedTc        || 0,
+        mtReq:     d.requiredMt          || 0,
+        mtCont:    d.contractedMt        || 0,
+        tcReqPct:  d.required20PercentTc || 0,
+        operacion: d.coveragePercent     || 0,
+        cobertura: d.coveragePercent     || 0,
+        hombres: gT > 0 ? Math.round((hN / gT) * 100) : 0,
+        mujeres: gT > 0 ? Math.round((mN / gT) * 100) : 0,
+        hN, mN,
+        age: [
+          aMap['18-25'] || 0,
+          aMap['26-35'] || 0,
+          aMap['36-45'] || 0,
+          aMap['46-55'] || 0,
+          (aMap['56-60'] || 0) + (aMap['60+'] || 0),
+        ],
+        areas: areaRows.slice(0, 6).map(a => ({
+          label: a.label,
+          value: Number(a.value || 0),
+          pct:   areaTotal > 0 ? Math.round((Number(a.value || 0) / areaTotal) * 100) : 0,
+          color: a.color || '#888780',
+        })),
+        coverageByMunicipality: d.coverageByMunicipality || [],
+        cumpleanos: (d.birthdaysThisMonth || []).map(b => ({
+          nombre:    b.name,
+          cargo:     b.position    || 'Sin cargo',
+          fecha:     `${String(b.day).padStart(2, '0')}/${String(b.month).padStart(2, '0')}`,
+          municipio: b.municipality || '',
+        })),
+        municipiosList: k.municipalities_list || [],
+      };
+    }
+
+    // ── Skeleton ──────────────────────────────────────────────────────────────
+    const SKL = (w) => `<div style="height:14px;border-radius:4px;width:${w};background:linear-gradient(90deg,#eee 25%,#f5f5f5 50%,#eee 75%);background-size:200% 100%;animation:shimmer 1.2s infinite;margin-bottom:7px;"></div>`;
+
+    function showSkeletons() {
+      // Destroy chart before clearing its canvas from the DOM
+      if (ageChartInst) { ageChartInst.destroy(); ageChartInst = null; }
+
+      const kpiS = SKL('55%') + SKL('75%') + SKL('42%');
+      ['kpi-activos','kpi-tc','kpi-mt','kpi-tcpct'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = kpiS;
+      });
+
+      const colS = SKL('40%') + SKL('100%') + SKL('90%') + SKL('100%') + SKL('78%');
+      ['col-estado','col-cobertura','col-cumpleanos','col-genero','col-edad','col-area'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = colS;
+      });
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function fmtTime(d) {
+      if (!d) return '--:--';
+      return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    }
+    function covColor(pct) { return pct >= 85 ? '#1D9E75' : pct >= 60 ? '#EF9F27' : '#E24B4A'; }
+    function covClass(pct) { return pct >= 85 ? 'c-verde' : pct >= 60 ? 'c-amarillo' : 'c-rojo'; }
+
+    const AREA_COLORS = {
+      'tecnologia':       '#378ADD',
+      'operaciones':      '#534AB7',
+      'comercial':        '#D85A30',
+      'finanzas':         '#EF9F27',
+      'rec. humanos':     '#1D9E75',
+      'recursos humanos': '#1D9E75',
+      'rrhh':             '#1D9E75',
+      'otra':             '#888780',
+    };
+    function areaColor(label, fallback) {
+      const k = (label || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      return AREA_COLORS[k] || fallback || '#888780';
+    }
+
+    // ── Toast ─────────────────────────────────────────────────────────────────
+    function showToast(msg, tipo = 'error') {
+      const BG = { error: '#E24B4A', success: '#1D9E75', warning: '#EF9F27' };
+      if (_toastEl) { _toastEl.remove(); _toastEl = null; }
+
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'fixed', bottom: '20px', right: '20px', zIndex: '999',
+        background: BG[tipo] || BG.error, color: 'white',
+        padding: '10px 16px', borderRadius: '8px',
+        fontSize: '13px', fontFamily: 'system-ui,sans-serif',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+        opacity: '0', transition: 'opacity 0.2s ease',
+        pointerEvents: 'none', userSelect: 'none',
+      });
+      el.textContent = msg;
+      document.body.appendChild(el);
+      _toastEl = el;
+
+      requestAnimationFrame(() => { el.style.opacity = '1'; });
+      setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => { el.remove(); if (_toastEl === el) _toastEl = null; }, 220);
+      }, 3000);
+    }
+
+    // ── renderKPIs ────────────────────────────────────────────────────────────
+    function renderKPIs(data) {
+      // Card 1: Empleados activos
+      const vm = data.variacionMes;
+      const subA = vm != null
+        ? `<span class="kpi-sub ${vm > 0 ? 'c-verde' : vm < 0 ? 'c-rojo' : 'c-gray'}">${vm > 0 ? '+' : ''}${vm} vs mes anterior</span>`
+        : `<span class="kpi-sub c-gray">Actualizado hoy</span>`;
+      document.getElementById('kpi-activos').innerHTML =
+        `<div class="kpi-label">Empleados activos</div><div class="kpi-value">${data.activos.toLocaleString('es-CO')}</div>${subA}`;
+
+      // Card 2: TC
+      const dT = data.tcCont - data.tcReq;
+      const subT = (data.tcReq === 0 && data.tcCont === 0)
+        ? `<span class="kpi-sub c-gray">Sin datos</span>`
+        : dT === 0 ? `<span class="kpi-sub c-verde">✓ Completo</span>`
+        : dT < 0   ? `<span class="kpi-sub c-amarillo">Faltan ${-dT}</span>`
+                   : `<span class="kpi-sub c-rojo">Excede por ${dT}</span>`;
+      document.getElementById('kpi-tc').innerHTML =
+        `<div class="kpi-label">TC Req / Contratados</div><div class="kpi-value">${data.tcReq} / ${data.tcCont}</div>${subT}`;
+
+      // Card 3: MT
+      const dM = data.mtCont - data.mtReq;
+      const subM = (data.mtReq === 0 && data.mtCont === 0)
+        ? `<span class="kpi-sub c-gray">Sin datos</span>`
+        : dM === 0 ? `<span class="kpi-sub c-verde">✓ Completo</span>`
+        : dM < 0   ? `<span class="kpi-sub c-amarillo">Faltan ${-dM}</span>`
+                   : `<span class="kpi-sub c-rojo">Excede por ${dM}</span>`;
+      document.getElementById('kpi-mt').innerHTML =
+        `<div class="kpi-label">MT Req / Contratados</div><div class="kpi-value">${data.mtReq} / ${data.mtCont}</div>${subM}`;
+
+      // Card 4: tcReqPct%
+      document.getElementById('kpi-tcpct').innerHTML =
+        `<div class="kpi-label">${data.tcReqPct}% TC Req.</div><div class="kpi-value">${data.tcReq.toLocaleString('es-CO')}</div><span class="kpi-sub c-gray">Actualizado ${fmtTime(lastUpdate)}</span>`;
+
+      // Footer
+      const opt = $sel.options[$sel.selectedIndex];
+      const munNom = $sel.value ? (opt?.text || 'Municipio') : 'Todos los municipios';
+      document.getElementById('kpi-footer').textContent =
+        `Datos en tiempo real · Municipio: ${munNom}`;
+    }
+
+    // ── renderGauge ───────────────────────────────────────────────────────────
+    function renderGauge(data) {
+      const pct   = data.operacion || 0;
+      const r     = 44;
+      const circ  = 2 * Math.PI * r;
+      const color = covColor(pct);
+      const cls   = covClass(pct);
+      const label = pct >= 85 ? 'Operación estable' : pct >= 60 ? 'En alerta' : 'Estado crítico';
+
+      document.getElementById('col-estado').innerHTML = `
+        <div class="card-title">Estado General</div>
+        <div class="card-body">
+          <div class="gauge-wrap">
+            <svg class="gauge-svg" viewBox="0 0 120 120" width="118" height="118">
+              <circle cx="60" cy="60" r="${r}" fill="none" stroke="#e5e5e5" stroke-width="10"/>
+              <circle id="gauge-arc" cx="60" cy="60" r="${r}" fill="none"
+                stroke="${color}" stroke-width="10" stroke-linecap="round"
+                stroke-dasharray="0 ${circ}" transform="rotate(-90 60 60)"
+                style="transition: stroke-dasharray 0.6s ease;"/>
+              <text x="60" y="57" text-anchor="middle"
+                font-family="system-ui,sans-serif" font-size="20" font-weight="500" fill="#1a1a1a">${pct}%</text>
+              <text x="60" y="73" text-anchor="middle"
+                font-family="system-ui,sans-serif" font-size="9" fill="#aaa">operación</text>
+            </svg>
+            <p class="gauge-status ${cls}">${label}</p>
+            <div class="gauge-legend">
+              <span><i class="ldot" style="background:#1D9E75;"></i>≥85% Estable</span>
+              <span><i class="ldot" style="background:#EF9F27;"></i>60–84% Alerta</span>
+              <span><i class="ldot" style="background:#E24B4A;"></i>&lt;60% Crítico</span>
+            </div>
+          </div>
+        </div>`;
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const arc = document.getElementById('gauge-arc');
+        if (arc) arc.setAttribute('stroke-dasharray', `${(pct / 100) * circ} ${circ}`);
+      }));
+    }
+
+    // ── renderCobertura ───────────────────────────────────────────────────────
+    function renderCobertura(data) {
+      const el = document.getElementById('col-cobertura');
+
+      if (!data.coverageByMunicipality || data.coverageByMunicipality.length === 0) {
+        el.innerHTML = `<div class="card-title">Cobertura por Municipio</div>
+          <div class="card-body"><div class="empty-state">Sin datos disponibles</div></div>`;
+        return;
+      }
+
+      if (currentMunicipioId != null) {
+        const m   = data.coverageByMunicipality[0] || {};
+        const pct = m.coveragePercent || 0;
+        const nom = $sel.options[$sel.selectedIndex]?.text || m.municipalityName || '';
+        const lbl = pct >= 85 ? 'Estable' : pct >= 60 ? 'En alerta' : 'Crítico';
+        el.innerHTML = `
+          <div class="card-title">Cobertura · ${nom}</div>
+          <div class="card-body">
+            <div class="cov-single">
+              <div class="cov-single-pct ${covClass(pct)}">${pct}%</div>
+              <div class="cov-single-name">
+                ${data.activos} activo${data.activos !== 1 ? 's' : ''}
+                &nbsp;·&nbsp;<span class="${covClass(pct)}">${lbl}</span>
+              </div>
+              <div class="cov-stats-grid">
+                <div class="cov-stat"><span class="cov-stat-val">${m.contractedTc || 0}</span><span class="cov-stat-lbl">TC Cont.</span></div>
+                <div class="cov-stat"><span class="cov-stat-val">${m.requiredTc   || 0}</span><span class="cov-stat-lbl">TC Req.</span></div>
+                <div class="cov-stat"><span class="cov-stat-val">${m.contractedMt || 0}</span><span class="cov-stat-lbl">MT Cont.</span></div>
+                <div class="cov-stat"><span class="cov-stat-val">${m.requiredMt   || 0}</span><span class="cov-stat-lbl">MT Req.</span></div>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      const sorted = [...data.coverageByMunicipality].sort((a, b) => b.coveragePercent - a.coveragePercent);
+      el.innerHTML = `
+        <div class="card-title">Cobertura por Municipio</div>
+        <div class="card-body">
+          <div class="cov-list">
+            ${sorted.map(m => {
+              const pct = m.coveragePercent || 0;
+              const col = covColor(pct);
+              return `<div class="cov-row">
+                <span class="cov-name" title="${m.municipalityName}">${m.municipalityName}</span>
+                <div class="cov-bar-wrap"><div class="cov-bar" style="width:0%;background:${col};" data-pct="${pct}"></div></div>
+                <span class="cov-pct" style="color:${col};">${pct}%</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.querySelectorAll('.cov-bar[data-pct]').forEach(b => { b.style.width = `${b.dataset.pct}%`; });
+      }));
+    }
+
+    // ── renderCumpleanos ──────────────────────────────────────────────────────
+    function renderCumpleanos(data) {
+      const el  = document.getElementById('col-cumpleanos');
+      const now = new Date();
+      const hoy = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}`;
+
+      if (!data.cumpleanos || data.cumpleanos.length === 0) {
+        el.innerHTML = `<div class="card-title">Cumpleaños del Mes</div>
+          <div class="card-body"><div class="empty-state">Sin cumpleaños este mes</div></div>`;
+        return;
+      }
+
+      el.innerHTML = `
+        <div class="card-title">Cumpleaños del Mes</div>
+        <div class="card-body">
+          <div class="bday-list">
+            ${data.cumpleanos.map(b => `
+              <div class="bday-item${b.fecha === hoy ? ' bday-today' : ''}">
+                <div class="bday-info">
+                  <span class="bday-name">${b.nombre}</span>
+                  <span class="bday-cargo">${b.cargo}${b.municipio ? ' · ' + b.municipio : ''}</span>
+                </div>
+                <span class="bday-fecha">${b.fecha}</span>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }
+
+    // ── renderGender ──────────────────────────────────────────────────────────
+    function renderGender(data) {
+      const el = document.getElementById('col-genero');
+      const h  = data.hombres || 0;
+      const m  = data.mujeres || 0;
+
+      if (!h && !m) {
+        el.innerHTML = `<div class="card-title">Distribución por Género</div>
+          <div class="card-body"><div class="empty-state">Sin datos de género</div></div>`;
+        return;
+      }
+
+      const r    = 26;
+      const C    = 2 * Math.PI * r;
+      const mRot = -90 + (h / 100) * 360;
+
+      el.innerHTML = `
+        <div class="card-title">Distribución por Género</div>
+        <div class="card-body">
+          <div class="gender-wrap">
+            <div class="gender-stat gender-stat-left">
+              <span class="gs-pct" style="color:#378ADD;">${h}%</span>
+              <span class="gs-lbl">Hombres</span>
+              <span class="gs-cnt">${data.hN.toLocaleString('es-CO')}</span>
+            </div>
+            <svg viewBox="0 0 60 60" width="60" height="60" style="flex-shrink:0;">
+              <circle cx="30" cy="30" r="${r}" fill="none" stroke="#f0f0ee" stroke-width="8"/>
+              <circle id="g-arc-h" cx="30" cy="30" r="${r}" fill="none"
+                stroke="#378ADD" stroke-width="8"
+                stroke-dasharray="0 ${C}" transform="rotate(-90 30 30)"
+                style="transition: stroke-dasharray 0.5s ease;"/>
+              <circle id="g-arc-m" cx="30" cy="30" r="${r}" fill="none"
+                stroke="#D85A30" stroke-width="8"
+                stroke-dasharray="0 ${C}" transform="rotate(${mRot} 30 30)"
+                style="transition: stroke-dasharray 0.5s ease;"/>
+            </svg>
+            <div class="gender-stat gender-stat-right">
+              <span class="gs-pct" style="color:#D85A30;">${m}%</span>
+              <span class="gs-lbl">Mujeres</span>
+              <span class="gs-cnt">${data.mN.toLocaleString('es-CO')}</span>
+            </div>
+          </div>
+        </div>`;
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const arcH = document.getElementById('g-arc-h');
+        const arcM = document.getElementById('g-arc-m');
+        if (arcH) arcH.setAttribute('stroke-dasharray', `${(h / 100) * C} ${C}`);
+        if (arcM) arcM.setAttribute('stroke-dasharray', `${(m / 100) * C} ${C}`);
+      }));
+    }
+
+    // ── renderAge ─────────────────────────────────────────────────────────────
+    function renderAge(data) {
+      // Always destroy the existing instance first — canvas may be about to be replaced
+      if (ageChartInst) { ageChartInst.destroy(); ageChartInst = null; }
+
+      const el      = document.getElementById('col-edad');
+      const hasData = data.age && data.age.some(v => v > 0);
+
+      if (!hasData) {
+        el.innerHTML = `<div class="card-title">Distribución por Edad</div>
+          <div class="card-body"><div class="empty-state">Sin datos de edad</div></div>`;
+        return;
+      }
+
+      el.innerHTML = `
+        <div class="card-title">Distribución por Edad</div>
+        <div class="card-body" style="overflow:hidden;">
+          <div style="position:relative;height:130px;width:100%;">
+            <canvas id="age-chart"></canvas>
+          </div>
+        </div>`;
+
+      const ctx = document.getElementById('age-chart').getContext('2d');
+      ageChartInst = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['18-25','26-35','36-45','46-55','56+'],
+          datasets: [{
+            data: data.age,
+            backgroundColor: '#378ADD',
+            borderRadius: 4,
+            borderSkipped: false,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            y: { grid: { color: 'rgba(128,128,128,0.1)' }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    }
+
+    // ── renderAreas ───────────────────────────────────────────────────────────
+    function renderAreas(data) {
+      const el = document.getElementById('col-area');
+
+      if (!data.areas || data.areas.length === 0) {
+        el.innerHTML = `<div class="card-title">Distribución por Área</div>
+          <div class="card-body"><div class="empty-state">Sin datos por área</div></div>`;
+        return;
+      }
+
+      el.innerHTML = `
+        <div class="card-title">Distribución por Área</div>
+        <div class="card-body">
+          <div class="area-list">
+            ${data.areas.map(a => {
+              const col = areaColor(a.label, a.color);
+              return `<div class="area-row">
+                <span class="area-name" title="${a.label}">${a.label}</span>
+                <div class="area-bar-wrap">
+                  <div class="area-bar" style="width:0%;background:${col};" data-pct="${a.pct}"></div>
+                </div>
+                <span class="area-pct">${a.pct}%</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.querySelectorAll('.area-bar[data-pct]').forEach(b => { b.style.width = `${b.dataset.pct}%`; });
+      }));
+    }
+
+    // ── render(data) ──────────────────────────────────────────────────────────
+    function render(data) {
+      lastUpdate = new Date();
+
+      const opt = $sel.options[$sel.selectedIndex];
+      document.getElementById('topbar-mun').textContent =
+        $sel.value ? `· ${opt?.text || ''}` : '';
+
+      renderKPIs(data);
+      renderGauge(data);
+      renderCobertura(data);
+      renderCumpleanos(data);
+      renderGender(data);
+      renderAge(data);
+      renderAreas(data);
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
+    function setLoading(on) {
+      if (on) {
+        $loader.classList.remove('hidden');
+        $btn.disabled = true;
+        $sel.disabled = true;
+        $icon.classList.add('spinning');
+      } else {
+        $loader.classList.add('hidden');
+        $btn.disabled = false;
+        $sel.disabled = false;
+        $icon.classList.remove('spinning');
+      }
+    }
+    function showError(msg) { $errMsg.textContent = `⚠ ${msg}`; $errBox.classList.remove('hidden'); }
+    function hideError()    { $errBox.classList.add('hidden'); }
+
+    function populateMunicipioSelect(list) {
+      const prev = $sel.value;
+      $sel.innerHTML = '<option value="">Todos los municipios</option>';
+      list.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m.id; o.textContent = m.name;
+        if (String(m.id) === String(prev)) o.selected = true;
+        $sel.appendChild(o);
+      });
+    }
+
+    // ── load(municipioId, opts) ───────────────────────────────────────────────
+    async function load(municipioId = null, opts = {}) {
+      const { isRefresh = false, isFilter = false, prevMuni = null } = opts;
+
+      setLoading(true);
+      showSkeletons();
+      hideError();
+
+      try {
+        const raw  = await fetchData(municipioId);
+        const data = normalizeData(raw);
+
+        if (municipioId == null) populateMunicipioSelect(data.municipiosList);
+
+        render(data);
+
+        if (isRefresh) {
+          showToast('Datos actualizados', 'success');
+        }
+        if (isFilter && municipioId != null) {
+          const noData = data.coverageByMunicipality.length === 0 && data.activos === 0;
+          if (noData) showToast('Sin datos para este municipio', 'warning');
+        }
+
+      } catch (err) {
+        showError(err.message || 'Error desconocido al cargar datos');
+        showToast('Error al cargar datos', 'error');
+        console.error('[dashboard-hr] load error:', err);
+
+        // Restore select to previous value on filter failure
+        if (isFilter && prevMuni !== null) {
+          $sel.value        = String(prevMuni);
+          currentMunicipioId = prevMuni;
+        } else if (isFilter) {
+          $sel.value        = '';
+          currentMunicipioId = null;
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ── Event wiring ──────────────────────────────────────────────────────────
+    $sel.addEventListener('change', e => {
+      const prev  = currentMunicipioId;
+      const newId = e.target.value ? Number(e.target.value) : null;
+      currentMunicipioId = newId;
+      load(newId, { isFilter: true, prevMuni: prev });
+    });
+
+    $btn.addEventListener('click', () => {
+      load(currentMunicipioId, { isRefresh: true });
+    });
+
+    document.getElementById('error-retry').addEventListener('click', () => {
+      load(currentMunicipioId);
+    });
+
+    // ── Bootstrap ─────────────────────────────────────────────────────────────
+    load();
+  </script>
+</body>
+</html>
