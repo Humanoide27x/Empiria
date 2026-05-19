@@ -104,7 +104,7 @@ function withModuleProtection(moduleKey, action, handler) {
 
       sendJson(res, 500, {
         ok: false,
-        message: "Error interno validando permisos",
+        message: error?.message || "Error interno del servidor",
       });
     }
   };

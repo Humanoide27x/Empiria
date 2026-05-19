@@ -25,6 +25,15 @@ const MODULES = Object.freeze({
   ADMIN_SETTINGS: "administracion_configuraciones",
   CALCULATOR: "calculadora_personal",
   PERSONNEL_CALCULATOR: "calculadora_personal",
+
+  SST: "seguridad_salud_trabajo",
+  SAFETY: "seguridad_salud_trabajo",
+
+  NOVELTIES: "registro_novedades",
+  NOVELTY_REGISTRY: "registro_novedades",
+
+  RESUME_REPOSITORY: "repositorio_hojas_vida",
+  HV_REPOSITORY: "repositorio_hojas_vida",
 });
 
 const ACTIONS = Object.freeze({
@@ -208,6 +217,34 @@ const CALCULATOR_PERMISSIONS = Object.freeze({
   ]),
 });
 
+const SST_PERMISSIONS = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.MANAGE],
+  features: Object.freeze([
+    "registrar_incidente",
+    "gestionar_riesgo",
+    "capacitaciones_sst",
+    "seguimiento_sst",
+  ]),
+});
+
+const NOVELTIES_PERMISSIONS = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE],
+  features: Object.freeze([
+    "registrar_novedad",
+    "consultar_novedades",
+    "aprobar_novedad",
+  ]),
+});
+
+const RESUME_REPOSITORY_PERMISSIONS = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT],
+  features: Object.freeze([
+    "consultar_hojas_vida",
+    "descargar_hoja_vida",
+    "buscar_hoja_vida",
+  ]),
+});
+
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMINISTRATOR]: {
     scope: SCOPE_RULES.ALL,
@@ -237,6 +274,9 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.EMPLOYEE_REQUESTS]: EMPLOYEE_REQUESTS_PERMISSIONS,
       [MODULES.ADMIN_SETTINGS]: ADMIN_SETTINGS_PERMISSIONS,
       [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
+      [MODULES.SST]: SST_PERMISSIONS,
+      [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
+      [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
     },
   },
 
@@ -286,6 +326,9 @@ const ROLE_PERMISSIONS = Object.freeze({
 
       [MODULES.EMPLOYEE_REQUESTS]: EMPLOYEE_REQUESTS_PERMISSIONS,
       [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
+      [MODULES.SST]: SST_PERMISSIONS,
+      [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
+      [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
     },
   },
 

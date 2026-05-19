@@ -6,6 +6,8 @@ node_modules
 # Dumps y backups de DB
 empiria_db.sql
 *.sql.gz
+*.dump
+*.backup
 backups/
 
 # Datos de sesiones locales (se regeneran)
@@ -18,6 +20,9 @@ uploads/
 # Logs
 *.log
 npm-debug.log*
+
+# Secrets locales
+EMPIRIA-SECRETS.txt
 
 # OS
 .DS_Store

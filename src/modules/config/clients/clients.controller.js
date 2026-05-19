@@ -7,6 +7,7 @@ const {
   listClients, createClient, updateClient,
   createContract, updateContract,
   getContractConfig, upsertContractSettings,
+  getSalaryConfig, upsertSalaryConfigOnly,
   getContractUsers, createContractUser, updateContractUser,
 } = require("./clients.repository");
 
@@ -33,6 +34,36 @@ function guardAdmin(req, res) {
     return null;
   }
   return user;
+}
+
+function guardAdminOrHR(req, res) {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  const role = String(auth.user.role || "").toLowerCase();
+  const allowed = ["administrador", "talento_humano"];
+  if (!allowed.includes(role)) {
+    sendJson(res, 403, { ok: false, message: "Sin permisos para configurar la calculadora" });
+    return null;
+  }
+  return auth.user;
+}
+
+async function handleGetSalaryConfig(req, res, id) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  if (!requireAuth(req, res)) return;
+  const data = await getSalaryConfig(id);
+  sendJson(res, 200, { ok: true, data });
+}
+
+async function handleUpsertSalaryConfig(req, res, id) {
+  if (req.method !== "PUT" && req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  if (!guardAdminOrHR(req, res)) return;
+  const body = await readJsonBody(req);
+  if (!body.salary_config || typeof body.salary_config !== "object") {
+    sendJson(res, 400, { ok: false, message: "salary_config es requerido" }); return;
+  }
+  const data = await upsertSalaryConfigOnly(id, body.salary_config);
+  sendJson(res, 200, { ok: true, data });
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
@@ -111,6 +142,7 @@ async function handleUpsertContractSettings(req, res, id) {
     modules:          body.modules       || {},
     positions:        Array.isArray(body.positions) ? body.positions : [],
     role_permissions: (body.role_permissions && typeof body.role_permissions === "object") ? body.role_permissions : {},
+    salary_config:    (body.salary_config  && typeof body.salary_config  === "object") ? body.salary_config  : null,
   });
   sendJson(res, 200, { ok: true, data: settings });
 }
@@ -208,6 +240,7 @@ module.exports = {
   handleListClients, handleCreateClient, handleUpdateClient,
   handleCreateContract, handleUpdateContract,
   handleGetContractConfig, handleUpsertContractSettings,
+  handleGetSalaryConfig, handleUpsertSalaryConfig,
   handleGetContractUsers, handleCreateContractUser,
   handleUpdateContractUser, handleDeactivateContractUser,
   handleGetDashboardConfig, handleUpsertDashboardConfig,

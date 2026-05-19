@@ -4,6 +4,7 @@ const {
   handleListClients, handleCreateClient, handleUpdateClient,
   handleCreateContract, handleUpdateContract,
   handleGetContractConfig, handleUpsertContractSettings,
+  handleGetSalaryConfig, handleUpsertSalaryConfig,
   handleGetContractUsers, handleCreateContractUser,
   handleUpdateContractUser, handleDeactivateContractUser,
   handleGetDashboardConfig, handleUpsertDashboardConfig,
@@ -29,6 +30,12 @@ async function handleClientsRoutes(req, res, url) {
 
   const ctSettings = p.match(/^\/config\/contracts\/(\d+)\/settings$/);
   if (ctSettings) { await handleUpsertContractSettings(req, res, Number(ctSettings[1])); return true; }
+
+  const ctSalaryCfg = p.match(/^\/config\/contracts\/(\d+)\/salary-config$/);
+  if (ctSalaryCfg) {
+    if (m === "GET")               { await handleGetSalaryConfig(req, res,    Number(ctSalaryCfg[1])); return true; }
+    if (m === "PUT" || m === "POST") { await handleUpsertSalaryConfig(req, res, Number(ctSalaryCfg[1])); return true; }
+  }
 
   // ── Contracts: users ──────────────────────────────────────────────────────────
   const ctUsers = p.match(/^\/config\/contracts\/(\d+)\/users$/);

@@ -29,6 +29,27 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+// Sanea cualquier valor de fecha antes de mandarlo a PG (acepta serial Excel, Date, o string)
+function safeDate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 1000) {
+    // Serial numérico Excel → fecha real
+    const d = new Date(new Date(Date.UTC(1899, 11, 30)).getTime() + n * 86400000);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+
 function buildFullName(data = {}) {
   return firstNonEmpty(
     data.fullName,
@@ -45,6 +66,51 @@ function buildFullName(data = {}) {
   );
 }
 
+async function resolveInstitutionId(name, municipalityId = null) {
+  if (!name || !String(name).trim()) return null;
+  const nameStr = String(name).trim();
+  const normalized = normalize(nameStr).replace(/[^A-Z0-9]/g, '');
+  if (!normalized) return null;
+
+  const baseNorm  = `SELECT id FROM institutions WHERE REGEXP_REPLACE(UPPER(TRIM(name)),'[^A-Z0-9]','','g') = $1`;
+  const baseIlike = `SELECT id FROM institutions WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))`;
+
+  if (municipalityId) {
+    const r = await pool.query(`${baseNorm} AND municipality_id = $2 LIMIT 1`, [normalized, municipalityId]);
+    if (r.rows[0]) return r.rows[0].id;
+    const r2 = await pool.query(`${baseIlike} AND municipality_id = $2 LIMIT 1`, [nameStr, municipalityId]);
+    if (r2.rows[0]) return r2.rows[0].id;
+  }
+  const r = await pool.query(`${baseNorm} LIMIT 1`, [normalized]);
+  if (r.rows[0]) return r.rows[0].id;
+  const r2 = await pool.query(`${baseIlike} LIMIT 1`, [nameStr]);
+  return r2.rows[0]?.id || null;
+}
+
+async function resolveSiteId(name, institutionId = null) {
+  if (!name || !String(name).trim()) return null;
+  const nameStr = String(name).trim();
+  const normalized = normalize(nameStr).replace(/[^A-Z0-9]/g, '');
+  if (!normalized) return null;
+
+  const baseNorm = `SELECT id FROM educational_sites WHERE REGEXP_REPLACE(UPPER(TRIM(name)),'[^A-Z0-9]','','g') = $1`;
+  const baseIlike = `SELECT id FROM educational_sites WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))`;
+
+  // Try normalized match (handles special chars), with institution filter first
+  if (institutionId) {
+    const r = await pool.query(`${baseNorm} AND institution_id = $2 LIMIT 1`, [normalized, institutionId]);
+    if (r.rows[0]) return r.rows[0].id;
+    // Fallback: exact case-insensitive match with institution
+    const r2 = await pool.query(`${baseIlike} AND institution_id = $2 LIMIT 1`, [nameStr, institutionId]);
+    if (r2.rows[0]) return r2.rows[0].id;
+  }
+  // Try without institution filter
+  const r = await pool.query(`${baseNorm} LIMIT 1`, [normalized]);
+  if (r.rows[0]) return r.rows[0].id;
+  const r2 = await pool.query(`${baseIlike} LIMIT 1`, [nameStr]);
+  return r2.rows[0]?.id || null;
+}
+
 async function resolveMunicipalityId(value) {
   const numericId = toNumberOrNull(value);
   if (numericId) return numericId;
@@ -59,8 +125,9 @@ async function resolveMunicipalityId(value) {
   );
   if (exact.rows[0]) return exact.rows[0].id;
 
-  // Normalized match: remove accents and spaces for fuzzy comparison
-  const normalized = normalize(name).replace(/\s+/g, "");
+  // Normalized match: remove accents and all non-alphanumeric chars (matches SQL REGEXP_REPLACE)
+  const normalized = normalize(name).replace(/[^A-Z0-9]/g, "");
+  if (!normalized) return null;
   const fuzzy = await pool.query(
     `SELECT id FROM municipalities
      WHERE REGEXP_REPLACE(UPPER(name), '[^A-Z0-9]', '', 'g') = $1 LIMIT 1`,
@@ -95,6 +162,23 @@ function mapEmployee(row) {
 
     numero_documento: row.document_number || "",
     documentNumber: row.document_number || "",
+
+    // Nacimiento
+    birthDay:          row.birth_day          || "",
+    birthMonth:        row.birth_month        || "",
+    birthYear:         row.birth_year         || "",
+    birthCountry:      row.birth_country      || "",
+    birthDepartment:   row.birth_department   || "",
+    birthMunicipality: row.birth_municipality || "",
+
+    // Expedición cédula
+    expeditionDay:          row.expedition_day          || "",
+    expeditionMonth:        row.expedition_month        || "",
+    expeditionYear:         row.expedition_year         || "",
+    expeditionDepartment:   row.expedition_department   || "",
+    expeditionMunicipality: row.expedition_municipality || "",
+
+    bloodType:     row.blood_type     || "",
 
     phone: row.phone || "",
     celular: row.phone || "",
@@ -158,21 +242,25 @@ function mapEmployee(row) {
     municipality_name: row.municipality_name || "",
     municipality: row.municipality_name || row.municipality_id || "",
     municipio: row.municipality_name || row.municipality_id || "",
-    municipio_residencia: row.municipality_name || row.municipality_id || "",
+
+    residenceMunicipality: row.residence_municipality || "",
+    municipio_residencia:  row.residence_municipality || "",
+
+    educationalMunicipality: row.educational_municipality_name || "",
 
     institutionId: row.institution_id || null,
     institution_id: row.institution_id || null,
     institutionName: row.institution_name || "",
     institution_name: row.institution_name || "",
-    institution: row.institution_name || row.institution_id || "",
-    institucion_educativa: row.institution_name || row.institution_id || "",
+    institution: row.institution_name || "",
+    institucion_educativa: row.institution_name || "",
 
     siteId: row.site_id || null,
     site_id: row.site_id || null,
     siteName: row.site_name || "",
     site_name: row.site_name || "",
-    site: row.site_name || row.site_id || "",
-    sede_educativa: row.site_name || row.site_id || "",
+    site: row.site_name || "",
+    sede_educativa: row.site_name || "",
 
     modality: row.modality || "",
     modalidad: row.modality || "",
@@ -231,13 +319,15 @@ async function updateEmployeePhoto(id, photoUrl) {
 const BASE_SELECT = `
   SELECT
     e.*,
-    m.name AS municipality_name,
-    i.name AS institution_name,
-    s.name AS site_name
+    m.name  AS municipality_name,
+    i.name  AS institution_name,
+    s.name  AS site_name,
+    im.name AS educational_municipality_name
   FROM employees e
-  LEFT JOIN municipalities m ON m.id = e.municipality_id
-  LEFT JOIN institutions i ON i.id = e.institution_id
-  LEFT JOIN educational_sites s ON s.id = e.site_id
+  LEFT JOIN municipalities    m  ON m.id  = e.municipality_id
+  LEFT JOIN institutions      i  ON i.id  = e.institution_id
+  LEFT JOIN educational_sites s  ON s.id  = e.site_id
+  LEFT JOIN municipalities    im ON im.id = i.municipality_id
 `;
 
 // ─── Funciones públicas ───────────────────────────────────────────────────────
@@ -322,6 +412,27 @@ async function createEmployee(data) {
     data.municipalityId || data.municipality_id || data.municipality || data.municipio
   );
 
+  const institutionId =
+    await resolveInstitutionId(
+      data.institution || data.institutionName || data.institution_name || data.institucion_educativa,
+      municipalityId
+    ) || toNumberOrNull(data.institutionId || data.institution_id);
+
+  const rawSiteNameC = data.site || data.siteName || data.site_name || data.sede_educativa;
+  let siteId = await resolveSiteId(rawSiteNameC, institutionId);
+  if (!siteId) siteId = await resolveSiteId(rawSiteNameC, null);
+  if (!siteId) {
+    const rawSiteId = toNumberOrNull(data.siteId || data.site_id || data.site);
+    if (rawSiteId) {
+      const exists = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [rawSiteId]);
+      siteId = exists.rows[0] ? rawSiteId : null;
+    }
+  }
+  if (siteId) {
+    const verify = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [siteId]);
+    if (!verify.rows[0]) { siteId = null; }
+  }
+
   const result = await pool.query(
     `INSERT INTO employees (
       tenant_id, full_name,
@@ -375,15 +486,15 @@ async function createEmployee(data) {
       toNumberOrNull(data.companyId || data.company_id),
       toNumberOrNull(data.contractId || data.contract_id),
       municipalityId,
-      toNumberOrNull(data.institutionId || data.institution_id),
-      toNumberOrNull(data.siteId || data.site_id),
+      institutionId,
+      siteId,
       data.modality || data.modalidad || "",
       data.eps || "",
       data.fondo_pensiones || data.pensionFund || data.pension_fund || "",
       data.caja_compensacion || data.compensationBox || "COFREM",
       data.arl || "SURA",
-      data.fecha_real_vinculacion_arl || data.arlVinculationDate || null,
-      data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date || null,
+      safeDate(data.fecha_real_vinculacion_arl || data.arlVinculationDate),
+      safeDate(data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date),
       data.status || data.estado || "ACTIVO",
       data.workdayType || data.workday_type || "TC",
       data.gestorZona || data.gestor_zona || "",
@@ -399,6 +510,46 @@ async function updateEmployee(id, data) {
   const municipalityId = await resolveMunicipalityId(
     data.municipalityId || data.municipality_id || data.municipality || data.municipio
   );
+
+  // Educational municipality is separate from work municipality
+  const educationalMunicipalityId = (data.educationalMunicipality)
+    ? await resolveMunicipalityId(data.educationalMunicipality)
+    : null;
+
+  const institutionId =
+    await resolveInstitutionId(
+      data.institution || data.institutionName || data.institution_name || data.institucion_educativa,
+      educationalMunicipalityId || municipalityId
+    ) || toNumberOrNull(data.institutionId || data.institution_id);
+
+  // Resolve site by name first, then validate any raw numeric ID before using it.
+  const rawSiteName = data.site || data.siteName || data.site_name || data.sede_educativa;
+  let siteId = await resolveSiteId(rawSiteName, institutionId);
+
+  if (!siteId) {
+    // Try resolving without institution filter (catalog may be cross-municipality)
+    siteId = await resolveSiteId(rawSiteName, null);
+  }
+
+  if (!siteId) {
+    // data.site might itself be a numeric ID if site_name was missing at load time
+    const rawSiteId = toNumberOrNull(data.siteId || data.site_id || data.site);
+    if (rawSiteId) {
+      const exists = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [rawSiteId]);
+      siteId = exists.rows[0] ? rawSiteId : null;
+    }
+  }
+
+  // Final safety: verify siteId actually exists before using it
+  if (siteId) {
+    const verify = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [siteId]);
+    if (!verify.rows[0]) {
+      console.error(`[updateEmployee] site_id ${siteId} not found in educational_sites — forcing null`);
+      siteId = null;
+    }
+  }
+
+  console.log(`[updateEmployee] id=${id} rawSite="${rawSiteName ? String(rawSiteName).slice(0,40) : '—'}" institutionId=${institutionId} resolvedSiteId=${siteId}`);
 
   const result = await pool.query(
     `UPDATE employees SET
@@ -418,6 +569,13 @@ async function updateEmployee(id, data) {
       status = $40, workday_type = $41, gestor_zona = $42,
       work_experience = $43, studies = $44,
       shirt_size = $45, pants_size = $46, shoe_size = $47,
+      residence_municipality = $48,
+      sisben = $49, sisben_category = $50, sisben_expiry = $51, sisben_exp_date = $52,
+      residence_certificate = $53, residence_certificate_expiry = $54,
+      presented_in_offer = $55, offered_position = $56,
+      food_handling_course_issue_date = $57, food_handling_course_expiry_date = $58,
+      food_handling_exam_issue_date = $59, food_handling_exam_expiry_date = $60,
+      start_date = $61,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *`,
@@ -448,27 +606,42 @@ async function updateEmployee(id, data) {
       data.direccion_residencia || data.address || "",
       data.barrio_residencia || data.neighborhood || "",
       data.civil_status || data.civilStatus || "",
-      data.cargo_real || data.real_position || data.position || "",
+      data.cargo_real || data.real_position || data.position || data.cargo_real || "",
       toNumberOrNull(data.companyId || data.company_id),
       toNumberOrNull(data.contractId || data.contract_id),
       municipalityId,
-      toNumberOrNull(data.institutionId || data.institution_id),
-      toNumberOrNull(data.siteId || data.site_id),
-      data.modality || data.modalidad || "",
+      institutionId,
+      siteId,
+      data.educationalModality || data.modality || data.modalidad || "",
       data.eps || "",
       data.fondo_pensiones || data.pensionFund || data.pension_fund || "",
       data.caja_compensacion || data.compensationBox || "COFREM",
       data.arl || "SURA",
-      data.fecha_real_vinculacion_arl || data.arlVinculationDate || null,
-      data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date || null,
+      safeDate(data.fecha_real_vinculacion_arl || data.arlVinculationDate),
+      safeDate(data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date),
       data.status || data.estado || "ACTIVO",
-      data.workdayType || data.workday_type || "TC",
+      data.workTimeType || data.workdayType || data.workday_type || "TC",
       data.gestorZona || data.gestor_zona || "",
       JSON.stringify(Array.isArray(data.workExperience) ? data.workExperience : []),
       JSON.stringify(Array.isArray(data.studies)        ? data.studies        : []),
       data.shirtSize || "",
       data.pantsSize || "",
       data.shoeSize  || "",
+      // New fields ($48–$61)
+      data.residenceMunicipality || data.municipio_residencia || "",
+      String(data.sisben) === "true",
+      data.sisbenCategory || data.sisben_categoria || "",
+      safeDate(data.sisbenExpirationDate || data.sisben_expiration_date || data.sisben_expiry),
+      safeDate(data.sisbenIssueDate || data.sisben_issue_date || data.sisben_exp_date),
+      String(data.hasResidenceCertificate) === "true",
+      safeDate(data.residenceCertificateExpiration || data.residence_certificate_expiry),
+      String(data.presentedInOffer) === "true",
+      data.offerPosition || data.offered_position || "",
+      safeDate(data.foodHandlingCourseIssueDate || data.food_handling_course_issue_date),
+      safeDate(data.foodHandlingCourseExpirationDate || data.food_handling_course_expiry_date),
+      safeDate(data.foodHandlingExamIssueDate || data.food_handling_exam_issue_date),
+      safeDate(data.foodHandlingExamExpirationDate || data.food_handling_exam_expiry_date),
+      safeDate(data.startDate || data.start_date),
     ]
   );
 
@@ -510,7 +683,44 @@ function findExcelColumn(row, possibleNames = []) {
 
 function getCell(row, possibleNames = []) {
   const column = findExcelColumn(row, possibleNames);
-  return column ? cleanText(row[column]) : "";
+  return column !== undefined ? cleanText(row[column]) : "";
+}
+
+function getRawCell(row, possibleNames = []) {
+  const column = findExcelColumn(row, possibleNames);
+  return column !== undefined ? row[column] : null;
+}
+
+// Convierte serial numérico de Excel, Date object, o string a YYYY-MM-DD (o null)
+function parseExcelDate(value) {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number" && value > 0) {
+    // Serial de Excel: época = 30 dic 1899, con bug de año bisiesto 1900
+    const msPerDay = 86400000;
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const d = new Date(excelEpoch.getTime() + value * msPerDay);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  }
+
+  const str = String(value).trim();
+  if (!str) return null;
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  // DD/MM/YYYY o DD-MM-YYYY
+  const m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+
+function getDateCell(row, possibleNames = []) {
+  return parseExcelDate(getRawCell(row, possibleNames));
 }
 
 function mapExcelRowToEmployee(row = {}, defaults = {}) {
@@ -593,8 +803,12 @@ function mapExcelRowToEmployee(row = {}, defaults = {}) {
     pensionFund:      getCell(row, ["FONDO PENSIONES", "PENSION", "AFP"]),
     compensationBox:  getCell(row, ["CAJA COMPENSACION", "CAJA"]) || "COFREM",
     arl:              getCell(row, ["ARL"]) || "SURA",
-    arlVinculationDate: getCell(row, ["FECHA VINCULACION ARL", "FECHA ARL"]) || null,
-    coverageStartDate:  getCell(row, ["FECHA INICIO COBERTURA", "FECHA COBERTURA", "FECHA INICIO"]) || null,
+    arlVinculationDate: getDateCell(row, ["FECHA VINCULACION ARL", "FECHA ARL", "FECHA VINCULACION"]),
+    coverageStartDate:  getDateCell(row, [
+      "FECHA INICIO COBERTURA", "FECHA COBERTURA",
+      "FECHA DE INGRESO", "FECHA INGRESO", "FECHA INICIO LABORES",
+      "FECHA CONTRATACION", "FECHA INICIO",
+    ]),
 
     // IDs (optional, used when provided)
     companyId:  getCell(row, ["EMPRESA ID", "COMPANY ID"]) || defaults.companyId || null,
@@ -611,7 +825,7 @@ async function importEmployeesFromExcel({ fileBase64, fileName, defaults = {} })
   if (!base64Data) throw new Error("Archivo Excel inválido.");
 
   const buffer = Buffer.from(base64Data, "base64");
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
 
   if (!workbook.SheetNames.length) throw new Error("El archivo Excel no tiene hojas.");
 

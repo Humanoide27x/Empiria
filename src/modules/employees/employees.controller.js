@@ -223,7 +223,20 @@ function handlePersonnel(req, res) {
           });
         }
 
-        const updated = await updateEmployee(id, body);
+        let updated;
+        try {
+          updated = await updateEmployee(id, body);
+        } catch (err) {
+          console.error("[PUT /personnel] Error en updateEmployee:", err.message, "\nBody keys:", Object.keys(body));
+          const msg = err.message || "";
+          if (msg.includes("llave foránea") || msg.includes("foreign key") || msg.includes("fkey")) {
+            return sendJson(res, 400, {
+              ok: false,
+              message: "No se pudo guardar: la sede o institución seleccionada no existe en el catálogo. Selecciona nuevamente municipio → institución → sede y guarda.",
+            });
+          }
+          return sendJson(res, 500, { ok: false, message: "Error interno al actualizar el empleado: " + err.message });
+        }
 
         if (!updated) {
           return sendJson(res, 404, {

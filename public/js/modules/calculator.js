@@ -2,6 +2,8 @@ import { state } from '../state.js';
 import { apiFetch } from '../api.js';
 import { escapeHtml } from '../utils.js';
 
+let _salaryConfigData = {};
+
 // ── Fórmulas PAE ──────────────────────────────────────────────────────────────
 
 function calcRaw(modality, cupos) {
@@ -33,17 +35,38 @@ function calculate(modality, cupos) {
   return { raw, ...applyRounding(raw) };
 }
 
-// ── Constantes de nómina Colombia 2025 ───────────────────────────────────────
+// ── Constantes nómina Colombia 2025 ──────────────────────────────────────────
 
-const SMLV_2025        = 1423500;
-const AUX_TRANSPORTE   = 200000;
+const SMLV_2025        = 1_750_905;   // 2026
+const AUX_TRANSPORTE   = 249_095;     // 2026
 const SALUD_PCT        = 0.04;
 const PENSION_PCT      = 0.04;
 const HE_DIURNA_FACTOR = 1.25;
 const HE_NOCT_FACTOR   = 1.75;
 const HRS_MES          = 240;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Constantes calculadora de salario v2 ────────────────────────────────────
+
+const CS2_MODALITIES = {
+  CAARES1: { label: "CAARES 1", salary: SMLV_2025,                  jornada: "Tiempo completo · 8h/día", desc: "1 manipuladora en residencia, jornada completa." },
+  CAARES2: { label: "CAARES 2", salary: Math.round(SMLV_2025 / 2), jornada: "Medio tiempo · 4h/día",    desc: "1 manipuladora de medio tiempo que apoya a la señora de CAARES 1." },
+  CAARES3: { label: "CAARES 3", salary: SMLV_2025,                  jornada: "Tiempo completo · 8h/día", desc: "Más de una manipuladora en residencia, todas jornada completa." },
+  CAARES4: { label: "CAARES 4", salary: Math.round(SMLV_2025 / 2), jornada: "Medio tiempo · 4h/día",    desc: "1 manipuladora de medio tiempo que apoya a las señoras de CAARES 3." },
+  CAA1:    { label: "CAA 1",    salary: SMLV_2025,                  jornada: "Tiempo completo · 8h/día", desc: "Externo jornada completa." },
+  CAA2:    { label: "CAA 2",    salary: Math.round(SMLV_2025 / 2), jornada: "Tiempo parcial · 4h/día",  desc: "Externo jornada parcial." },
+  RI:      { label: "RI",       salary: SMLV_2025,                  jornada: "Según rango asignado",     desc: "Ración industrializada." },
+};
+
+const NOVELTY_TYPES = [
+  { id: "incapacidad_eps", label: "Incapacidad por enfermedad general",   desc: "Días 1–2 los paga el empleador, del día 3 en adelante los cubre la EPS. No afecta el neto del empleado.", paid: true,  coverage: "EPS" },
+  { id: "incapacidad_arl", label: "Incapacidad por accidente de trabajo", desc: "Todos los días son cubiertos por la ARL desde el primer día.",                                              paid: true,  coverage: "ARL" },
+  { id: "licencia_mat",    label: "Licencia de maternidad / paternidad",  desc: "Cubierta en su totalidad por la EPS. No se descuenta del salario.",                                         paid: true,  coverage: "EPS" },
+  { id: "licencia_nr",     label: "Licencia no remunerada",               desc: "Días sin pago acordados con el empleador. Se descuenta el valor proporcional del salario.",                 paid: false, coverage: null  },
+  { id: "ausencia",        label: "Ausencia injustificada",               desc: "Días no trabajados sin justificación. Se descuenta el valor del día del salario.",                          paid: false, coverage: null  },
+  { id: "suspension",      label: "Suspensión disciplinaria",             desc: "Sanción disciplinaria sin pago durante el período de suspensión.",                                          paid: false, coverage: null  },
+];
+
+// ── Helpers generales ─────────────────────────────────────────────────────────
 
 function isAdminOrTH() {
   const r = String(state.currentUser?.role || "").toLowerCase();
@@ -84,6 +107,14 @@ export async function loadCalculatorModule() {
       auditRows = Array.isArray(r.data) ? r.data : [];
     } catch { /* non-fatal */ }
   }
+
+  try {
+    const contractId = state.currentUser?.contractId;
+    if (contractId) {
+      const r = await apiFetch(`/config/contracts/${contractId}/salary-config`);
+      _salaryConfigData = r.data || {};
+    }
+  } catch { /* use hardcoded defaults */ }
 
   return `
 <div class="cc-wrap cc-wrap-full">
@@ -152,85 +183,105 @@ export async function loadCalculatorModule() {
     </div>` : ""}
   </div>
 
-  <!-- ── Panel: Calculadora de Salario ─────────────────────────────────────── -->
+  <!-- ── Panel: Calculadora de Salario ──────────────────────────────────────── -->
   <div class="cc-tab-panel" id="cc-panel-salario">
-    <section class="personnel-premium-hero">
-      <div>
-        <span class="personnel-premium-eyebrow">Herramienta de Cálculo</span>
-        <h2>Calculadora de Salario</h2>
-        <p>Calcula el salario neto a pagar incluyendo devengados, horas extras y deducciones de ley.</p>
+    <div class="cs3-layout">
+
+      <!-- ── Card 1: Modalidad de trabajo ─────────────────────────────────── -->
+      <div class="cs3-card">
+        <div class="cs3-card-hdr">
+          <span class="cs3-num">1</span>
+          <span class="cs3-card-title">Modalidad de trabajo</span>
+        </div>
+        <div class="cs3-card-body">
+          <div class="cs3-mod-list">
+            ${Object.entries(CS2_MODALITIES).map(([key, val]) => {
+              const grp    = key.startsWith("CAARES") ? "caares" : key === "RI" ? "ri" : "caa";
+              const modCfg = (_salaryConfigData.modalities || {})[key];
+              const salary = modCfg?.salary ?? val.salary;
+              return `
+            <label class="cs3-mod-opt cs3-mod-opt--${grp}" data-mod="${key}">
+              <input type="radio" name="cs3Mod" value="${key}" hidden>
+              <span class="cs3-mod-radio"></span>
+              <span class="cs3-mod-code cs3-mod-code--${grp}">${key}</span>
+              <span class="cs3-mod-desc">${val.desc}</span>
+              <span class="cs3-mod-salary">${fmtCOP(salary)}</span>
+            </label>`;
+            }).join("")}
+          </div>
+        </div>
       </div>
-    </section>
 
-    <div class="cc-card">
-      <div class="cc-card-body">
-
-        <!-- Salario base -->
-        <div class="cc-section-label">Información del cargo</div>
-        <div class="cs-grid-2">
-          <div class="cc-input-row">
-            <label class="cc-input-label" for="csSalarioBase">Salario base mensual</label>
-            <div class="cc-input-wrap">
-              <span class="cc-input-prefix">$</span>
-              <input type="number" id="csSalarioBase" class="cc-cupos-input"
-                placeholder="${SMLV_2025.toLocaleString("es-CO")}" min="0" step="1000" value="${SMLV_2025}">
-            </div>
-            <small class="cc-input-hint">SMLV 2025: ${fmtCOP(SMLV_2025)}</small>
-          </div>
-          <div class="cc-input-row">
-            <label class="cc-input-label" for="csDiasTrabajados">Días trabajados</label>
-            <div class="cc-input-wrap">
-              <input type="number" id="csDiasTrabajados" class="cc-cupos-input"
-                placeholder="30" min="1" max="30" step="1" value="30">
-              <span class="cc-input-unit">días</span>
-            </div>
-          </div>
+      <!-- ── Card 2: Novedades de nómina ──────────────────────────────────── -->
+      <div class="cs3-card">
+        <div class="cs3-card-hdr">
+          <span class="cs3-num">2</span>
+          <span class="cs3-card-title">Novedades de nómina</span>
         </div>
+        <div class="cs3-card-body">
 
-        <!-- Horas extras -->
-        <div class="cc-section-label" style="margin-top:4px">Horas extras</div>
-        <div class="cs-grid-2">
-          <div class="cc-input-row">
-            <label class="cc-input-label" for="csHEDiurnas">H.E. diurnas <small>(×1.25)</small></label>
-            <div class="cc-input-wrap">
-              <input type="number" id="csHEDiurnas" class="cc-cupos-input"
-                placeholder="0" min="0" max="999" step="0.5" value="0">
-              <span class="cc-input-unit">horas</span>
+          <div class="cs3-q-block">
+            <label class="cs3-q-label">
+              <input type="checkbox" id="cs3HasNoClass" class="cs3-checkbox">
+              <span class="cs3-q-text">¿Tuvo días de no clase?</span>
+            </label>
+            <div class="cs3-q-sub" id="cs3-noclass-sub" hidden>
+              <span class="cs3-q-sublabel">Número de días de no clase</span>
+              <div class="cs3-num-row">
+                <input type="number" id="cs3NoclassDays" class="cs3-num-input" min="0" max="30" value="0">
+                <span class="cs3-num-unit">días</span>
+              </div>
+              <p class="cs3-hint">Recesos escolares o festivos sin actividad PAE</p>
             </div>
           </div>
-          <div class="cc-input-row">
-            <label class="cc-input-label" for="csHENocturnas">H.E. nocturnas <small>(×1.75)</small></label>
-            <div class="cc-input-wrap">
-              <input type="number" id="csHENocturnas" class="cc-cupos-input"
-                placeholder="0" min="0" max="999" step="0.5" value="0">
-              <span class="cc-input-unit">horas</span>
+
+          <div class="cs3-q-block">
+            <label class="cs3-q-label">
+              <input type="checkbox" id="cs3HasNov" class="cs3-checkbox">
+              <span class="cs3-q-text">¿Tuvo novedades de nómina?</span>
+            </label>
+            <div class="cs3-q-sub" id="cs3-nov-sub" hidden>
+              <span class="cs3-q-sublabel">Tipo de novedad</span>
+              <select id="cs3NovType" class="cs3-select">
+                <option value="">— Seleccionar —</option>
+                ${NOVELTY_TYPES.map(n => `<option value="${n.id}">${n.label}</option>`).join("")}
+              </select>
+              <span class="cs3-q-sublabel">Número de días</span>
+              <div class="cs3-num-row">
+                <input type="number" id="cs3NovDays" class="cs3-num-input" min="1" max="30" value="1">
+                <span class="cs3-num-unit">días</span>
+              </div>
+              <button type="button" id="cs3BtnAddNov" class="cs3-btn-add">+ Añadir novedad</button>
+              <div id="cs3-nov-list" class="cs3-nov-list"></div>
             </div>
           </div>
-        </div>
 
-        <!-- Auxilio de transporte -->
-        <div class="cs-aux-row" id="csAuxRow">
-          <label class="cs-aux-check">
-            <input type="checkbox" id="csAuxCheck" checked>
-            <span>Auxilio de transporte — ${fmtCOP(AUX_TRANSPORTE)}/mes</span>
-          </label>
-          <small class="cc-input-hint" id="csAuxHint">Aplica automáticamente si el salario base es ≤ 2 SMLV (${fmtCOP(SMLV_2025 * 2)})</small>
         </div>
-
-        <button class="cc-btn-calc" id="csBtnCalc" type="button">
-          Calcular salario
-        </button>
       </div>
+
+      <!-- ── Card 3: Resultado ─────────────────────────────────────────────── -->
+      <div class="cs3-card cs3-card--result">
+        <div class="cs3-card-hdr cs3-card-hdr--result">
+          <span class="cs3-num cs3-num--result">3</span>
+          <span class="cs3-card-title cs3-card-title--result">Resultado</span>
+        </div>
+        <div class="cs3-card-body">
+          <div id="cs3-result">
+            <div class="cs3-empty">
+              <div class="cs3-empty-icon">💰</div>
+              <p>Selecciona una modalidad de trabajo para ver el cálculo.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
-
-    <!-- Resultado salario -->
-    <div class="cc-result-panel cs-result-panel" id="csResultPanel" style="display:none"></div>
   </div>
 
 </div>`;
 }
 
-// ── Sub-renderers ─────────────────────────────────────────────────────────────
+// ── Sub-renderers personal requerido ──────────────────────────────────────────
 
 function _modalityDesc(m) {
   if (m === "CAA")    return "Centro de Atención Alimentaria";
@@ -293,38 +344,6 @@ function _resultHtml(modality, cupos, raw, fullTime, halfTime) {
 </div>`;
 }
 
-function _salaryResultHtml({ salarioBase, dias, salarioProp, auxTrans, heDiurnaVal, heNoctVal,
-  totalDevengado, salud, pension, totalDeducciones, neto }) {
-  return `
-<div class="cc-result-inner cs-result-inner">
-  <div class="cc-result-top">
-    <span class="cs-result-title">Liquidación de nómina</span>
-    <span class="cs-result-dias">${dias} días trabajados</span>
-  </div>
-
-  <div class="cs-result-section">
-    <div class="cs-result-section-title">Devengados</div>
-    <div class="cs-result-row"><span>Salario proporcional (${dias}/30)</span><strong>${fmtCOP(salarioProp)}</strong></div>
-    ${auxTrans > 0 ? `<div class="cs-result-row"><span>Auxilio de transporte</span><strong>${fmtCOP(auxTrans)}</strong></div>` : ""}
-    ${heDiurnaVal > 0 ? `<div class="cs-result-row"><span>H.E. diurnas</span><strong>${fmtCOP(heDiurnaVal)}</strong></div>` : ""}
-    ${heNoctVal > 0 ? `<div class="cs-result-row"><span>H.E. nocturnas</span><strong>${fmtCOP(heNoctVal)}</strong></div>` : ""}
-    <div class="cs-result-row cs-result-subtotal"><span>Total devengado</span><strong>${fmtCOP(totalDevengado)}</strong></div>
-  </div>
-
-  <div class="cs-result-section">
-    <div class="cs-result-section-title">Deducciones del empleado</div>
-    <div class="cs-result-row"><span>Salud (4%)</span><strong class="cs-ded">− ${fmtCOP(salud)}</strong></div>
-    <div class="cs-result-row"><span>Pensión (4%)</span><strong class="cs-ded">− ${fmtCOP(pension)}</strong></div>
-    <div class="cs-result-row cs-result-subtotal"><span>Total deducciones</span><strong class="cs-ded">− ${fmtCOP(totalDeducciones)}</strong></div>
-  </div>
-
-  <div class="cs-result-neto">
-    <span>Neto a pagar</span>
-    <strong>${fmtCOP(neto)}</strong>
-  </div>
-</div>`;
-}
-
 function _renderAuditTable(rows) {
   if (!rows.length) {
     return `<p class="cc-audit-empty">No hay cálculos registrados aún.</p>`;
@@ -361,10 +380,179 @@ function _renderAuditTable(rows) {
 </div>`;
 }
 
+// ── Calculadora de Salario: lógica reactiva (3 cards) ────────────────────────
+
+function _cs3ResultHtml({ mod, cfg, diasNoClase, novelties, diasSinPago, diasCubiertos,
+  diasConSalario, diasConTransporte, salarioBase, salarioProp, auxTrans, adicsCalc, totalDev,
+  salud, pension, totalDed, neto, smlvCfg, auxTraCfg }) {
+  const paidNovs   = novelties.filter(n => n.paid);
+  const unpaidNovs = novelties.filter(n => !n.paid);
+  const color = mod.startsWith("CAARES") ? "caares" : mod === "RI" ? "ri" : "caa";
+  const hasReducen = unpaidNovs.length > 0;
+  const hasAfectan = diasNoClase > 0 || paidNovs.length > 0;
+  return `
+<div class="cs3-result-inner">
+  <div class="cs3-result-top">
+    <span class="cs3-legend-badge cs3-legend-badge--${color}">${escapeHtml(mod)}</span>
+    <span class="cs3-result-cfg-name">${escapeHtml(cfg.label)}</span>
+  </div>
+
+  <div class="cs3-rs">
+    <div class="cs3-rs-title">📋 Novedades</div>
+    ${!hasReducen && !hasAfectan
+      ? `<div class="cs3-rs-row cs3-rs-none-row"><span>Sin novedades en el período</span></div>`
+      : ""}
+    ${hasReducen ? `
+    <div class="cs3-rs-subt cs3-rs-subt--red">Reducen salario, transporte y adicionales</div>
+    ${unpaidNovs.map(n => `<div class="cs3-rs-row cs3-rs-neg"><span>${escapeHtml(n.label)}</span><b>− ${n.days}d</b></div>`).join("")}
+    ` : ""}
+    ${hasAfectan ? `
+    <div class="cs3-rs-subt cs3-rs-subt--amber">Afectan transporte y adicionales (salario cubierto)</div>
+    ${diasNoClase > 0 ? `<div class="cs3-rs-row cs3-rs-warn"><span>Días de no clase</span><b>${diasNoClase}d</b></div>` : ""}
+    ${paidNovs.map(n => `<div class="cs3-rs-row cs3-rs-warn"><span>${escapeHtml(n.label)} (${n.days}d)</span><b class="cs3-covered">${escapeHtml(n.coverage)}</b></div>`).join("")}
+    ` : ""}
+  </div>
+
+  <div class="cs3-rs">
+    <div class="cs3-rs-title">💰 Devengados</div>
+    <div class="cs3-rs-row"><span>Salario prop. (${diasConSalario}/30)</span><b>${fmtCOP(salarioProp)}</b></div>
+    <div class="cs3-rs-row"><span>Aux. transporte prop. (${diasConTransporte}/30)</span><b>${fmtCOP(auxTrans)}</b></div>
+    ${adicsCalc.map(a => `<div class="cs3-rs-row"><span>${escapeHtml(a.label)} prop. (${diasConTransporte}/30)</span><b>${fmtCOP(a.prop)}</b></div>`).join("")}
+    <div class="cs3-rs-row cs3-rs-sub"><span>Total devengado</span><b>${fmtCOP(totalDev)}</b></div>
+  </div>
+
+  <div class="cs3-rs">
+    <div class="cs3-rs-title">🔻 Deducciones</div>
+    <div class="cs3-rs-row"><span>Salud 4%</span><b class="cs3-ded">− ${fmtCOP(salud)}</b></div>
+    <div class="cs3-rs-row"><span>Pensión 4%</span><b class="cs3-ded">− ${fmtCOP(pension)}</b></div>
+    <div class="cs3-rs-row cs3-rs-sub"><span>Total deducciones</span><b class="cs3-ded">− ${fmtCOP(totalDed)}</b></div>
+  </div>
+
+  <div class="cs3-neto">
+    <span class="cs3-neto-lbl">Valor a recibir</span>
+    <span class="cs3-neto-val">${fmtCOP(neto)}</span>
+  </div>
+
+  <p class="cs3-note">SMLV 2026: ${fmtCOP(smlvCfg)} · Aux. Transporte: ${fmtCOP(auxTraCfg)} · Solo deducciones empleado</p>
+</div>`;
+}
+
+function _wireCS3() {
+  let _mod  = null;
+  let _novs = [];
+
+  function update() {
+    const el = document.getElementById("cs3-result");
+    if (!el) return;
+    if (!_mod) {
+      el.innerHTML = `<div class="cs3-empty"><div class="cs3-empty-icon">💰</div><p>Selecciona una modalidad de trabajo para ver el cálculo.</p></div>`;
+      return;
+    }
+    const cfg    = CS2_MODALITIES[_mod];
+    const modCfg = (_salaryConfigData.modalities || {})[_mod];
+    const noClass     = document.getElementById("cs3HasNoClass")?.checked ?? false;
+    const diasNoClase = noClass ? Math.max(0, parseInt(document.getElementById("cs3NoclassDays")?.value, 10) || 0) : 0;
+    const diasSinPago       = _novs.filter(n => !n.paid).reduce((s, n) => s + n.days, 0);
+    const diasCubiertos     = _novs.filter(n => n.paid).reduce((s, n) => s + n.days, 0);
+    // No-class days: salary is maintained but transport and adicionales are not paid
+    const diasConSalario    = Math.max(0, 30 - diasSinPago);
+    const diasConTransporte = Math.max(0, 30 - diasNoClase - diasSinPago - diasCubiertos);
+    const smlvCfg   = _salaryConfigData.smlv           ?? SMLV_2025;
+    const auxTraCfg = _salaryConfigData.aux_transporte ?? AUX_TRANSPORTE;
+    const salarioBase = modCfg?.salary ?? cfg.salary;
+    const salarioProp = Math.round(salarioBase / 30 * diasConSalario);
+    const auxTrans    = Math.round(auxTraCfg / 30 * diasConTransporte);
+    // Adicionales: prorated by diasConTransporte (paid leave also affects them, same as transport)
+    const adicionales = (modCfg?.adicionales || []).filter(a => a.label?.trim() && Number(a.value) > 0);
+    const adicsCalc   = adicionales.map(a => ({
+      label: a.label,
+      base:  Number(a.value),
+      prop:  Math.round(Number(a.value) / 30 * diasConTransporte),
+    }));
+    const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
+    const totalDev   = salarioProp + auxTrans + totalAdics;
+    const salud      = Math.ceil(salarioProp * SALUD_PCT / 100) * 100;
+    const pension    = salud;
+    const totalDed   = salud * 2;
+    const neto       = totalDev - totalDed;
+    el.innerHTML = _cs3ResultHtml({ mod: _mod, cfg, diasNoClase, novelties: _novs,
+      diasSinPago, diasCubiertos, diasConSalario, diasConTransporte,
+      salarioBase, salarioProp, auxTrans, adicsCalc, totalDev,
+      salud, pension, totalDed, neto, smlvCfg, auxTraCfg });
+  }
+
+  function renderNovList() {
+    const listEl = document.getElementById("cs3-nov-list");
+    if (!listEl) return;
+    if (!_novs.length) { listEl.innerHTML = ""; return; }
+    listEl.innerHTML = _novs.map((n, i) => `
+      <div class="cs3-nov-item">
+        <div class="cs3-nov-item-left">
+          <span class="cs3-nov-tag ${n.paid ? "cs3-nov-tag--paid" : "cs3-nov-tag--unpaid"}">${n.paid ? escapeHtml(n.coverage) : "Descuento"}</span>
+          <span class="cs3-nov-name">${escapeHtml(n.label)}</span>
+        </div>
+        <div class="cs3-nov-item-right">
+          <span class="cs3-nov-days-badge">${n.days}d</span>
+          <button type="button" class="cs3-nov-remove" data-idx="${i}" aria-label="Eliminar">×</button>
+        </div>
+      </div>`).join("");
+    listEl.querySelectorAll(".cs3-nov-remove").forEach(btn => {
+      btn.addEventListener("click", () => {
+        _novs.splice(Number(btn.dataset.idx), 1);
+        renderNovList();
+        update();
+      });
+    });
+  }
+
+  // Modalidad options
+  document.querySelectorAll(".cs3-mod-opt").forEach(opt => {
+    opt.addEventListener("click", () => {
+      document.querySelectorAll(".cs3-mod-opt").forEach(o => o.classList.remove("cs3-mod-opt--active"));
+      opt.classList.add("cs3-mod-opt--active");
+      opt.querySelector("input[type=radio]").checked = true;
+      _mod = opt.dataset.mod;
+      update();
+    });
+  });
+
+  // No clase
+  document.getElementById("cs3HasNoClass")?.addEventListener("change", function () {
+    const sub = document.getElementById("cs3-noclass-sub");
+    if (this.checked) sub?.removeAttribute("hidden");
+    else              sub?.setAttribute("hidden", "");
+    update();
+  });
+  document.getElementById("cs3NoclassDays")?.addEventListener("input", update);
+
+  // Novedades toggle
+  document.getElementById("cs3HasNov")?.addEventListener("change", function () {
+    const sub = document.getElementById("cs3-nov-sub");
+    if (this.checked) sub?.removeAttribute("hidden");
+    else { sub?.setAttribute("hidden", ""); _novs = []; renderNovList(); update(); }
+  });
+
+  // Añadir novedad
+  document.getElementById("cs3BtnAddNov")?.addEventListener("click", () => {
+    const typeEl = document.getElementById("cs3NovType");
+    const daysEl = document.getElementById("cs3NovDays");
+    const id = typeEl?.value;
+    if (!id) { typeEl?.focus(); return; }
+    const days    = Math.max(1, parseInt(daysEl?.value, 10) || 1);
+    const novType = NOVELTY_TYPES.find(n => n.id === id);
+    if (!novType) return;
+    _novs.push({ ...novType, days });
+    if (typeEl) typeEl.value = "";
+    if (daysEl) daysEl.value = "1";
+    renderNovList();
+    update();
+  });
+}
+
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
 export function wireCalculatorEvents() {
-  // ── Tabs ────────────────────────────────────────────────────────────────────
+  // Tabs
   document.querySelectorAll(".cc-tab[data-cc-tab]").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".cc-tab").forEach(t => t.classList.remove("active"));
@@ -374,7 +562,7 @@ export function wireCalculatorEvents() {
     });
   });
 
-  // ── Calculadora de Personal Requerido ────────────────────────────────────────
+  // ── Calculadora de Personal Requerido ──────────────────────────────────────
   const cuposInput  = document.getElementById("ccCupos");
   const formulaText = document.getElementById("ccFormulaText");
   const preview     = document.getElementById("ccPreview");
@@ -439,63 +627,8 @@ export function wireCalculatorEvents() {
     }
   }
 
-  // ── Calculadora de Salario ───────────────────────────────────────────────────
-  const salarioInput  = document.getElementById("csSalarioBase");
-  const diasInput     = document.getElementById("csDiasTrabajados");
-  const heDiurInput   = document.getElementById("csHEDiurnas");
-  const heNoctInput   = document.getElementById("csHENocturnas");
-  const auxCheck      = document.getElementById("csAuxCheck");
-  const auxHint       = document.getElementById("csAuxHint");
-  const csBtnCalc     = document.getElementById("csBtnCalc");
-  const csResultPanel = document.getElementById("csResultPanel");
-
-  if (!salarioInput) return;
-
-  function updateAuxCheckState() {
-    const base = parseFloat(salarioInput.value) || 0;
-    const eligible = base <= SMLV_2025 * 2;
-    if (auxCheck) {
-      auxCheck.checked = eligible;
-      auxCheck.disabled = !eligible;
-    }
-    if (auxHint) {
-      auxHint.textContent = eligible
-        ? `Aplica: salario ≤ 2 SMLV (${fmtCOP(SMLV_2025 * 2)})`
-        : `No aplica: salario > 2 SMLV (${fmtCOP(SMLV_2025 * 2)})`;
-    }
-  }
-
-  salarioInput.addEventListener("input", updateAuxCheckState);
-  updateAuxCheckState();
-
-  csBtnCalc.addEventListener("click", () => {
-    const salarioBase = parseFloat(salarioInput.value) || 0;
-    const dias        = Math.min(30, Math.max(1, parseInt(diasInput.value, 10) || 30));
-    const heDiurnas   = parseFloat(heDiurInput.value) || 0;
-    const heNocturnas = parseFloat(heNoctInput.value) || 0;
-    const auxEnabled  = auxCheck?.checked ?? false;
-
-    const salarioProp  = Math.round((salarioBase / 30) * dias);
-    const auxTrans     = auxEnabled ? Math.round((AUX_TRANSPORTE / 30) * dias) : 0;
-    const valorHora    = salarioBase / HRS_MES;
-    const heDiurnaVal  = Math.round(valorHora * HE_DIURNA_FACTOR * heDiurnas);
-    const heNoctVal    = Math.round(valorHora * HE_NOCT_FACTOR   * heNocturnas);
-    const totalDevengado = salarioProp + auxTrans + heDiurnaVal + heNoctVal;
-
-    // Deducciones calculan sobre salario proporcional (no sobre aux. transporte)
-    const salud    = Math.round(salarioProp * SALUD_PCT);
-    const pension  = Math.round(salarioProp * PENSION_PCT);
-    const totalDeducciones = salud + pension;
-    const neto = totalDevengado - totalDeducciones;
-
-    csResultPanel.innerHTML = _salaryResultHtml({
-      salarioBase, dias, salarioProp, auxTrans,
-      heDiurnaVal, heNoctVal, totalDevengado,
-      salud, pension, totalDeducciones, neto,
-    });
-    csResultPanel.style.display = "";
-    csResultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  });
+  // ── Calculadora de Salario (3 cards reactivo) ─────────────────────────────
+  _wireCS3();
 }
 
 async function _refreshAuditTable(auditWrap) {

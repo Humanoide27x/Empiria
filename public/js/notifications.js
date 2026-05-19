@@ -1,4 +1,5 @@
 import { apiFetch } from './api.js';
+import { state } from './state.js';
 import { escapeHtml } from './utils.js';
 
 // ── Estado acumulado ──────────────────────────────────────────────────────────
@@ -136,6 +137,15 @@ document.getElementById('activityBtn')?.addEventListener('click', () => {
 
 // ── Cargar y acumular ─────────────────────────────────────────────────────────
 export async function loadTopbarNotifications() {
+  const hasToken = Boolean(state.token || localStorage.getItem("empiria_token"));
+  const hasDashboardAccess = Array.isArray(state.access?.modules)
+    ? state.access.modules.some((item) => item?.module === "dashboard")
+    : false;
+
+  if (!hasToken || !hasDashboardAccess) {
+    return;
+  }
+
   try {
     const [alertsRes, actRes] = await Promise.all([
       apiFetch('/dashboard/alerts'),
@@ -168,8 +178,11 @@ export async function loadTopbarNotifications() {
 
     paintAlerts();
     paintActivity();
-  } catch {
-    // silencioso
+  } catch (error) {
+    if (error?.status === 401 || error?.status === 403) {
+      stopNotificationLoop();
+      return;
+    }
   }
 }
 

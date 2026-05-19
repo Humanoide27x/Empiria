@@ -21,6 +21,9 @@ export function renderModuleNav(modules = []) {
     "calculadora_personal",
     "cobertura_calculadora",
     "nomina_novedades",
+    "registro_novedades",
+    "seguridad_salud_trabajo",
+    "repositorio_hojas_vida",
     "administracion_configuraciones",
   ];
 
@@ -52,6 +55,9 @@ export function renderModuleNav(modules = []) {
       nomina_novedades: "Nómina",
       calculadora_personal: "Calculadora",
       administracion_configuraciones: "Configuración",
+      seguridad_salud_trabajo: "SST",
+      registro_novedades: "Novedades",
+      repositorio_hojas_vida: "Repositorio HV",
     };
     const navLabel = navLabelOverrides[moduleKey] || meta.label;
     const isActive = state.activeModule === moduleKey;
@@ -257,8 +263,8 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
 
   if (moduleKey === "nomina_novedades") {
     const payroll = await import('./modules/payroll.js');
-    const html = await payroll.loadNominaModule();
-    setTimeout(() => payroll.wireNominaEvents(), 80);
+    const html = await payroll.loadPayrollModule();
+    setTimeout(() => payroll.wirePayrollEvents(), 80);
     return html;
   }
 
@@ -272,6 +278,21 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
     const html = await loadClientesModule();
     setTimeout(wireConfigEvents, 0);
     return html;
+  }
+
+  if (moduleKey === "seguridad_salud_trabajo") {
+    const { loadSstModule } = await import('./modules/sst.js');
+    return await loadSstModule();
+  }
+
+  if (moduleKey === "registro_novedades") {
+    const { loadNovedadesModule } = await import('./modules/novedades.js');
+    return await loadNovedadesModule();
+  }
+
+  if (moduleKey === "repositorio_hojas_vida") {
+    const { loadRepositorioHvModule } = await import('./modules/repositorio-hv.js');
+    return await loadRepositorioHvModule();
   }
 
   if (!submoduleKey) {

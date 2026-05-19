@@ -1,10 +1,14 @@
 const {
   handleDashboardSummary,
+  handleDashboardWorkspaceSummary,
   handleDashboardKpis,
   handleDashboardAlerts,
   handleDashboardCoverageMap,
   handleDashboardRecentActivity,
   handleDashboardStaffByCargo,
+  handleDashboardBirthdays,
+  handleDashboardEvents,
+  handleDashboardEventDelete,
 } = require("./dashboard.controller");
 
 async function handleDashboardRoutes(req, res, url) {
@@ -13,6 +17,10 @@ async function handleDashboardRoutes(req, res, url) {
   // Legacy endpoint (backward compat)
   if (req.method === "GET" && p === "/dashboard-summary") {
     handleDashboardSummary(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/summary") {
+    handleDashboardWorkspaceSummary(req, res, url);
     return true;
   }
 
@@ -35,6 +43,19 @@ async function handleDashboardRoutes(req, res, url) {
   }
   if (req.method === "GET" && p === "/dashboard/staff-by-cargo") {
     handleDashboardStaffByCargo(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/birthdays") {
+    handleDashboardBirthdays(req, res, url);
+    return true;
+  }
+  if ((req.method === "GET" || req.method === "POST") && p === "/dashboard/events") {
+    handleDashboardEvents(req, res, url);
+    return true;
+  }
+  const evtMatch = p.match(/^\/dashboard\/events\/(\d+)$/);
+  if (evtMatch && req.method === "DELETE") {
+    handleDashboardEventDelete(req, res, url, Number(evtMatch[1]));
     return true;
   }
 

@@ -1,1721 +1,1349 @@
-import { state } from '../state.js';
-import { apiFetch } from '../api.js';
-import { escapeHtml, escapeAttr } from '../utils.js';
-import { showSuccess, showError, showWarning } from '../toast.js';
+import { state }     from '../state.js';
+import { apiFetch }  from '../api.js';
+import { escapeHtml } from '../utils.js';
+import { showSuccess, showError } from '../toast.js';
+
+// ── Constantes ────────────────────────────────────────────────────────────────
+
+const NOVELTY_TYPES = [
+  { id: "incapacidad_eps", label: "Incapacidad EPS",          paid: true,  coverage: "EPS" },
+  { id: "incapacidad_arl", label: "Incapacidad ARL",          paid: true,  coverage: "ARL" },
+  { id: "licencia_mat",    label: "Licencia de maternidad",   paid: true,  coverage: "EPS" },
+  { id: "licencia_nr",     label: "Licencia no remunerada",   paid: false, coverage: null  },
+  { id: "ausencia",        label: "Ausencia injustificada",   paid: false, coverage: null  },
+  { id: "suspension",      label: "Suspensión disciplinaria", paid: false, coverage: null  },
+];
+
+const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+                   "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+const MOD_COLOR = {
+  CAARES1: "caares", CAARES2: "caares", CAARES3: "caares", CAARES4: "caares",
+  CAA1: "caa", CAA2: "caa", RI: "ri",
+};
+
+const PAYROLL_GROUPS = [
+  { key: "todos",           label: "Todos"                       },
+  { key: "operarios",       label: "Operarios Manipuladores"     },
+  { key: "bodega_ri",       label: "Bodega RI"                   },
+  { key: "bodega_rp",       label: "Bodega RP"                   },
+  { key: "administrativos", label: "Administrativos"             },
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isAdminOrTH() {
-  const r = String(state.currentUser?.role || '').toLowerCase();
-  return r === 'administrador' || r === 'talento_humano';
+function isTH() {
+  const r = String(state.currentUser?.role || "").toLowerCase();
+  return r === "administrador" || r === "talento_humano";
 }
 
-function isGestor() {
-  const r = String(state.currentUser?.role || '').toLowerCase();
-  return r === 'gestores_auxiliares';
+function fmtCOP(n) {
+  return Number(n).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 }
 
-const fmtDate = d => {
-  if (!d) return '—';
-  try { return new Date(d).toLocaleDateString('es-CO', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric' }); }
-  catch { return String(d).slice(0, 10); }
-};
+function periodLabel(periodStr) {
+  const [y, m] = periodStr.split("-");
+  return `${MONTHS_ES[Number(m) - 1]} ${y}`;
+}
 
-const fmtMoney = v => {
-  if (v == null || v === '') return '—';
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(Number(v));
-};
-
-const NOVELTY_LABELS = {
-  INCAPACIDAD: 'Incapacidad',
-  PERMISO_CITA_MEDICA: 'Permiso cita médica',
-  VACACIONES: 'Vacaciones',
-  LICENCIA_REMUNERADA: 'Lic. remunerada',
-  LICENCIA_NO_REMUNERADA: 'Lic. / Permiso no remunerado',
-  SUSPENSION: 'Suspensión',
-  AUSENCIA: 'Ausencia injustificada',
-  CAMBIO_CARGO: 'Cambio de cargo',
-  CAMBIO_SALARIO: 'Cambio de salario',
-  RETIRO: 'Retiro',
-  OTRO: 'Otro',
-};
-
-function typeLabel(t) { return NOVELTY_LABELS[t] || t; }
-
-function statusBadge(s) {
+function statusBadge(status) {
   const map = {
-    PENDIENTE:  ['nm-badge nm-badge-pending',  'Pendiente'],
-    APROBADA:   ['nm-badge nm-badge-approved',  'Aprobada'],
-    RECHAZADA:  ['nm-badge nm-badge-rejected',  'Rechazada'],
-    ANULADA:    ['nm-badge nm-badge-annulled',  'Anulada'],
+    BORRADOR:  ["nm3-badge nm3-badge--draft",  "Borrador"],
+    CALCULADO: ["nm3-badge nm3-badge--calc",   "Liquidado"],
+    CERRADO:   ["nm3-badge nm3-badge--closed", "Cerrado"],
   };
-  const [cls, lbl] = map[s] || ['nm-badge nm-badge-pending', s];
+  const [cls, lbl] = map[status] || ["nm3-badge", status];
   return `<span class="${cls}">${lbl}</span>`;
 }
 
-function _norm(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-function uniq(values) {
-  return [...new Set(
-    (values || [])
-      .map(v => String(v || '').trim())
-      .filter(Boolean)
-  )].sort((a, b) => a.localeCompare(b, 'es'));
-}
-
-function getPayrollViewState() {
-  if (!state.payrollView) {
-    state.payrollView = {
-      topContractId: state.currentUser?.contractId ? String(state.currentUser.contractId) : '',
-      topMunicipality: '',
-      search: '',
-      filterSite: '',
-      filterModality: '',
-      filterRole: '',
-      filterStatus: '',
-      filterCompanyId: '',
-      filterContractId: '',
-      filterMunicipality: '',
-      filterContractType: '',
-      page: 1,
-      pageSize: 10,
-    };
-  }
-  if (!state.payrollView.pageSize) state.payrollView.pageSize = 10;
-  if (!state.payrollView.page) state.payrollView.page = 1;
-  return state.payrollView;
-}
-
-function getCompanyNameById(companyId, fallback = 'Sin empresa') {
-  const id = String(companyId || '').trim();
-  if (!id) return fallback;
-  const match = (state.companies || []).find(item => String(item.id) === id);
-  return match?.name || fallback;
-}
-
-function getContractNameById(contractId, fallback = 'Sin contrato') {
-  const id = String(contractId || '').trim();
-  if (!id) return fallback;
-  const match = (state.contracts || []).find(item => String(item.id) === id);
-  return match?.name || match?.label || fallback;
-}
-
-function getPayrollInitials(name) {
-  const parts = String(name || '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-  if (!parts.length) return 'NM';
-  return parts.map(part => part[0]).join('').toUpperCase();
-}
-
-function getPayrollAvatarStyle(seed) {
-  let hash = 0;
-  const source = String(seed || 'Empiria');
-  for (let i = 0; i < source.length; i += 1) hash = source.charCodeAt(i) + ((hash << 5) - hash);
-  const hue = Math.abs(hash) % 360;
-  return `--nmx-avatar-bg: linear-gradient(135deg, hsla(${hue}, 58%, 96%, 1), hsla(${(hue + 20) % 360}, 54%, 88%, 1)); --nmx-avatar-fg: hsl(${hue}, 34%, 28%);`;
-}
-
-function getPayrollEmployeeName(item) {
-  return item.fullName || item.full_name || item.nombre_completo || item.employeeName || 'Sin nombre';
-}
-
-function getPayrollDocument(item) {
-  return item.documentNumber || item.numero_documento || item.document_number || 'Sin documento';
-}
-
-function getPayrollRole(item) {
-  return item.cargo_real || item.real_position || item.position || item.cargo || item.jobTitle || item.workTimeType || 'Sin cargo';
-}
-
-function getPayrollWorkStatus(item) {
-  const raw = String(item.estado || item.status || item.estado_laboral || 'ACTIVO');
-  const normalized = _norm(raw);
-  if (['activo', 'active', 'vinculado'].includes(normalized)) return 'Vinculado';
-  if (['retirado', 'inactivo', 'inactive'].includes(normalized)) return 'Retirado';
-  if (['pendiente'].includes(normalized)) return 'Pendiente';
-  return raw || 'Pendiente';
-}
-
-function getPayrollMunicipality(item) {
-  return item.educationalMunicipality || item.educational_municipality || item.municipio_institucional || item.municipality || item.municipio || 'Sin municipio';
-}
-
-function getPayrollSite(item) {
-  return item.site || item.sede_educativa || item.siteName || item.institution || item.institucion_educativa || 'Sin sede';
-}
-
-function getPayrollModality(item) {
-  return item.educationalModality || item.modalidad || item.modality || 'Sin modalidad';
-}
-
-function getPayrollContractType(item) {
-  return item.contractType || item.tipo_contrato || item.contract_type || 'Sin definir';
-}
-
-function getPayrollCompanyId(item) {
-  return String(item.companyId || item.company_id || '');
-}
-
-function getPayrollContractId(item) {
-  return String(item.contractId || item.contract_id || '');
-}
-
-function getPayrollCompanyLabel(item) {
-  return getCompanyNameById(getPayrollCompanyId(item), item.companyName || item.empresa || 'Sin empresa');
-}
-
-function getPayrollContractLabel(item) {
-  return getContractNameById(getPayrollContractId(item), item.contractName || item.contrato || 'Sin contrato');
-}
-
-function getPayrollSalaryNumber(item) {
-  const value = item.salary || item.salario || item.salario_basico || item.basicSalary || item.basic_salary;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
-}
-
-function getPayrollStatusTone(status) {
-  const normalized = _norm(status);
-  if (['pagado', 'completo', 'vinculado'].includes(normalized)) return 'success';
-  if (['procesado', 'en proceso'].includes(normalized)) return 'info';
-  if (['pendiente', 'por vencer'].includes(normalized)) return 'warning';
-  if (['vencido', 'retirado', 'error', 'fallido', 'rechazado'].includes(normalized)) return 'danger';
-  return 'neutral';
-}
-
-function getDocumentProgress(item) {
-  const docs = item.documents || item.documentos || {};
-  const keys = [
-    ['cedula', 'cc', 'documento_identidad'],
-    ['hoja_vida', 'hv', 'curriculum'],
-    ['eps', 'certificado_eps', 'afiliacion_eps'],
-    ['pension', 'afp', 'certificado_pension'],
-    ['examen_medico', 'examenes', 'manipulacion_alimentos'],
-  ];
-  const count = keys.reduce((acc, group) => {
-    const hasValue = group.some(key => {
-      const current = docs[key];
-      if (Array.isArray(current)) return current.length > 0;
-      return Boolean(current);
-    });
-    return acc + (hasValue ? 1 : 0);
-  }, 0);
-  return {
-    count,
-    total: keys.length,
-    percent: Math.round((count / keys.length) * 100),
-  };
-}
-
-function getUniquePersonnelRows(personnelMap) {
-  const unique = new Map();
-  Object.values(personnelMap || {}).forEach(item => {
-    const key =
-      String(item.id || item.employeeId || item.legacyJsonId || item.legacy_json_id || getPayrollDocument(item) || Math.random());
-    if (!unique.has(key)) unique.set(key, item);
-  });
-  return [...unique.values()];
-}
-
-function getPayrollProcessStatus(selectedPeriod) {
-  if (selectedPeriod?.status === 'CERRADO') return 'Pagado';
-  if (selectedPeriod?.status === 'CALCULADO') return 'Procesado';
-  return 'Pendiente';
-}
-
-function buildPayrollRows(results, personnelMap, selectedPeriod, novedades) {
-  const resultLines = results?.data?.lines || results?.lines || [];
-  const noveltyByEmployee = {};
-  const pendingNoveltyByEmployee = {};
-
-  (novedades || []).forEach(item => {
-    const key = String(item.employeeId || '');
-    noveltyByEmployee[key] = (noveltyByEmployee[key] || 0) + 1;
-    if (item.status === 'PENDIENTE') pendingNoveltyByEmployee[key] = (pendingNoveltyByEmployee[key] || 0) + 1;
-  });
-
-  if (resultLines.length) {
-    return resultLines.map((line, index) => {
-      const employee = personnelMap[String(line.employeeId)] || {};
-      const salaryBasic = Number(line.baseSalary) || getPayrollSalaryNumber(employee);
-      const net = Number(line.netoPagar) || 0;
-      const explicitDeductions =
-        Number(line.totalDeducciones) ||
-        Number(line.deducciones) ||
-        Number(line.novedadDescuento) ||
-        0;
-      const deductions = explicitDeductions || Math.max(salaryBasic - net, 0);
-      const earnings = Number(line.totalDevengado) || Math.max(net + deductions, salaryBasic);
-      const documentProgress = getDocumentProgress(employee);
-      const employeeId = String(line.employeeId || employee.id || index);
-
-      return {
-        key: `${employeeId}-${index}`,
-        employeeId,
-        fullName: line.employeeName || getPayrollEmployeeName(employee),
-        documentNumber: line.documentNumber || getPayrollDocument(employee),
-        role: getPayrollRole(employee),
-        contractType: getPayrollContractType(employee),
-        salaryBasic,
-        earnings,
-        deductions,
-        net,
-        status: getPayrollProcessStatus(selectedPeriod),
-        municipality: line.municipality || getPayrollMunicipality(employee),
-        site: line.institution || getPayrollSite(employee),
-        modality: line.modality || getPayrollModality(employee),
-        companyId: getPayrollCompanyId(employee),
-        companyLabel: getPayrollCompanyLabel(employee),
-        contractId: getPayrollContractId(employee),
-        contractLabel: getPayrollContractLabel(employee),
-        workerStatus: getPayrollWorkStatus(employee),
-        noveltyCount: noveltyByEmployee[employeeId] || 0,
-        pendingNoveltyCount: pendingNoveltyByEmployee[employeeId] || 0,
-        documentProgress,
-      };
-    });
-  }
-
-  return getUniquePersonnelRows(personnelMap)
-    .filter(item => ['activo', 'active', 'vinculado'].includes(_norm(item.status || item.estado || 'ACTIVO')))
-    .map((employee, index) => {
-      const salaryBasic = getPayrollSalaryNumber(employee);
-      const employeeId = String(employee.id || employee.employeeId || index);
-      const documentProgress = getDocumentProgress(employee);
-      return {
-        key: `${employeeId}-${index}`,
-        employeeId,
-        fullName: getPayrollEmployeeName(employee),
-        documentNumber: getPayrollDocument(employee),
-        role: getPayrollRole(employee),
-        contractType: getPayrollContractType(employee),
-        salaryBasic,
-        earnings: salaryBasic,
-        deductions: 0,
-        net: salaryBasic,
-        status: getPayrollProcessStatus(selectedPeriod),
-        municipality: getPayrollMunicipality(employee),
-        site: getPayrollSite(employee),
-        modality: getPayrollModality(employee),
-        companyId: getPayrollCompanyId(employee),
-        companyLabel: getPayrollCompanyLabel(employee),
-        contractId: getPayrollContractId(employee),
-        contractLabel: getPayrollContractLabel(employee),
-        workerStatus: getPayrollWorkStatus(employee),
-        noveltyCount: noveltyByEmployee[employeeId] || 0,
-        pendingNoveltyCount: pendingNoveltyByEmployee[employeeId] || 0,
-        documentProgress,
-      };
-    });
-}
-
-function applyPayrollFilters(rows, view) {
-  return (rows || []).filter(item => {
-    if (view.search) {
-      const haystack = [
-        item.fullName,
-        item.documentNumber,
-        item.role,
-        item.site,
-        item.municipality,
-      ].map(_norm).join(' ');
-      if (!haystack.includes(_norm(view.search))) return false;
-    }
-    if (view.topContractId && String(item.contractId || '') !== String(view.topContractId)) return false;
-    if (view.topMunicipality && _norm(item.municipality) !== _norm(view.topMunicipality)) return false;
-    if (view.filterSite && _norm(item.site) !== _norm(view.filterSite)) return false;
-    if (view.filterModality && _norm(item.modality) !== _norm(view.filterModality)) return false;
-    if (view.filterRole && _norm(item.role) !== _norm(view.filterRole)) return false;
-    if (view.filterStatus && _norm(item.status) !== _norm(view.filterStatus)) return false;
-    if (view.filterCompanyId && String(item.companyId || '') !== String(view.filterCompanyId)) return false;
-    if (view.filterContractId && String(item.contractId || '') !== String(view.filterContractId)) return false;
-    if (view.filterMunicipality && _norm(item.municipality) !== _norm(view.filterMunicipality)) return false;
-    if (view.filterContractType && _norm(item.contractType) !== _norm(view.filterContractType)) return false;
-    return true;
-  });
-}
-
-function paginateRows(rows, page, pageSize) {
-  const totalPages = Math.max(1, Math.ceil((rows.length || 0) / pageSize) || 1);
-  const safePage = Math.min(Math.max(Number(page) || 1, 1), totalPages);
-  const start = (safePage - 1) * pageSize;
-  return {
-    page: safePage,
-    totalPages,
-    items: rows.slice(start, start + pageSize),
-  };
-}
-
-function buildKpiModel(filteredRows, allRows, selectedPeriod, results, novedades, munStatusMap) {
-  const totals = results?.data?.totals || results?.totals || {};
-  const totalCollaborators = filteredRows.length;
-  const totalDevengado = Number(totals.totalDevengado) || filteredRows.reduce((acc, item) => acc + (Number(item.earnings) || 0), 0);
-  const totalDeducciones = Number(totals.totalDeducciones) || filteredRows.reduce((acc, item) => acc + (Number(item.deductions) || 0), 0);
-  const netoPagar = Number(totals.netoPagar) || filteredRows.reduce((acc, item) => acc + (Number(item.net) || 0), 0);
-
-  const noveltyRows = novedades || [];
-  const reviewedCount = noveltyRows.filter(item => item.status && item.status !== 'PENDIENTE').length;
-  const reviewRatio = noveltyRows.length ? (reviewedCount / noveltyRows.length) : (selectedPeriod ? 1 : 0);
-  const municipalityKeys = Object.keys(munStatusMap || {});
-  const municipalityRatio = municipalityKeys.length
-    ? municipalityKeys.filter(key => munStatusMap[key]?.is_complete).length / municipalityKeys.length
-    : (selectedPeriod ? 1 : 0);
-  const calcRatio = ['CALCULADO', 'CERRADO'].includes(selectedPeriod?.status) ? 1 : 0;
-  const closeRatio = selectedPeriod?.status === 'CERRADO' ? 1 : 0;
-  const baseRatio = selectedPeriod ? 1 : 0;
-  const execution = (((baseRatio + reviewRatio + municipalityRatio + calcRatio + closeRatio) / 5) * 100).toFixed(1);
-
-  return {
-    totalCollaborators,
-    totalDevengado,
-    totalDeducciones,
-    netoPagar,
-    execution,
-    visibleRows: filteredRows.length,
-    totalRows: allRows.length,
-  };
-}
-
-function buildDonutModel(filteredRows) {
-  const salaryBasic = filteredRows.reduce((acc, item) => acc + (Number(item.salaryBasic) || 0), 0);
-  const transport = filteredRows.reduce((acc, item) => acc + (Number(item.transportAllowance) || 0), 0);
-  const recargos = filteredRows.reduce((acc, item) => acc + (Number(item.recargos) || 0), 0);
-  const prestaciones = filteredRows.reduce((acc, item) => acc + (Number(item.prestaciones) || 0), 0);
-  const totalDevengado = filteredRows.reduce((acc, item) => acc + (Number(item.earnings) || 0), 0);
-  const other = Math.max(totalDevengado - salaryBasic - transport - recargos - prestaciones, 0);
-  const total = salaryBasic + transport + recargos + prestaciones + other;
-
-  return [
-    { label: 'Salario basico', value: salaryBasic, color: '#0a1f44' },
-    { label: 'Auxilio transporte', value: transport, color: '#007bff' },
-    { label: 'Recargos', value: recargos, color: '#00c288' },
-    { label: 'Prestaciones', value: prestaciones, color: '#84cc16' },
-    { label: 'Otros', value: other, color: '#94a3b8' },
-  ].map(item => ({
-    ...item,
-    percent: total > 0 ? (item.value / total) * 100 : 0,
-  }));
-}
-
-function buildDonutStyle(items) {
-  let offset = 0;
-  const segments = items.map(item => {
-    const start = offset;
-    const end = offset + item.percent;
-    offset = end;
-    return `${item.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
-  });
-  return segments.length
-    ? `background: conic-gradient(${segments.join(', ')});`
-    : 'background: conic-gradient(#e2e8f0 0 100%);';
-}
-
-function buildPayrollWorkspace({
-  periods,
-  selectedPeriod,
-  personnelMap,
-  novedades,
-  munStatusMap,
-  results,
-}) {
-  const view = getPayrollViewState();
-  const rows = buildPayrollRows(results, personnelMap, selectedPeriod, novedades);
-  const filteredRows = applyPayrollFilters(rows, view);
-  const paged = paginateRows(filteredRows, view.page, view.pageSize || 10);
-  view.page = paged.page;
-
-  const municipalities = uniq(rows.map(item => item.municipality));
-  const sites = uniq(rows.map(item => item.site));
-  const modalities = uniq(rows.map(item => item.modality));
-  const roles = uniq(rows.map(item => item.role));
-  const statuses = uniq(rows.map(item => item.status));
-  const contractTypes = uniq(rows.map(item => item.contractType));
-
-  const companyOptions = uniq(rows.map(item => item.companyId).filter(Boolean))
-    .map(id => ({ value: id, label: getCompanyNameById(id, 'Sin empresa') }));
-  const contractOptions = uniq(rows.map(item => item.contractId).filter(Boolean))
-    .map(id => ({ value: id, label: getContractNameById(id, 'Sin contrato') }));
-
-  const kpis = buildKpiModel(filteredRows, rows, selectedPeriod, results, novedades, munStatusMap);
-  const donut = buildDonutModel(filteredRows);
-  const notificationsCount =
-    (novedades || []).filter(item => item.status === 'PENDIENTE').length +
-    (selectedPeriod && !['CALCULADO', 'CERRADO'].includes(selectedPeriod.status) ? 1 : 0);
-  const canReviewLine = ['CALCULADO', 'CERRADO'].includes(selectedPeriod?.status);
-  const exportHref = canReviewLine && selectedPeriod ? `/payroll/periods/${selectedPeriod.id}/export` : '';
-  const currentUserName = state.currentUser?.name || 'Usuario';
-  const processDisabled = !isAdminOrTH() || !selectedPeriod || selectedPeriod.status === 'CERRADO';
-
-  const rowsHtml = paged.items.length ? paged.items.map(item => {
-    const statusTone = getPayrollStatusTone(item.status);
-    const docPercent = item.documentProgress.percent;
-    return `
-      <tr class="nmx-table-row">
-        <td><input type="checkbox" class="nmx-check" aria-label="Seleccionar ${escapeAttr(item.fullName)}" /></td>
-        <td>
-          <button
-            type="button"
-            class="nmx-person-trigger ${canReviewLine ? 'nm-action-detail' : ''}"
-            data-emp-id="${escapeAttr(item.employeeId)}"
-            data-period-id="${escapeAttr(String(selectedPeriod?.id || ''))}"
-            ${canReviewLine ? '' : 'disabled'}>
-            <span class="nmx-avatar" style="${escapeAttr(getPayrollAvatarStyle(item.fullName))}">${escapeHtml(getPayrollInitials(item.fullName))}</span>
-            <span class="nmx-person-copy">
-              <span class="table-main">${escapeHtml(item.fullName)}</span>
-              <span class="table-secondary">${escapeHtml(item.documentNumber)}</span>
-            </span>
-          </button>
-          <div class="nmx-doc-progress">
-            <span class="nmx-doc-progress-bar"><span style="width:${docPercent}%"></span></span>
-            <span class="table-secondary">${item.documentProgress.count}/${item.documentProgress.total} docs</span>
-          </div>
-        </td>
-        <td>
-          <div class="table-main">${escapeHtml(item.role)}</div>
-          <div class="table-secondary">${escapeHtml(item.site)}</div>
-        </td>
-        <td>
-          <div class="table-main">${escapeHtml(item.contractType)}</div>
-          <div class="table-secondary">${escapeHtml(item.contractLabel)}</div>
-        </td>
-        <td class="nmx-money-cell">${fmtMoney(item.salaryBasic)}</td>
-        <td class="nmx-money-cell nmx-money-positive">${fmtMoney(item.earnings)}</td>
-        <td class="nmx-money-cell nmx-money-negative">${fmtMoney(item.deductions)}</td>
-        <td class="nmx-money-cell nmx-money-net">${fmtMoney(item.net)}</td>
-        <td>
-          <span class="status-chip nmx-status-chip is-${statusTone}">${escapeHtml(item.status)}</span>
-        </td>
-        <td>
-          <details class="nmx-row-menu">
-            <summary aria-label="Acciones de ${escapeAttr(item.fullName)}">...</summary>
-            <div class="nmx-row-menu-body">
-              <button type="button" class="nmx-menu-item nm-action-detail"
-                data-emp-id="${escapeAttr(item.employeeId)}"
-                data-period-id="${escapeAttr(String(selectedPeriod?.id || ''))}"
-                ${canReviewLine ? '' : 'disabled'}>
-                Ver detalle
-              </button>
-              <button type="button" class="nmx-menu-item nm-action-slip"
-                data-emp-id="${escapeAttr(item.employeeId)}"
-                data-emp-name="${escapeAttr(item.fullName)}"
-                data-period-id="${escapeAttr(String(selectedPeriod?.id || ''))}"
-                ${canReviewLine ? '' : 'disabled'}>
-                Ver desprendible
-              </button>
-              <button type="button" class="nmx-menu-item" data-payroll-trigger-calc>
-                Recalcular
-              </button>
-              <button type="button" class="nmx-menu-item" data-nm-open-panel="nmSideNovedades">
-                Historial
-              </button>
-            </div>
-          </details>
-        </td>
-      </tr>`;
-  }).join('') : `
-      <tr>
-        <td colspan="10" class="nmx-table-empty">No hay registros para la combinacion actual de filtros.</td>
-      </tr>`;
-
-  const pages = Array.from({ length: paged.totalPages }, (_, index) => index + 1)
-    .filter(page => Math.abs(page - paged.page) <= 1 || page === 1 || page === paged.totalPages);
-
-  return `
-<div class="nm-wrap nmx-shell">
-  <article class="nmx-layout">
-    <section class="nmx-opsbar">
-      <div class="nmx-actionbar-spacer"></div>
-      <div class="nmx-actionbar-controls">
-        <details class="nmx-actions-menu">
-          <summary class="btn-secondary">Acciones</summary>
-          <div class="nmx-actions-dropdown">
-            <button type="button" class="nmx-menu-item" data-nm-open-panel="nmSidePeriods">Generar reportes</button>
-            <button type="button" class="nmx-menu-item" data-payroll-trigger-calc>Recalcular</button>
-            ${exportHref ? `<a href="${escapeAttr(exportHref)}" class="nmx-menu-item" download>Exportar</a>` : `<button type="button" class="nmx-menu-item" disabled>Exportar</button>`}
-            <button type="button" class="nmx-menu-item" data-nm-open-panel="nmSideConfirm">Auditoria</button>
-          </div>
-        </details>
-        <button type="button" class="btn btn-primary nmx-process-btn" id="nmBtnCalculate" ${processDisabled ? 'disabled' : ''}>
-          Procesar nomina
-        </button>
-      </div>
-    </section>
-
-    <section class="nmx-kpis">
-      <article class="nmx-kpi-card">
-        <div class="nmx-kpi-icon soft-blue"></div>
-        <span class="kpi-label">Total colaboradores</span>
-        <strong class="kpi-value">${kpis.totalCollaborators}</strong>
-        <small class="kpi-meta">${kpis.visibleRows} visibles de ${kpis.totalRows} en operacion</small>
-      </article>
-      <article class="nmx-kpi-card">
-        <div class="nmx-kpi-icon soft-navy"></div>
-        <span class="kpi-label">Total devengado</span>
-        <strong class="kpi-value">${fmtMoney(kpis.totalDevengado)}</strong>
-        <small class="kpi-meta">Salarios, recargos, auxilios y bonos</small>
-      </article>
-      <article class="nmx-kpi-card">
-        <div class="nmx-kpi-icon soft-red"></div>
-        <span class="kpi-label">Total deducciones</span>
-        <strong class="kpi-value">${fmtMoney(kpis.totalDeducciones)}</strong>
-        <small class="kpi-meta">Salud, pension, libranzas y descuentos</small>
-      </article>
-      <article class="nmx-kpi-card">
-        <div class="nmx-kpi-icon soft-green"></div>
-        <span class="kpi-label">Neto a pagar</span>
-        <strong class="kpi-value">${fmtMoney(kpis.netoPagar)}</strong>
-        <small class="kpi-meta">Valor estimado para giro final</small>
-      </article>
-      <article class="nmx-kpi-card">
-        <div class="nmx-kpi-icon soft-teal"></div>
-        <span class="kpi-label">% ejecucion nomina</span>
-        <strong class="kpi-value">${kpis.execution}%</strong>
-        <small class="kpi-meta">Avance operativo del periodo activo</small>
-      </article>
-    </section>
-
-    <section class="nmx-filterbar">
-      <select id="nmFilterPeriod" class="form-input">
-        <option value="">Periodo</option>
-        ${periods.map(item => `<option value="${item.id}" ${String(selectedPeriod?.id || '') === String(item.id) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-      </select>
-      <select id="nmFilterSite" class="form-input">
-        <option value="">Sede</option>
-        ${sites.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterSite) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-      </select>
-      <select id="nmFilterModality" class="form-input">
-        <option value="">Modalidad</option>
-        ${modalities.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterModality) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-      </select>
-      <select id="nmFilterRole" class="form-input">
-        <option value="">Cargo</option>
-        ${roles.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterRole) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-      </select>
-      <select id="nmFilterStatus" class="form-input">
-        <option value="">Estado</option>
-        ${statuses.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterStatus) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-      </select>
-      <details class="nmx-advanced-filters">
-        <summary class="btn-secondary">Filtros</summary>
-        <div class="nmx-advanced-panel">
-          <select id="nmFilterCompany" class="form-input">
-            <option value="">Empresa</option>
-            ${companyOptions.map(item => `<option value="${escapeAttr(item.value)}" ${String(view.filterCompanyId) === String(item.value) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-          </select>
-          <select id="nmFilterContract" class="form-input">
-            <option value="">Contrato</option>
-            ${contractOptions.map(item => `<option value="${escapeAttr(item.value)}" ${String(view.filterContractId) === String(item.value) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-          </select>
-          <select id="nmFilterMunicipality" class="form-input">
-            <option value="">Municipio</option>
-            ${municipalities.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterMunicipality) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-          </select>
-          <select id="nmFilterContractType" class="form-input">
-            <option value="">Tipo contrato</option>
-            ${contractTypes.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.filterContractType) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-          </select>
-        </div>
-      </details>
-      <button type="button" class="btn btn-secondary" id="nmBtnClearFilters">Limpiar filtros</button>
-    </section>
-
-    <section class="nmx-body">
-      <div class="nmx-main">
-        <section class="nmx-table-card">
-          <div class="nmx-table-headline">
-            <div>
-              <h3 class="employee-name">Colaboradores en nomina (${kpis.totalCollaborators})</h3>
-            </div>
-            <div class="nmx-table-tools">
-              <label class="nmx-table-search">
-                <input
-                  id="nmPayrollSearch"
-                  type="text"
-                  class="form-input"
-                  placeholder="Buscar colaborador..."
-                  value="${escapeAttr(view.search || '')}" />
-                <span class="nmx-table-search-icon"></span>
-              </label>
-              <button type="button" class="nmx-table-tool" data-nm-open-panel="nmSideNovedades" aria-label="Alertas de nomina">
-                <span class="nmx-toolbar-bars"></span>
-              </button>
-              <a
-                class="nmx-table-tool ${exportHref ? '' : 'is-disabled'}"
-                ${exportHref ? `href="${escapeAttr(exportHref)}" download` : 'role="button" aria-disabled="true"'}
-                aria-label="Exportar nomina">
-                <span class="nmx-toolbar-download"></span>
-              </a>
-              <button type="button" class="nmx-table-tool" data-nm-open-panel="nmSidePeriods" aria-label="Mas acciones">
-                <span class="nmx-toolbar-dots"></span>
-              </button>
-            </div>
-          </div>
-          <div class="nmx-table-period">
-            <span class="status-chip nmx-status-chip is-${getPayrollStatusTone(getPayrollProcessStatus(selectedPeriod))}">${escapeHtml(getPayrollProcessStatus(selectedPeriod))}</span>
-            <span class="table-secondary">${selectedPeriod ? `${escapeHtml(selectedPeriod.label)} · ${fmtDate(selectedPeriod.periodStart)} - ${fmtDate(selectedPeriod.periodEnd)}` : 'Selecciona un periodo para operar'}</span>
-          </div>
-          <div class="nmx-table-scroll">
-            <table class="nmx-table">
-              <thead>
-                <tr>
-                  <th class="table-head"><input type="checkbox" class="nmx-check" aria-label="Seleccionar todos" /></th>
-                  <th class="table-head">Colaborador</th>
-                  <th class="table-head">Cargo</th>
-                  <th class="table-head">Tipo contrato</th>
-                  <th class="table-head">Salario basico</th>
-                  <th class="table-head">Devengados</th>
-                  <th class="table-head">Deducciones</th>
-                  <th class="table-head">Neto a pagar</th>
-                  <th class="table-head">Estado</th>
-                  <th class="table-head">Accion</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-          </div>
-          <div class="nmx-legal-note">
-            La nomina se procesa de acuerdo con la legislacion laboral vigente y los parametros contractuales activos del periodo seleccionado.
-          </div>
-          <div class="nmx-pagination">
-            <button type="button" class="btn btn-secondary" data-payroll-page="${paged.page - 1}" ${paged.page <= 1 ? 'disabled' : ''}>Anterior</button>
-            <div class="nmx-pagination-pages">
-              ${pages.map(page => `<button type="button" class="nmx-page-btn ${page === paged.page ? 'is-active' : ''}" data-payroll-page="${page}">${page}</button>`).join('')}
-            </div>
-            <button type="button" class="btn btn-secondary" data-payroll-page="${paged.page + 1}" ${paged.page >= paged.totalPages ? 'disabled' : ''}>Siguiente</button>
-          </div>
-        </section>
-      </div>
-
-      <aside class="nmx-sidebar">
-        <div class="nmx-sidebar-scroll">
-          <section class="nmx-side-card">
-            <div class="nmx-side-card-head">
-              <h3 class="employee-name">Resumen nomina</h3>
-              <span class="employee-role">${selectedPeriod?.label || 'Sin periodo activo'}</span>
-            </div>
-            <div class="nmx-summary-list">
-              <div><span>Devengado</span><strong class="is-positive">${fmtMoney(kpis.totalDevengado)}</strong></div>
-              <div><span>Deducciones</span><strong class="is-danger">${fmtMoney(kpis.totalDeducciones)}</strong></div>
-              <div class="is-total"><span>Neto a pagar</span><strong class="is-primary">${fmtMoney(kpis.netoPagar)}</strong></div>
-              <div><span>Total colaboradores</span><strong>${kpis.totalCollaborators}</strong></div>
-            </div>
-          </section>
-
-          <section class="nmx-side-card">
-            <div class="nmx-side-card-head">
-              <h3 class="employee-name">Distribucion de devengados</h3>
-              <span class="employee-role">Vista presupuestal</span>
-            </div>
-            <div class="nmx-donut-wrap">
-              <div class="nmx-donut" style="${escapeAttr(buildDonutStyle(donut))}">
-                <div class="nmx-donut-core">
-                  <strong>${kpis.execution}%</strong>
-                  <span>Ejecucion</span>
-                </div>
-              </div>
-              <div class="nmx-donut-legend">
-                ${donut.map(item => `
-                  <div>
-                    <span><i style="background:${escapeAttr(item.color)}"></i>${escapeHtml(item.label)}</span>
-                    <strong>${fmtMoney(item.value)}</strong>
-                  </div>`).join('')}
-              </div>
-            </div>
-          </section>
-
-          <section class="nmx-side-card">
-            <div class="nmx-side-card-head">
-              <h3 class="employee-name">Acciones rapidas</h3>
-              <span class="employee-role">Productividad operativa</span>
-            </div>
-            <div class="nmx-quick-actions">
-              <button type="button" class="nmx-quick-action" data-payroll-trigger-calc>
-                <span class="nmx-qa-icon qa-green"></span>
-                <strong>Liquidar nomina</strong>
-                <span>Calculo completo</span>
-              </button>
-              <button type="button" class="nmx-quick-action" data-nm-open-panel="nmSideConfirm">
-                <span class="nmx-qa-icon qa-blue"></span>
-                <strong>Generar desprendibles</strong>
-                <span>Comprobantes</span>
-              </button>
-              ${exportHref ? `<a href="${escapeAttr(exportHref)}" class="nmx-quick-action" download><span class="nmx-qa-icon qa-purple"></span><strong>Exportar a contabilidad</strong><span>ERP y software contable</span></a>` : `<button type="button" class="nmx-quick-action" disabled><span class="nmx-qa-icon qa-purple"></span><strong>Exportar a contabilidad</strong><span>Disponible al calcular</span></button>`}
-              <button type="button" class="nmx-quick-action" data-nm-open-panel="nmSidePeriods">
-                <span class="nmx-qa-icon qa-orange"></span>
-                <strong>Historial de nominas</strong>
-                <span>Trazabilidad</span>
-              </button>
-            </div>
-          </section>
-
-          <details class="nmx-side-disclosure" id="nmSidePeriods" open>
-            <summary>Periodo y configuracion</summary>
-            <div class="nmx-side-disclosure-body">
-              ${buildPeriodCard(periods, selectedPeriod)}
-            </div>
-          </details>
-
-          ${selectedPeriod ? `
-            <details class="nmx-side-disclosure" id="nmSideNovedades">
-              <summary>Novedades y validaciones</summary>
-              <div class="nmx-side-disclosure-body">
-                ${buildNovedadesCard(novedades, personnelMap, selectedPeriod)}
-              </div>
-            </details>
-
-            <details class="nmx-side-disclosure" id="nmSideMunicipalities">
-              <summary>Control territorial</summary>
-              <div class="nmx-side-disclosure-body">
-                ${buildMunicipalitiesCard(novedades, munStatusMap, personnelMap, selectedPeriod)}
-              </div>
-            </details>
-          ` : ''}
-
-          ${selectedPeriod ? `
-            <details class="nmx-side-disclosure" id="nmSideConfirm">
-              <summary>Confirmacion y cierre</summary>
-              <div class="nmx-side-disclosure-body">
-                ${buildConfirmCard(selectedPeriod)}
-              </div>
-            </details>
-          ` : ''}
-        </div>
-      </aside>
-    </section>
-  </article>
-</div>`;
-}
-
-function syncPayrollTopbar(periods, selectedPeriod, view, municipalities, contractOptions) {
-  const host = document.getElementById('tbPayrollControls');
-  if (!host) return;
-  host.classList.remove('hidden');
-  host.innerHTML = `
-    <label class="nmx-topbar-field">
-      <span>Contrato activo</span>
-      <select id="nmTopContractSelect" class="form-input">
-        <option value="">Todos los contratos</option>
-        ${contractOptions.map(item => `<option value="${escapeAttr(item.value)}" ${String(view.topContractId) === String(item.value) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-      </select>
-    </label>
-    <label class="nmx-topbar-field">
-      <span>Municipio</span>
-      <select id="nmTopMunicipalitySelect" class="form-input">
-        <option value="">Todos los municipios</option>
-        ${municipalities.map(item => `<option value="${escapeAttr(item)}" ${_norm(view.topMunicipality) === _norm(item) ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}
-      </select>
-    </label>
-    <label class="nmx-topbar-field">
-      <span>Periodo</span>
-      <select id="nmTopPeriodSelect" class="form-input">
-        <option value="">Selecciona periodo</option>
-        ${periods.map(item => `<option value="${item.id}" ${String(selectedPeriod?.id || '') === String(item.id) ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-      </select>
-    </label>
-  `;
-}
-
-// ── Card builders ─────────────────────────────────────────────────────────────
-
-function buildPeriodCard(periods, selectedPeriod) {
-  const admin = isAdminOrTH();
-  const selId = state.payrollPeriodId ? String(state.payrollPeriodId) : '';
-
-  return `
-<div class="nm-card" id="nmPeriodCard">
-  <div class="nm-card-head">
-    <div class="nm-card-head-left">
-      <span class="nm-step-badge">1</span>
-      <div>
-        <h3 class="nm-card-title"><span class="nm-card-title-icon">📅</span> Período de Nómina</h3>
-        <p class="nm-card-subtitle">Selecciona o crea el período para gestionar la nómina</p>
-      </div>
-    </div>
-    ${admin ? `<button type="button" class="nm-btn nm-btn-primary" id="nmBtnToggleCreate">+ Nuevo período</button>` : ''}
-  </div>
-
-  ${admin ? `
-  <div id="nmCreatePeriodWrap" class="nm-create-form hidden">
-    <div class="nm-form-row">
-      <label class="nm-label">Etiqueta
-        <input type="text" id="nmNewLabel" class="nm-input" placeholder="Ej: Nómina Abril 2026" />
-      </label>
-      <label class="nm-label">Fecha inicio
-        <input type="date" id="nmNewStart" class="nm-input" />
-      </label>
-      <label class="nm-label">Fecha fin
-        <input type="date" id="nmNewEnd" class="nm-input" />
-      </label>
-    </div>
-    <div class="nm-form-actions">
-      <button type="button" class="nm-btn nm-btn-ghost" id="nmBtnCancelCreate">Cancelar</button>
-      <button type="button" class="nm-btn nm-btn-primary" id="nmBtnSavePeriod">Crear período</button>
-    </div>
-  </div>` : ''}
-
-  <div class="nm-period-selector">
-    ${periods.length === 0
-      ? `<p class="nm-empty-hint">${admin ? 'No hay períodos. Crea el primero con el botón de arriba.' : 'No hay períodos disponibles.'}</p>`
-      : `<select id="nmPeriodSelect" class="nm-select nm-select-period">
-          <option value="">— Selecciona un período —</option>
-          ${periods.map(p => `
-            <option value="${p.id}" ${String(p.id) === selId ? 'selected' : ''}>
-              ${escapeHtml(p.label)} &nbsp;·&nbsp; ${fmtDate(p.periodStart)} → ${fmtDate(p.periodEnd)}
-              ${p.status === 'CERRADO' ? ' [CERRADO]' : p.status === 'CALCULADO' ? ' [Calculado]' : ''}
-            </option>`).join('')}
-        </select>`}
-  </div>
-
-  ${selectedPeriod ? `
-  <div class="nm-period-info">
-    <span class="nm-period-dates">${fmtDate(selectedPeriod.periodStart)} &rarr; ${fmtDate(selectedPeriod.periodEnd)}</span>
-    <span class="nm-period-status nm-ps-${(selectedPeriod.status || '').toLowerCase()}">${selectedPeriod.status}</span>
-  </div>` : ''}
-</div>`;
-}
-
-function buildNovedadesCard(novedades, personnelMap, selectedPeriod) {
-  const admin = isAdminOrTH();
-  const gestor = isGestor();
-  const canAdd = (admin || gestor) && selectedPeriod && selectedPeriod.status !== 'CERRADO';
-
-  const employees = Object.values(personnelMap).filter(e => {
-    const s = String(e.status || e.estado || '').toUpperCase();
-    return s === 'ACTIVO' || s === 'ACTIVE';
-  });
-  const municipalities = [...new Set(employees.map(e =>
-    e.educationalMunicipality || e.educational_municipality || e.municipio_institucional || e.municipality || e.municipio || ''
-  ).filter(Boolean))].sort();
-
-  return `
-<div class="nm-card" id="nmNovedadesCard">
-  <div class="nm-card-head">
-    <div class="nm-card-head-left">
-      <span class="nm-step-badge">2</span>
-      <div>
-        <h3 class="nm-card-title"><span class="nm-card-title-icon">📋</span> Novedades de Nómina</h3>
-        <p class="nm-card-subtitle">${novedades.length} novedad${novedades.length !== 1 ? 'es' : ''} registrada${novedades.length !== 1 ? 's' : ''} en este período</p>
-      </div>
-    </div>
-    ${canAdd ? `<button type="button" class="nm-btn nm-btn-primary" id="nmBtnAddNovedad">+ Registrar novedad</button>` : ''}
-  </div>
-
-  <div id="nmNovedadFormWrap" class="nm-create-form hidden" data-period-id="${selectedPeriod?.id || ''}">
-    <div class="nm-form-row nm-form-row-5">
-      <label class="nm-label">Municipio <span class="nm-req">*</span>
-        <select id="nmNovMunicipality" class="nm-select">
-          <option value="">Selecciona municipio</option>
-          ${municipalities.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('')}
-        </select>
-      </label>
-      <label class="nm-label">Empleado <span class="nm-req">*</span>
-        <select id="nmNovEmployee" class="nm-select" disabled>
-          <option value="">Primero selecciona municipio</option>
-        </select>
-      </label>
-      <label class="nm-label">Tipo <span class="nm-req">*</span>
-        <select id="nmNovType" class="nm-select">
-          <option value="">Selecciona tipo</option>
-          <option value="INCAPACIDAD">Incapacidad</option>
-          <option value="PERMISO_CITA_MEDICA">Permiso por cita médica</option>
-          <option value="VACACIONES">Vacaciones</option>
-          <option value="LICENCIA_REMUNERADA">Licencia remunerada</option>
-          <option value="LICENCIA_NO_REMUNERADA">Permiso / Licencia no remunerado</option>
-          <option value="SUSPENSION">Suspensión</option>
-          <option value="AUSENCIA">Ausencia injustificada</option>
-          <option value="CAMBIO_CARGO">Cambio de cargo</option>
-          <option value="CAMBIO_SALARIO">Cambio de salario</option>
-          <option value="RETIRO">Retiro</option>
-          <option value="OTRO">Otro</option>
-        </select>
-      </label>
-      <label class="nm-label">Fecha inicio <span class="nm-req">*</span>
-        <input type="date" id="nmNovStartDate" class="nm-input" />
-      </label>
-      <label class="nm-label">Fecha fin
-        <input type="date" id="nmNovEndDate" class="nm-input" />
-      </label>
-      <label class="nm-label">Días
-        <input type="number" id="nmNovDays" class="nm-input" min="1" placeholder="Ej: 3" />
-      </label>
-      <label class="nm-label nm-label-full">Observaciones
-        <textarea id="nmNovObservations" class="nm-textarea" rows="2" placeholder="Motivo o descripción..."></textarea>
-      </label>
-    </div>
-    <div class="nm-form-actions">
-      <button type="button" class="nm-btn nm-btn-ghost" id="nmBtnCancelNovedad">Cancelar</button>
-      <button type="button" class="nm-btn nm-btn-primary" id="nmBtnSaveNovedad">Guardar novedad</button>
-    </div>
-  </div>
-
-  <div class="nm-table-wrap">
-    <table class="nm-table">
-      <thead>
-        <tr>
-          <th>Nombre</th>
-          <th>Municipio</th>
-          <th>Gestor / Fecha reporte</th>
-          <th>Tipo</th>
-          <th>Período novedad</th>
-          <th>Estado</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${novedades.length ? novedades.map(n => {
-          const emp = personnelMap[String(n.employeeId)] || {};
-          const mun = emp.educationalMunicipality || emp.educational_municipality ||
-                      emp.municipio_institucional || emp.municipality || emp.municipio || '—';
-          return `
-          <tr>
-            <td>
-              <div class="nm-name-cell">${escapeHtml(n.employeeName || '—')}</div>
-              <div class="nm-doc-cell">CC ${escapeHtml(n.documentNumber || '—')}</div>
-            </td>
-            <td>${escapeHtml(mun)}</td>
-            <td>
-              <div class="nm-name-cell">${escapeHtml(n.createdByName || '—')}</div>
-              <div class="nm-doc-cell">${fmtDate(n.createdAt)}</div>
-            </td>
-            <td><span class="nm-type-chip">${typeLabel(n.noveltyType)}</span></td>
-            <td class="nm-doc-cell">
-              ${fmtDate(n.startDate)}${n.endDate ? ` → ${fmtDate(n.endDate)}` : ''}
-              ${n.days ? `<br>${n.days} día${n.days != 1 ? 's' : ''}` : ''}
-            </td>
-            <td>
-              ${statusBadge(n.status)}
-              ${n.reviewNotes ? `<div class="nm-review-note" title="${escapeAttr(n.reviewNotes)}">↩ ${escapeHtml(n.reviewNotes.length > 35 ? n.reviewNotes.slice(0, 35) + '…' : n.reviewNotes)}</div>` : ''}
-            </td>
-            <td>
-              <div class="nm-actions-row">
-                ${n.supportDocumentUrl ? `<a href="${escapeAttr(n.supportDocumentUrl)}" target="_blank" class="nm-action-btn nm-action-view">📎 Soporte</a>` : ''}
-                ${admin && n.status === 'PENDIENTE' ? `
-                  <button type="button" class="nm-action-btn nm-action-approve" data-nov-id="${n.id}">✓ Aprobar</button>
-                  <button type="button" class="nm-action-btn nm-action-reject" data-nov-id="${n.id}">✗ Rechazar</button>
-                ` : ''}
-              </div>
-            </td>
-          </tr>`;
-        }).join('')
-        : `<tr><td colspan="7" class="nm-table-empty">No hay novedades registradas para este período.</td></tr>`}
-      </tbody>
-    </table>
-  </div>
-</div>`;
-}
-
-function buildMunicipalitiesCard(novedades, munStatusMap, personnelMap, selectedPeriod) {
-  const admin = isAdminOrTH();
-  const gestor = isGestor();
-  const canMarkDone = (admin || gestor) && selectedPeriod && selectedPeriod.status !== 'CERRADO';
-
-  const munStats = {};
-  novedades.forEach(n => {
-    const emp = personnelMap[String(n.employeeId)] || {};
-    const mun = emp.educationalMunicipality || emp.educational_municipality ||
-                emp.municipio_institucional || emp.municipality || emp.municipio || 'Sin municipio';
-    if (!munStats[mun]) munStats[mun] = { total: 0, types: {}, approved: 0, pending: 0, rejected: 0 };
-    munStats[mun].total++;
-    munStats[mun].types[n.noveltyType] = (munStats[mun].types[n.noveltyType] || 0) + 1;
-    if (n.status === 'APROBADA')  munStats[mun].approved++;
-    if (n.status === 'PENDIENTE') munStats[mun].pending++;
-    if (n.status === 'RECHAZADA') munStats[mun].rejected++;
-  });
-
-  const allMuns = Object.keys(munStats).sort();
-  const completedCount = allMuns.filter(m => munStatusMap[m]?.is_complete).length;
-
-  return `
-<div class="nm-card" id="nmMunicipalitiesCard">
-  <div class="nm-card-head">
-    <div class="nm-card-head-left">
-      <span class="nm-step-badge">3</span>
-      <div>
-        <h3 class="nm-card-title"><span class="nm-card-title-icon">🏙️</span> Estado por Municipio</h3>
-        <p class="nm-card-subtitle">${completedCount} de ${allMuns.length} municipio${allMuns.length !== 1 ? 's' : ''} marcado${completedCount !== 1 ? 's' : ''} como terminado</p>
-      </div>
-    </div>
-  </div>
-  <div class="nm-municipalities-list" id="nmMunList">
-    ${allMuns.length === 0
-      ? `<p class="nm-empty-hint">No hay novedades registradas para este período.</p>`
-      : allMuns.map(mun => {
-          const s = munStats[mun];
-          const statusData = munStatusMap[mun] || {};
-          const isComplete = !!statusData.is_complete;
-          const typeChips = Object.entries(s.types)
-            .map(([t, c]) => `<span class="nm-mun-type-chip">${typeLabel(t)}: ${c}</span>`)
-            .join('');
-          return `
-          <div class="nm-mun-row ${isComplete ? 'nm-mun-complete' : 'nm-mun-pending'}">
-            <div class="nm-mun-info">
-              <div class="nm-mun-name">${escapeHtml(mun)}</div>
-              <div class="nm-mun-types">${typeChips}</div>
-              <div class="nm-mun-stats">
-                <span>${s.total} novedad${s.total !== 1 ? 'es' : ''}</span>
-                ${s.pending  > 0 ? `<span class="nm-mun-stat-pending">${s.pending} pendiente${s.pending !== 1 ? 's' : ''}</span>` : ''}
-                ${s.approved > 0 ? `<span class="nm-mun-stat-approved">${s.approved} aprobada${s.approved !== 1 ? 's' : ''}</span>` : ''}
-                ${s.rejected > 0 ? `<span class="nm-mun-stat-rejected">${s.rejected} rechazada${s.rejected !== 1 ? 's' : ''}</span>` : ''}
-              </div>
-              ${isComplete && statusData.completed_by_name
-                ? `<div class="nm-mun-completed-by">✓ Completado por ${escapeHtml(statusData.completed_by_name)} · ${fmtDate(statusData.completed_at)}</div>`
-                : ''}
-            </div>
-            <div class="nm-mun-actions">
-              ${isComplete
-                ? `<span class="nm-mun-done-badge">✓ Terminado</span>`
-                : canMarkDone
-                  ? `<button type="button" class="nm-btn nm-btn-done" data-municipality="${escapeAttr(mun)}" data-period-id="${selectedPeriod?.id || ''}">Marcar terminado</button>`
-                  : `<span class="nm-mun-pending-label">Pendiente</span>`}
-            </div>
-          </div>`;
-        }).join('')}
-  </div>
-</div>`;
-}
-
-function buildResultsCard(results, selectedPeriod) {
-  const admin = isAdminOrTH();
-  const lines  = results?.data?.lines  || results?.lines  || [];
-  const totals = results?.data?.totals || results?.totals || {};
-  const isCalculated = selectedPeriod?.status === 'CALCULADO' || selectedPeriod?.status === 'CERRADO';
-  const isClosed = selectedPeriod?.status === 'CERRADO';
-
-  return `
-<div class="nm-card" id="nmResultsCard">
-  <div class="nm-card-head">
-    <div class="nm-card-head-left">
-      <span class="nm-step-badge">4</span>
-      <div>
-        <h3 class="nm-card-title"><span class="nm-card-title-icon">💰</span> Valores de Nómina</h3>
-        <p class="nm-card-subtitle">${isCalculated ? `${lines.length} empleado${lines.length !== 1 ? 's' : ''} procesado${lines.length !== 1 ? 's' : ''}` : 'Sin calcular para este período'}</p>
-      </div>
-    </div>
-    <div class="nm-results-actions">
-      ${admin && selectedPeriod && !isClosed
-        ? `<button type="button" class="nm-btn nm-btn-secondary" id="nmBtnCalculate">⚙ Calcular nómina</button>`
-        : ''}
-      ${isCalculated && selectedPeriod
-        ? `<a href="/payroll/periods/${selectedPeriod.id}/export" class="nm-btn nm-btn-secondary" download>↓ Exportar Excel</a>`
-        : ''}
-    </div>
-  </div>
-
-  ${isCalculated && lines.length > 0 ? `
-  <div class="nm-totals-bar">
-    <div class="nm-total-item">
-      <span class="nm-total-label">Total devengado</span>
-      <span class="nm-total-value">${fmtMoney(totals.totalDevengado)}</span>
-    </div>
-    <div class="nm-total-sep"></div>
-    <div class="nm-total-item">
-      <span class="nm-total-label">Total deducciones</span>
-      <span class="nm-total-value nm-deduction">${fmtMoney(totals.totalDeducciones)}</span>
-    </div>
-    <div class="nm-total-sep"></div>
-    <div class="nm-total-item nm-total-neto">
-      <span class="nm-total-label">Neto a pagar</span>
-      <span class="nm-total-value nm-total-neto-val">${fmtMoney(totals.netoPagar)}</span>
-    </div>
-  </div>
-  <div class="nm-table-wrap">
-    <table class="nm-table">
-      <thead>
-        <tr>
-          <th>Municipio</th>
-          <th>Institución</th>
-          <th>Modalidad</th>
-          <th>Nombre completo</th>
-          <th>Cédula</th>
-          <th>Novedades</th>
-          <th>Neto a pagar</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${lines.map(l => `
-        <tr>
-          <td>${escapeHtml(l.municipality || '—')}</td>
-          <td class="nm-doc-cell">${escapeHtml(l.institution || '—')}</td>
-          <td><span class="nm-mod-chip nm-mod-${(l.modality || '').toLowerCase()}">${escapeHtml(l.modality || '—')}</span></td>
-          <td>
-            <div class="nm-name-cell">${escapeHtml(l.employeeName || '—')}</div>
-            <div class="nm-doc-cell">${escapeHtml(l.workTimeType || '')}</div>
-          </td>
-          <td class="nm-doc-cell">${escapeHtml(l.documentNumber || '—')}</td>
-          <td class="nm-num">${l.novedadDescuento ? fmtMoney(l.novedadDescuento) : '—'}</td>
-          <td class="nm-neto">${fmtMoney(l.netoPagar)}</td>
-          <td>
-            <div class="nm-actions-row">
-              <button type="button" class="nm-action-btn nm-action-detail"
-                data-emp-id="${escapeAttr(String(l.employeeId || ''))}"
-                data-period-id="${selectedPeriod?.id || ''}">Ver</button>
-              <button type="button" class="nm-action-btn nm-action-slip"
-                data-emp-id="${escapeAttr(String(l.employeeId || ''))}"
-                data-emp-name="${escapeAttr(l.employeeName || '')}"
-                data-period-id="${selectedPeriod?.id || ''}">Desprendible</button>
-            </div>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  </div>` : selectedPeriod ? `
-  <div class="nm-empty-hint" style="padding:24px 0">
-    ${admin
-      ? 'Haz clic en <strong>Calcular nómina</strong> para procesar los valores del período.'
-      : 'La nómina aún no ha sido calculada para este período.'}
-  </div>` : `<div class="nm-empty-hint" style="padding:24px 0">Selecciona un período para ver los valores.</div>`}
-</div>`;
-}
-
-function buildConfirmCard(selectedPeriod) {
-  if (!isAdminOrTH() || !selectedPeriod) return '';
-  const isClosed = selectedPeriod.status === 'CERRADO';
-  const isCalculated = selectedPeriod.status === 'CALCULADO';
-
-  return `
-<div class="nm-card" id="nmConfirmCard">
-  <div class="nm-card-head">
-    <div class="nm-card-head-left">
-      <span class="nm-step-badge">5</span>
-      <div>
-        <h3 class="nm-card-title"><span class="nm-card-title-icon">✅</span> Confirmación y Envío</h3>
-        <p class="nm-card-subtitle">${isClosed ? 'Nómina confirmada y cerrada' : 'Confirma la nómina y envía desprendibles por correo'}</p>
-      </div>
-    </div>
-  </div>
-  <div class="nm-confirm-body">
-    ${isClosed ? `
-    <div class="nm-confirm-done">
-      <div class="nm-confirm-icon">✓</div>
-      <div>
-        <p class="nm-confirm-title">Nómina confirmada y cerrada</p>
-        <p class="nm-confirm-text">Este período está cerrado e inmutable. Los desprendibles están disponibles en la tabla de valores.</p>
-      </div>
-    </div>`
-    : isCalculated ? `
-    <div class="nm-confirm-warn">
-      <p>Al confirmar, el período quedará <strong>cerrado e inmutable</strong>. Se enviarán los desprendibles por correo a cada empleado con email registrado.</p>
-    </div>
-    <div class="nm-confirm-actions">
-      <button type="button" class="nm-btn nm-btn-danger" id="nmBtnConfirmAndSend" data-period-id="${selectedPeriod.id}">
-        Confirmar nómina y enviar desprendibles
-      </button>
-    </div>`
-    : `<div class="nm-confirm-warn"><p>Primero calcula la nómina para poder confirmarla.</p></div>`}
-  </div>
-</div>`;
-}
-
-// ── Main loader ───────────────────────────────────────────────────────────────
-
-export async function loadNominaModule() {
-  let periods = [];
-  try {
-    const res = await apiFetch('/payroll/periods');
-    periods = Array.isArray(res.data) ? res.data : [];
-  } catch { periods = []; }
-
-  periods.sort((a, b) =>
-    new Date(b.periodStart || b.created_at || 0) - new Date(a.periodStart || a.created_at || 0)
+// ── Motor de cálculo ──────────────────────────────────────────────────────────
+
+function calcEmployee(modalityClass, diasNoClase, novedades, salaryConfig, turnos = []) {
+  const modalities  = salaryConfig.modalities || {};
+  const modCfg      = modalities[modalityClass] || {};
+  const smlv        = salaryConfig.smlv           || 1_750_905;
+  const auxCfg      = salaryConfig.aux_transporte || 249_095;
+  const salaryBase  = modCfg.salary               || smlv;
+  const adicionales = (modCfg.adicionales || []).filter(
+    a => String(a.label || "").trim() && Number(a.value) > 0
   );
 
-  if (!state.payrollPeriodId && periods.length > 0) {
-    state.payrollPeriodId = String(periods[0].id);
-  }
+  const diasSinPago       = novedades.filter(n => !n.paid).reduce((s, n) => s + n.days, 0);
+  const diasCubiertos     = novedades.filter(n =>  n.paid).reduce((s, n) => s + n.days, 0);
+  const diasConSalario    = Math.max(0, 30 - diasSinPago);
+  const diasConTransporte = Math.max(0, 30 - diasNoClase - diasSinPago - diasCubiertos);
 
-  const selId = state.payrollPeriodId ? String(state.payrollPeriodId) : '';
-  const selectedPeriod = periods.find(p => String(p.id) === selId) || null;
-
-  let personnelMap = {};
-  try {
-    const pp = await apiFetch('/personnel');
-    const rows = Array.isArray(pp.data) ? pp.data : Array.isArray(pp.personnel) ? pp.personnel : [];
-    rows.forEach(e => {
-      personnelMap[String(e.id)] = e;
-      if (e.legacyJsonId) personnelMap[String(e.legacyJsonId)] = e;
-      if (e.legacy_json_id) personnelMap[String(e.legacy_json_id)] = e;
-    });
-  } catch { }
-
-  let novedades = [];
-  let munStatusMap = {};
-  let results = null;
-
-  if (selectedPeriod) {
-    try {
-      const nr = await apiFetch(`/payroll/periods/${selectedPeriod.id}/novelties`);
-      novedades = Array.isArray(nr.data) ? nr.data : [];
-    } catch { }
-
-    try {
-      const mr = await apiFetch(`/payroll/periods/${selectedPeriod.id}/municipality-status`);
-      const rows = Array.isArray(mr.data) ? mr.data : [];
-      rows.forEach(r => { munStatusMap[r.municipality] = r; });
-    } catch { }
-
-    if (selectedPeriod.status === 'CALCULADO' || selectedPeriod.status === 'CERRADO') {
-      try {
-        results = await apiFetch(`/payroll/periods/${selectedPeriod.id}/results`);
-      } catch { }
+  // Si hay turnos registrados, calcular salario proporcional por modalidad de turno
+  let salarioProp;
+  let turnosInfo = [];
+  if (turnos.length > 0) {
+    salarioProp = 0;
+    for (const t of turnos) {
+      const tCfg   = modalities[t.modalidad] || modCfg;
+      const tSal   = tCfg.salary || smlv;
+      const tProp  = Math.round(tSal / 30 * Math.max(0, t.dias - diasSinPago));
+      salarioProp += tProp;
+      turnosInfo.push({ modalidad: t.modalidad, dias: t.dias, salario: tSal, prop: tProp });
     }
+  } else {
+    salarioProp = Math.round(salaryBase / 30 * diasConSalario);
   }
 
-  const payrollView = getPayrollViewState();
-  const payrollRows = buildPayrollRows(results, personnelMap, selectedPeriod, novedades);
-  const payrollMunicipalities = uniq(payrollRows.map(item => item.municipality));
-  const payrollContracts = uniq(payrollRows.map(item => item.contractId).filter(Boolean)).map(id => ({
-    value: id,
-    label: getContractNameById(id, 'Sin contrato'),
+  const auxTrans    = Math.round(auxCfg / 30 * diasConTransporte);
+  const adicsCalc   = adicionales.map(a => ({
+    label: a.label,
+    base:  Number(a.value),
+    prop:  Math.round(Number(a.value) / 30 * diasConTransporte),
   }));
-  syncPayrollTopbar(periods, selectedPeriod, payrollView, payrollMunicipalities, payrollContracts);
+  const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
+  const totalDev   = salarioProp + auxTrans + totalAdics;
+  const salud      = Math.ceil(salarioProp * 0.04 / 100) * 100;
+  const pension    = salud;
+  const totalDed   = salud * 2;
+  const neto       = totalDev - totalDed;
 
-  return buildPayrollWorkspace({
-    periods,
-    selectedPeriod,
-    personnelMap,
-    novedades,
-    munStatusMap,
-    results,
-  });
-  /*
-<div class="nm-wrap">
-  <section class="personnel-premium-hero">
+  return {
+    diasSinPago, diasCubiertos, diasConSalario, diasConTransporte,
+    salaryBase, salarioProp, auxTrans, adicsCalc, totalAdics,
+    totalDev, salud, pension, totalDed, neto, turnosInfo,
+  };
+}
+
+// ── Estado del módulo ─────────────────────────────────────────────────────────
+
+let _view          = "list";
+let _periods       = [];
+let _currentPeriod = null;
+let _employees     = [];
+let _salaryConfig  = {};
+let _empState      = new Map();   // id → { diasNoClase, novedades, checked }
+let _searchText       = "";
+let _filterHasNov     = false;
+let _filterMunicipio  = "";
+let _filterModalidad  = "";
+let _filterInstitucion = "";
+let _filterSede       = "";
+let _sortBy           = "";
+let _sortDir          = "asc";
+let _activeGroup      = "todos";
+let _periodMonth   = String(new Date().getMonth() + 1).padStart(2, "0");
+let _periodYear    = String(new Date().getFullYear());
+let _modalEmpId    = null;
+
+function getContractId() { return state.currentUser?.contractId || null; }
+function getCompanyId()  { return state.currentUser?.companyId  || null; }
+
+function _unique(key) {
+  return [...new Set(_employees.map(e => e[key] || "").filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function _selectOpts(values, current, placeholder) {
+  return `<option value="">${placeholder}</option>` +
+    values.map(v => `<option value="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
+}
+
+function _getGroup(emp) {
+  const mc    = String(emp.modalityClass || "").toUpperCase();
+  const mod   = String(emp.modality      || "").toUpperCase().trim();
+  const cargo = String(emp.cargo         || "").toUpperCase();
+  if (mc.startsWith("CAA") || mod === "CAA" || mod === "CAARES") return "operarios";
+  if (mc === "RI" || mod === "RI") return "bodega_ri";
+  if (mod === "RP" || cargo.includes("BODEGA RP") || cargo.includes("RP")) return "bodega_rp";
+  return "administrativos";
+}
+
+function _groupTabsHtml() {
+  const counts = { todos: _employees.length };
+  for (const emp of _employees) {
+    const g = _getGroup(emp);
+    counts[g] = (counts[g] || 0) + 1;
+  }
+  return PAYROLL_GROUPS.map(g => `
+    <button class="nm3-gtab ${_activeGroup === g.key ? "nm3-gtab--active" : ""}" data-group="${g.key}">
+      ${escapeHtml(g.label)}
+      <span class="nm3-gtab-count">${counts[g.key] || 0}</span>
+    </button>`).join("");
+}
+
+function getEs(empId) {
+  let es = _empState.get(empId);
+  if (!es) { es = { diasNoClase: 0, novedades: [], horasDiarias: [], turnos: [], checked: false }; _empState.set(empId, es); }
+  if (!es.turnos) es.turnos = [];
+  return es;
+}
+
+function isHourBased(emp) {
+  const g = _getGroup(emp);
+  return g === "bodega_ri" || g === "bodega_rp" || g === "administrativos";
+}
+
+function calcHourEmployee(emp) {
+  const es         = getEs(emp.id);
+  const modCfg     = (_salaryConfig.modalities || {})[emp.modalityClass] || {};
+  const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
+  const valorHora  = Math.round(salaryBase / 240);
+  const totalHoras = es.horasDiarias.reduce((s, d) => s + (Number(d.horas) || 0), 0);
+  const devengado  = Math.round(valorHora * totalHoras);
+  const salud      = Math.ceil(devengado * 0.04 / 100) * 100;
+  const pension    = salud;
+  const totalDed   = salud * 2;
+  const neto       = devengado - totalDed;
+  return { valorHora, totalHoras, devengado, salud, pension, totalDed, neto };
+}
+
+function _groupEmployees() {
+  if (_activeGroup === "todos") return _employees;
+  return _employees.filter(e => _getGroup(e) === _activeGroup);
+}
+
+function _colCount() {
+  if (_activeGroup === "todos")     return 7;
+  if (_activeGroup === "operarios") return 12;
+  return 10;
+}
+
+function _tableHeaderHtml() {
+  if (_activeGroup === "todos") return `<tr>
+    <th class="nm3-th-n">#</th>
+    <th class="nm3-th-name">Nombre completo</th>
+    <th class="nm3-th-doc">Cédula</th>
+    <th class="nm3-th-inst">Institución / Sede</th>
+    <th>Grupo</th>
+    <th class="nm3-ar nm3-th-neto">Neto a pagar</th>
+    <th class="nm3-th-act">✓</th>
+  </tr>`;
+  if (_activeGroup === "operarios") return `<tr>
+    <th class="nm3-th-n">#</th>
+    <th class="nm3-th-doc">Cédula</th>
+    <th class="nm3-th-name">Nombre completo</th>
+    <th class="nm3-th-inst">Institución / Sede</th>
+    <th class="nm3-th-mod">Modalidad</th>
+    <th class="nm3-th-nc" title="Días de no clase">No clase</th>
+    <th class="nm3-th-nov">Novedades</th>
+    <th class="nm3-th-turnos">Turnos</th>
+    <th class="nm3-th-dev">Devengado</th>
+    <th class="nm3-th-ded">Deducciones</th>
+    <th class="nm3-th-neto">Neto a pagar</th>
+    <th class="nm3-th-act">Acciones</th>
+  </tr>`;
+  return `<tr>
+    <th class="nm3-th-n">#</th>
+    <th class="nm3-th-doc">Cédula</th>
+    <th class="nm3-th-name">Nombre completo</th>
+    <th class="nm3-th-cargo">Cargo</th>
+    <th class="nm3-th-horas">Horas</th>
+    <th class="nm3-th-vh">Valor/hora</th>
+    <th class="nm3-th-dev">Devengado</th>
+    <th class="nm3-th-ded">Deducciones</th>
+    <th class="nm3-th-neto">Neto a pagar</th>
+    <th class="nm3-th-act">Acciones</th>
+  </tr>`;
+}
+
+function _rowForEmp(emp, idx) {
+  if (_activeGroup === "todos")   return _rowHtmlSummary(emp, idx);
+  if (isHourBased(emp))          return _rowHtmlHours(emp, idx);
+  return _rowHtml(emp, idx);
+}
+
+// ── Vista lista (períodos) ────────────────────────────────────────────────────
+
+function _renderListView() {
+  const root = document.getElementById("nm3-root");
+  if (!root) return;
+
+  const curYear = new Date().getFullYear();
+  const years   = Array.from({ length: 5 }, (_, i) => curYear - 1 + i);
+
+  root.innerHTML = `
+<div class="nm3-card">
+  <div class="nm3-card-hdr">
     <div>
-      <span class="personnel-premium-eyebrow">💼 Módulo de Gestión</span>
-      <h2>Nómina y Liquidación</h2>
-      <p>Gestión de períodos, registro de novedades por municipio, liquidación de valores y envío de desprendibles de pago.</p>
-      <div class="nm-hero-steps">
-        <span class="nm-hero-step"><span class="nm-hero-step-num">1</span> Período</span>
-        <span class="nm-hero-step"><span class="nm-hero-step-num">2</span> Novedades</span>
-        <span class="nm-hero-step"><span class="nm-hero-step-num">3</span> Municipios</span>
-        <span class="nm-hero-step"><span class="nm-hero-step-num">4</span> Valores</span>
-        <span class="nm-hero-step"><span class="nm-hero-step-num">5</span> Confirmar</span>
-      </div>
+      <h2 class="nm3-title">Nómina PAE</h2>
+      <span class="nm3-subtitle">Períodos de liquidación</span>
     </div>
-  </section>
+    ${isTH() ? `
+    <div class="nm3-hdr-right">
+      <select class="nm3-sel" id="nm3MonthSel">
+        ${MONTHS_ES.map((n, i) => {
+          const val = String(i + 1).padStart(2, "0");
+          return `<option value="${val}" ${val === _periodMonth ? "selected" : ""}>${n}</option>`;
+        }).join("")}
+      </select>
+      <select class="nm3-sel" id="nm3YearSel">
+        ${years.map(y => `<option value="${y}" ${String(y) === _periodYear ? "selected" : ""}>${y}</option>`).join("")}
+      </select>
+      <button class="nm3-btn nm3-btn--primary" id="nm3BtnNew">＋ Nueva nómina</button>
+    </div>` : ""}
+  </div>
 
-  ${buildPeriodCard(periods, selectedPeriod)}
-  ${selectedPeriod ? buildNovedadesCard(novedades, personnelMap, selectedPeriod) : ''}
-  ${selectedPeriod ? buildMunicipalitiesCard(novedades, munStatusMap, personnelMap, selectedPeriod) : ''}
-  ${buildResultsCard(results, selectedPeriod)}
-  ${buildConfirmCard(selectedPeriod)}
+  <div class="nm3-card-body">
+    ${_periods.length ? `
+    <table class="nm3-periods-tbl">
+      <thead>
+        <tr>
+          <th>Período</th>
+          <th>Estado</th>
+          <th class="nm3-ar">Empleados</th>
+          <th class="nm3-ar">Neto total</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${_periods.map(p => `
+        <tr class="nm3-period-row">
+          <td class="nm3-period-name">${escapeHtml(p.label)}</td>
+          <td>${statusBadge(p.status)}</td>
+          <td class="nm3-ar">${p.employee_count || 0}</td>
+          <td class="nm3-ar nm3-green">${fmtCOP(p.total_neto || 0)}</td>
+          <td class="nm3-ar"><button class="nm3-btn nm3-btn--sm nm3-btn--outline" data-open="${p.id}">Abrir →</button></td>
+        </tr>`).join("")}
+      </tbody>
+    </table>` : `
+    <div class="nm3-empty-state">
+      <span class="nm3-empty-icon">📋</span>
+      <p>No hay períodos registrados.</p>
+      ${isTH() ? `<p class="nm3-empty-hint">Selecciona mes y año y crea el primer período.</p>` : ""}
+    </div>`}
+  </div>
 </div>`;
-  */
+
+  _wireListEvents();
+}
+
+// ── Vista detalle (tabla empleados) ──────────────────────────────────────────
+
+function _filtered() {
+  let list = _employees.filter(e => {
+    if (_searchText) {
+      const hay = `${e.fullName} ${e.documentNumber} ${e.institutionName} ${e.siteName} ${e.municipalityName}`.toLowerCase();
+      if (!hay.includes(_searchText)) return false;
+    }
+    if (_activeGroup !== "todos" && _getGroup(e) !== _activeGroup) return false;
+    if (_filterHasNov     && !getEs(e.id).novedades.length)    return false;
+    if (_filterMunicipio  && e.municipalityName !== _filterMunicipio)  return false;
+    if (_filterModalidad  && e.modalityClass    !== _filterModalidad)   return false;
+    if (_filterInstitucion && e.institutionName !== _filterInstitucion) return false;
+    if (_filterSede       && e.siteName         !== _filterSede)        return false;
+    return true;
+  });
+
+  if (_sortBy) {
+    list = [...list].sort((a, b) => {
+      if (_sortBy === "neto") {
+        const na = calcEmployee(a.modalityClass, getEs(a.id).diasNoClase, getEs(a.id).novedades, _salaryConfig).neto;
+        const nb = calcEmployee(b.modalityClass, getEs(b.id).diasNoClase, getEs(b.id).novedades, _salaryConfig).neto;
+        return _sortDir === "asc" ? na - nb : nb - na;
+      }
+      const fieldMap = { nombre: "fullName", municipio: "municipalityName", institucion: "institutionName", sede: "siteName", modalidad: "modalityClass" };
+      const va = String(a[fieldMap[_sortBy]] || "").toLowerCase();
+      const vb = String(b[fieldMap[_sortBy]] || "").toLowerCase();
+      const cmp = va.localeCompare(vb, "es");
+      return _sortDir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  return list;
+}
+
+function _rowHtml(emp, idx) {
+  const es       = getEs(emp.id);
+  const calc     = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
+  const modColor = MOD_COLOR[emp.modalityClass] || "caa";
+  const novCount = es.novedades.length;
+  const turnoCount = es.turnos.length;
+  const canEdit  = isTH() && _currentPeriod?.status !== "CERRADO";
+  const checkedCls = es.checked ? "nm3-row--done" : "";
+
+  const novCell = novCount > 0
+    ? `<button class="nm3-nov-pill nm3-nov-pill--has" data-emp="${emp.id}">⚠ ${novCount} nov.</button>`
+    : `<span class="nm3-nov-pill nm3-nov-pill--none">—</span>`;
+
+  const turnoCell = turnoCount > 0
+    ? `<button class="nm3-turno-pill nm3-turno-pill--has" data-emp="${emp.id}">🔄 ${turnoCount} turno${turnoCount !== 1 ? "s" : ""}</button>`
+    : (canEdit
+        ? `<button class="nm3-turno-pill nm3-turno-pill--add" data-emp="${emp.id}">＋ Turno</button>`
+        : `<span class="nm3-turno-pill nm3-turno-pill--none">—</span>`);
+
+  return `
+<tr class="nm3-tr ${checkedCls}" data-emp-id="${emp.id}">
+  <td class="nm3-td-n">${idx + 1}</td>
+  <td class="nm3-td-doc">
+    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
+    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
+  </td>
+  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
+  <td class="nm3-td-inst">
+    <div class="nm3-inst">${escapeHtml(emp.institutionName || "—")}</div>
+    <div class="nm3-sede">${escapeHtml(emp.siteName || "—")}</div>
+  </td>
+  <td class="nm3-td-mod">
+    <span class="nm3-mod nm3-mod--${modColor}">${escapeHtml(emp.modalityClass)}</span>
+  </td>
+  <td class="nm3-td-nc">
+    ${canEdit
+      ? `<input type="number" class="nm3-nc-inp" data-emp="${emp.id}" value="${es.diasNoClase}" min="0" max="30">`
+      : `<span class="nm3-nc-ro">${es.diasNoClase}</span>`}
+  </td>
+  <td class="nm3-td-nov">${novCell}</td>
+  <td class="nm3-td-turnos">${turnoCell}</td>
+  <td class="nm3-td-dev">${fmtCOP(calc.totalDev)}</td>
+  <td class="nm3-td-ded">
+    <div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div>
+    <div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>
+  </td>
+  <td class="nm3-td-neto">${fmtCOP(calc.neto)}</td>
+  <td class="nm3-td-act">
+    ${canEdit ? `<button class="nm3-act nm3-act-nov" data-emp="${emp.id}" title="Registrar novedad">＋ Nov</button>` : ""}
+    <button class="nm3-act nm3-act-calc" data-emp="${emp.id}" title="Ver cálculo detallado">🧾</button>
+    ${canEdit ? `<button class="nm3-act nm3-act-ok ${es.checked ? "nm3-act-ok--on" : ""}" data-emp="${emp.id}" title="${es.checked ? "Marcar pendiente" : "Marcar listo"}">
+      ${es.checked ? "✓" : "○"}
+    </button>` : ""}
+  </td>
+</tr>`;
+}
+
+function _rowHtmlSummary(emp, idx) {
+  const es    = getEs(emp.id);
+  const neto  = isHourBased(emp)
+    ? calcHourEmployee(emp).neto
+    : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig).neto;
+  const grp   = _getGroup(emp);
+  const grpLabel = { operarios:"Operarios", bodega_ri:"Bodega RI", bodega_rp:"Bodega RP", administrativos:"Admin." }[grp] || grp;
+  const grpColor = { operarios:"caa", bodega_ri:"ri", bodega_rp:"caares", administrativos:"ri" }[grp] || "caa";
+  return `
+<tr class="nm3-tr ${es.checked ? "nm3-row--done" : ""}" data-emp-id="${emp.id}">
+  <td class="nm3-td-n">${idx + 1}</td>
+  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
+  <td class="nm3-td-doc">
+    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
+    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
+  </td>
+  <td class="nm3-td-inst">
+    <div class="nm3-inst">${escapeHtml(emp.institutionName || "—")}</div>
+    <div class="nm3-sede">${escapeHtml(emp.siteName || "—")}</div>
+  </td>
+  <td><span class="nm3-mod nm3-mod--${grpColor}">${grpLabel}</span></td>
+  <td class="nm3-td-neto">${fmtCOP(neto)}</td>
+  <td class="nm3-td-act">${es.checked ? "✓" : "—"}</td>
+</tr>`;
+}
+
+function _rowHtmlHours(emp, idx) {
+  const es      = getEs(emp.id);
+  const calc    = calcHourEmployee(emp);
+  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
+  return `
+<tr class="nm3-tr ${es.checked ? "nm3-row--done" : ""}" data-emp-id="${emp.id}">
+  <td class="nm3-td-n">${idx + 1}</td>
+  <td class="nm3-td-doc">
+    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
+    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
+  </td>
+  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
+  <td class="nm3-td-cargo">${escapeHtml(emp.cargo || "—")}</td>
+  <td class="nm3-td-horas">
+    <button class="nm3-horas-pill ${calc.totalHoras > 0 ? "nm3-horas-pill--has" : "nm3-horas-pill--none"}" data-emp="${emp.id}">
+      ${calc.totalHoras > 0 ? `${calc.totalHoras}h` : "Sin horas"}
+    </button>
+  </td>
+  <td class="nm3-td-vh">${fmtCOP(calc.valorHora)}<span class="nm3-vh-unit">/h</span></td>
+  <td class="nm3-td-dev">${fmtCOP(calc.devengado)}</td>
+  <td class="nm3-td-ded">
+    <div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div>
+    <div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>
+  </td>
+  <td class="nm3-td-neto">${fmtCOP(calc.neto)}</td>
+  <td class="nm3-td-act">
+    ${canEdit ? `<button class="nm3-act nm3-act-horas" data-emp="${emp.id}" title="Registrar horas">📅</button>` : ""}
+    <button class="nm3-act nm3-act-calc" data-emp="${emp.id}" title="Ver cálculo">🧾</button>
+    ${canEdit ? `<button class="nm3-act nm3-act-ok ${es.checked ? "nm3-act-ok--on" : ""}" data-emp="${emp.id}">
+      ${es.checked ? "✓" : "○"}
+    </button>` : ""}
+  </td>
+</tr>`;
+}
+
+function _totalsHtml() {
+  let dev = 0, ded = 0, neto = 0;
+  const done    = [..._empState.values()].filter(e => e.checked).length;
+  const empList = _groupEmployees();
+  for (const emp of empList) {
+    const c = isHourBased(emp)
+      ? calcHourEmployee(emp)
+      : calcEmployee(emp.modalityClass, getEs(emp.id).diasNoClase, getEs(emp.id).novedades, _salaryConfig);
+    dev  += c.totalDev;
+    ded  += c.totalDed;
+    neto += c.neto;
+  }
+  return `
+<div class="nm3-totals">
+  <div class="nm3-tot"><span class="nm3-tot-lbl">Empleados</span><strong>${empList.length}</strong></div>
+  <div class="nm3-tot"><span class="nm3-tot-lbl">Devengado</span><strong>${fmtCOP(dev)}</strong></div>
+  <div class="nm3-tot nm3-tot-ded"><span class="nm3-tot-lbl">Deducciones</span><strong>− ${fmtCOP(ded)}</strong></div>
+  <div class="nm3-tot nm3-tot-neto"><span class="nm3-tot-lbl">Neto total</span><strong>${fmtCOP(neto)}</strong></div>
+  <div class="nm3-tot nm3-tot-done"><span class="nm3-tot-lbl">Revisados</span><strong>${done} / ${_employees.length}</strong></div>
+</div>`;
+}
+
+function _renderDetailView() {
+  const root     = document.getElementById("nm3-root");
+  const period   = _currentPeriod;
+  const filtered = _filtered();
+  if (!root) return;
+
+  const done  = [..._empState.values()].filter(e => e.checked).length;
+  const total = _employees.length;
+
+  root.innerHTML = `
+<div class="nm3-card nm3-card--full">
+
+  <!-- Header -->
+  <div class="nm3-hdr">
+    <button class="nm3-back" id="nm3Back">← Volver</button>
+    <div class="nm3-hdr-center">
+      <h2 class="nm3-period-title">${escapeHtml(period.label)}</h2>
+      ${statusBadge(period.status)}
+      <span class="nm3-done-pill" id="nm3DonePill">${done}/${total} revisados</span>
+    </div>
+    <div class="nm3-hdr-actions">
+      ${isTH() && period.status !== "CERRADO" ? `
+        <button class="nm3-btn nm3-btn--primary" id="nm3BtnSave">💾 Guardar</button>` : ""}
+      <a class="nm3-btn nm3-btn--outline" href="/nomina/periods/${period.id}/export" download>⬇ Excel</a>
+      ${isTH() && period.status === "CALCULADO" ? `
+        <button class="nm3-btn nm3-btn--danger" id="nm3BtnClose">🔒 Cerrar</button>` : ""}
+    </div>
+  </div>
+
+  <!-- Tabs de grupo nómina -->
+  <div class="nm3-group-tabs" id="nm3GroupTabs">
+    ${_groupTabsHtml()}
+  </div>
+
+  <!-- Filtros -->
+  <div class="nm3-bar">
+    <input type="text" class="nm3-search" id="nm3Search"
+      placeholder="Nombre, cédula…"
+      value="${escapeHtml(_searchText)}">
+    <select class="nm3-fsel" id="nm3FiltMun">
+      ${_selectOpts(_unique("municipalityName"), _filterMunicipio, "Municipio")}
+    </select>
+    <select class="nm3-fsel" id="nm3FiltMod">
+      ${_selectOpts(_unique("modalityClass"), _filterModalidad, "Modalidad")}
+    </select>
+    <select class="nm3-fsel" id="nm3FiltInst">
+      ${_selectOpts(_unique("institutionName"), _filterInstitucion, "Institución")}
+    </select>
+    <select class="nm3-fsel" id="nm3FiltSede">
+      ${_selectOpts(_unique("siteName"), _filterSede, "Sede")}
+    </select>
+    <select class="nm3-fsel nm3-fsel--sort" id="nm3FiltSort">
+      <option value="">Ordenar…</option>
+      <option value="nombre"     ${_sortBy === "nombre"      ? "selected" : ""}>Nombre</option>
+      <option value="municipio"  ${_sortBy === "municipio"   ? "selected" : ""}>Municipio</option>
+      <option value="institucion"${_sortBy === "institucion" ? "selected" : ""}>Institución</option>
+      <option value="sede"       ${_sortBy === "sede"        ? "selected" : ""}>Sede</option>
+      <option value="modalidad"  ${_sortBy === "modalidad"   ? "selected" : ""}>Modalidad</option>
+      <option value="neto"       ${_sortBy === "neto"        ? "selected" : ""}>Neto a pagar</option>
+    </select>
+    <button class="nm3-sort-dir-btn" id="nm3SortDir" title="${_sortDir === "asc" ? "Ascendente" : "Descendente"}">
+      ${_sortDir === "asc" ? "↑" : "↓"}
+    </button>
+    <label class="nm3-chk-lbl">
+      <input type="checkbox" id="nm3ChkNov" ${_filterHasNov ? "checked" : ""}>
+      Nov.
+    </label>
+    <span class="nm3-count" id="nm3Count">${filtered.length} de ${total}</span>
+  </div>
+
+  <!-- Tabla con scroll -->
+  <div class="nm3-tbl-wrap">
+    <table class="nm3-tbl">
+      <thead id="nm3Thead">
+        ${_tableHeaderHtml()}
+      </thead>
+      <tbody id="nm3Tbody">
+        ${filtered.length
+          ? filtered.map((e, i) => _rowForEmp(e, i)).join("")
+          : `<tr><td colspan="${_colCount()}" class="nm3-empty-td">Sin resultados.</td></tr>`}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Footer totales -->
+  <div class="nm3-footer" id="nm3Footer">
+    ${_totalsHtml()}
+  </div>
+
+</div>
+
+<!-- Modal: novedades -->
+<div class="nm3-overlay" id="nm3NovModal" hidden>
+  <div class="nm3-modal">
+    <div class="nm3-modal-hdr">
+      <span class="nm3-modal-ttl" id="nm3NovTitle">Novedades</span>
+      <button class="nm3-modal-x" id="nm3NovClose">×</button>
+    </div>
+    <div class="nm3-modal-body" id="nm3NovBody"></div>
+  </div>
+</div>
+
+<!-- Modal: cálculo detallado -->
+<div class="nm3-overlay" id="nm3CalcModal" hidden>
+  <div class="nm3-modal nm3-modal--wide">
+    <div class="nm3-modal-hdr">
+      <span class="nm3-modal-ttl" id="nm3CalcTitle">Detalle de cálculo</span>
+      <button class="nm3-modal-x" id="nm3CalcClose">×</button>
+    </div>
+    <div class="nm3-modal-body" id="nm3CalcBody"></div>
+  </div>
+</div>
+
+<!-- Modal: horas diarias -->
+<div class="nm3-overlay" id="nm3HorasModal" hidden>
+  <div class="nm3-modal nm3-modal--wide">
+    <div class="nm3-modal-hdr">
+      <span class="nm3-modal-ttl" id="nm3HorasTitle">Horas diarias</span>
+      <button class="nm3-modal-x" id="nm3HorasClose">×</button>
+    </div>
+    <div class="nm3-modal-body" id="nm3HorasBody"></div>
+  </div>
+</div>
+
+<!-- Modal: turnos realizados -->
+<div class="nm3-overlay" id="nm3TurnosModal" hidden>
+  <div class="nm3-modal nm3-modal--wide">
+    <div class="nm3-modal-hdr">
+      <span class="nm3-modal-ttl" id="nm3TurnosTitle">Turnos realizados</span>
+      <button class="nm3-modal-x" id="nm3TurnosClose">×</button>
+    </div>
+    <div class="nm3-modal-body" id="nm3TurnosBody"></div>
+  </div>
+</div>`;
+
+  _wireDetailEvents();
+}
+
+// ── HTML de modales ───────────────────────────────────────────────────────────
+
+function _novBodyHtml(empId) {
+  const es      = getEs(empId);
+  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
+
+  const rows = es.novedades.length
+    ? es.novedades.map((n, i) => `
+      <tr>
+        <td>${escapeHtml(n.label)}</td>
+        <td class="nm3-ar">${n.days} d</td>
+        <td>${n.paid
+          ? `<span class="nm3-tag nm3-tag--paid">${escapeHtml(n.coverage || "Cubierto")}</span>`
+          : `<span class="nm3-tag nm3-tag--unpaid">Descuento</span>`}</td>
+        ${canEdit ? `<td><button class="nm3-del-nov" data-idx="${i}" title="Eliminar">✕</button></td>` : ""}
+      </tr>`).join("")
+    : `<tr><td colspan="${canEdit ? 4 : 3}" class="nm3-empty-td">Sin novedades registradas.</td></tr>`;
+
+  return `
+<div class="nm3-nov-wrap">
+  <table class="nm3-tbl nm3-tbl--modal">
+    <thead>
+      <tr>
+        <th>Tipo de novedad</th>
+        <th class="nm3-ar">Días</th>
+        <th>Efecto</th>
+        ${canEdit ? "<th></th>" : ""}
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  ${canEdit ? `
+  <div class="nm3-nov-form">
+    <div class="nm3-nov-form-lbl">Registrar nueva novedad</div>
+    <div class="nm3-nov-form-row">
+      <select class="nm3-sel nm3-nov-sel" id="nm3NovType">
+        <option value="">— Tipo de novedad —</option>
+        ${NOVELTY_TYPES.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
+      </select>
+      <input type="number" class="nm3-nc-inp" id="nm3NovDays" value="1" min="1" max="30" placeholder="Días" style="width:72px">
+      <span class="nm3-unit">días</span>
+      <button class="nm3-btn nm3-btn--primary nm3-btn--sm" id="nm3NovAdd">＋ Agregar</button>
+    </div>
+  </div>` : ""}
+</div>`;
+}
+
+function _calcBodyHtml(emp) {
+  const es   = getEs(emp.id);
+  const calc = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
+
+  const adicsRows = calc.adicsCalc.map(a =>
+    `<tr><td>${escapeHtml(a.label)} (${calc.diasConTransporte}/30 d)</td>
+         <td class="nm3-ar nm3-green">+ ${fmtCOP(a.prop)}</td></tr>`
+  ).join("");
+
+  const novRows = es.novedades.length
+    ? es.novedades.map(n => `
+      <tr>
+        <td>${escapeHtml(n.label)} — ${n.days} días</td>
+        <td class="nm3-ar">${n.paid
+          ? `<span class="nm3-tag nm3-tag--paid">${escapeHtml(n.coverage || "Cubierto")}</span>`
+          : `<span class="nm3-tag nm3-tag--unpaid">Descuento</span>`}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="2" class="nm3-empty-td">Sin novedades</td></tr>`;
+
+  const salarioPropRows = calc.turnosInfo.length
+    ? calc.turnosInfo.map(t =>
+        `<tr><td>Turno ${escapeHtml(t.modalidad)} — ${t.dias} d (${fmtCOP(t.salario)}/mes)</td>
+             <td class="nm3-ar nm3-green">+ ${fmtCOP(t.prop)}</td></tr>`
+      ).join("")
+    : `<tr><td>Salario proporcional (${calc.diasConSalario}/30 d)</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.salarioProp)}</td></tr>`;
+
+  return `
+<div class="nm3-calc-wrap">
+
+  <!-- Info empleado -->
+  <div class="nm3-calc-info">
+    <div class="nm3-ci"><span>Documento</span><b>${escapeHtml(emp.documentType || "CC")} ${escapeHtml(emp.documentNumber)}</b></div>
+    <div class="nm3-ci"><span>Municipio</span><b>${escapeHtml(emp.municipalityName || "—")}</b></div>
+    <div class="nm3-ci"><span>Institución</span><b>${escapeHtml(emp.institutionName || "—")}</b></div>
+    <div class="nm3-ci"><span>Sede</span><b>${escapeHtml(emp.siteName || "—")}</b></div>
+    <div class="nm3-ci"><span>Modalidad</span><b>${escapeHtml(emp.modalityClass)}</b></div>
+    <div class="nm3-ci"><span>Días no clase</span><b>${es.diasNoClase}</b></div>
+    <div class="nm3-ci"><span>Días sin salario</span><b>${calc.diasSinPago}</b></div>
+    <div class="nm3-ci"><span>Días con salario</span><b>${calc.diasConSalario}/30</b></div>
+    <div class="nm3-ci"><span>Días con transporte</span><b>${calc.diasConTransporte}/30</b></div>
+    ${calc.turnosInfo.length ? `<div class="nm3-ci"><span>Turnos registrados</span><b>${calc.turnosInfo.length}</b></div>` : ""}
+  </div>
+
+  <!-- Tabla cálculo -->
+  <table class="nm3-tbl nm3-tbl--calc">
+    <tbody>
+      <tr class="nm3-calc-sec"><td colspan="2">💰 Devengados</td></tr>
+      ${salarioPropRows}
+      <tr><td>Aux. transporte (${calc.diasConTransporte}/30 d)</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.auxTrans)}</td></tr>
+      ${adicsRows}
+      <tr class="nm3-calc-sub"><td><b>Total devengado</b></td><td class="nm3-ar"><b>${fmtCOP(calc.totalDev)}</b></td></tr>
+
+      <tr class="nm3-calc-sec"><td colspan="2">🔻 Deducciones</td></tr>
+      <tr><td>Salud empleado (4%)</td><td class="nm3-ar nm3-red">− ${fmtCOP(calc.salud)}</td></tr>
+      <tr><td>Pensión empleado (4%)</td><td class="nm3-ar nm3-red">− ${fmtCOP(calc.pension)}</td></tr>
+      <tr class="nm3-calc-sub"><td><b>Total deducciones</b></td><td class="nm3-ar nm3-red"><b>− ${fmtCOP(calc.totalDed)}</b></td></tr>
+
+      <tr class="nm3-calc-sec"><td colspan="2">📋 Novedades</td></tr>
+      ${novRows}
+
+      <tr class="nm3-calc-neto"><td>NETO A PAGAR</td><td class="nm3-ar"><strong>${fmtCOP(calc.neto)}</strong></td></tr>
+    </tbody>
+  </table>
+
+</div>`;
 }
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
-export function wireNominaEvents() {
-  const wrap = document.querySelector('.nm-wrap');
-  if (!wrap) return;
-  const view = getPayrollViewState();
-  let payrollSearchTimer = null;
-  const reloadView = async (patch = {}, { resetPage = true } = {}) => {
-    Object.assign(view, patch);
-    if (resetPage) view.page = 1;
-    await _reload();
+function _wireListEvents() {
+  document.getElementById("nm3MonthSel")?.addEventListener("change", e => { _periodMonth = e.target.value; });
+  document.getElementById("nm3YearSel")?.addEventListener("change",  e => { _periodYear  = e.target.value; });
+
+  document.getElementById("nm3BtnNew")?.addEventListener("click", async () => {
+    const period     = `${_periodYear}-${_periodMonth}`;
+    const label      = `Nómina ${periodLabel(period)}`;
+    const contractId = getContractId();
+    const companyId  = getCompanyId();
+    if (!contractId || !companyId) { showError("Sin contrato o empresa asociada"); return; }
+    const btn = document.getElementById("nm3BtnNew");
+    if (btn) { btn.disabled = true; btn.textContent = "Creando…"; }
+    try {
+      const r = await apiFetch("/nomina/periods", {
+        method: "POST",
+        body: JSON.stringify({ contractId, companyId, period, label }),
+      });
+      await _loadPeriodDetail(r.data.id);
+    } catch (err) {
+      showError(err.message);
+      if (btn) { btn.disabled = false; btn.textContent = "＋ Nueva nómina"; }
+    }
+  });
+
+  document.querySelector(".nm3-card-body")?.addEventListener("click", async e => {
+    const btn = e.target.closest("[data-open]");
+    if (btn) await _loadPeriodDetail(Number(btn.dataset.open));
+  });
+}
+
+function _wireDetailEvents() {
+  // Volver
+  document.getElementById("nm3Back")?.addEventListener("click", async () => {
+    _view = "list"; _currentPeriod = null;
+    _searchText = ""; _filterHasNov = false;
+    _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
+    _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
+    await _loadPeriods();
+    _renderListView();
+  });
+
+  // Tabs de grupo
+  document.getElementById("nm3GroupTabs")?.addEventListener("click", e => {
+    const btn = e.target.closest("[data-group]");
+    if (!btn) return;
+    _activeGroup = btn.dataset.group;
+    const tabsEl = document.getElementById("nm3GroupTabs");
+    if (tabsEl) tabsEl.innerHTML = _groupTabsHtml();
+    _refreshTbody();
+  });
+
+  // Búsqueda
+  document.getElementById("nm3Search")?.addEventListener("input", e => {
+    _searchText = e.target.value.trim().toLowerCase();
+    _refreshTbody();
+  });
+
+  // Filtros de selección
+  document.getElementById("nm3FiltMun")?.addEventListener("change",  e => { _filterMunicipio   = e.target.value; _refreshTbody(); });
+  document.getElementById("nm3FiltMod")?.addEventListener("change",  e => { _filterModalidad   = e.target.value; _refreshTbody(); });
+  document.getElementById("nm3FiltInst")?.addEventListener("change", e => { _filterInstitucion = e.target.value; _refreshTbody(); });
+  document.getElementById("nm3FiltSede")?.addEventListener("change", e => { _filterSede        = e.target.value; _refreshTbody(); });
+
+  // Ordenar
+  document.getElementById("nm3FiltSort")?.addEventListener("change", e => { _sortBy = e.target.value; _refreshTbody(); });
+  document.getElementById("nm3SortDir")?.addEventListener("click", () => {
+    _sortDir = _sortDir === "asc" ? "desc" : "asc";
+    const btn = document.getElementById("nm3SortDir");
+    if (btn) { btn.textContent = _sortDir === "asc" ? "↑" : "↓"; btn.title = _sortDir === "asc" ? "Ascendente" : "Descendente"; }
+    _refreshTbody();
+  });
+
+  // Filtro novedades
+  document.getElementById("nm3ChkNov")?.addEventListener("change", e => {
+    _filterHasNov = e.target.checked;
+    _refreshTbody();
+  });
+
+  // Guardar / cerrar
+  document.getElementById("nm3BtnSave")?.addEventListener("click", _saveLiquidation);
+  document.getElementById("nm3BtnClose")?.addEventListener("click", _closePeriod);
+
+  // Cerrar modales
+  document.getElementById("nm3NovClose")?.addEventListener("click", _closeNovModal);
+  document.getElementById("nm3NovModal")?.addEventListener("click", e => { if (e.target.id === "nm3NovModal") _closeNovModal(); });
+  document.getElementById("nm3CalcClose")?.addEventListener("click", _closeCalcModal);
+  document.getElementById("nm3CalcModal")?.addEventListener("click", e => { if (e.target.id === "nm3CalcModal") _closeCalcModal(); });
+  document.getElementById("nm3HorasClose")?.addEventListener("click", _closeHorasModal);
+  document.getElementById("nm3HorasModal")?.addEventListener("click", e => { if (e.target.id === "nm3HorasModal") _closeHorasModal(); });
+  document.getElementById("nm3TurnosClose")?.addEventListener("click", _closeTurnosModal);
+  document.getElementById("nm3TurnosModal")?.addEventListener("click", e => { if (e.target.id === "nm3TurnosModal") _closeTurnosModal(); });
+
+  // Delegación de eventos en la tabla
+  const tbody = document.getElementById("nm3Tbody");
+  if (!tbody) return;
+
+  tbody.addEventListener("click", e => {
+    // Novedad badge → abrir modal de novedades
+    const novPill = e.target.closest(".nm3-nov-pill--has");
+    if (novPill) { _openNovModal(Number(novPill.dataset.emp)); return; }
+
+    // Botón agregar novedad
+    const novBtn = e.target.closest(".nm3-act-nov");
+    if (novBtn)  { _openNovModal(Number(novBtn.dataset.emp)); return; }
+
+    // Turno pill
+    const turnoPill = e.target.closest(".nm3-turno-pill--has, .nm3-turno-pill--add");
+    if (turnoPill) { _openTurnosModal(Number(turnoPill.dataset.emp)); return; }
+
+    // Horas pill / botón horas
+    const horasPill = e.target.closest(".nm3-horas-pill");
+    if (horasPill) { _openHorasModal(Number(horasPill.dataset.emp)); return; }
+    const horasBtn = e.target.closest(".nm3-act-horas");
+    if (horasBtn)  { _openHorasModal(Number(horasBtn.dataset.emp));  return; }
+
+    // Botón cálculo detallado
+    const calcBtn = e.target.closest(".nm3-act-calc");
+    if (calcBtn) { _openCalcModal(Number(calcBtn.dataset.emp)); return; }
+
+    // Marcar listo
+    const okBtn = e.target.closest(".nm3-act-ok");
+    if (okBtn) {
+      const empId = Number(okBtn.dataset.emp);
+      const es    = getEs(empId);
+      es.checked  = !es.checked;
+      _refreshRow(empId);
+      _refreshFooter();
+      return;
+    }
+  });
+
+  tbody.addEventListener("input", e => {
+    const inp = e.target.closest(".nm3-nc-inp");
+    if (!inp) return;
+    const empId = Number(inp.dataset.emp);
+    const val   = Math.max(0, Math.min(30, parseInt(inp.value, 10) || 0));
+    getEs(empId).diasNoClase = val;
+    _refreshRowCalc(empId);
+    _refreshFooter();
+  });
+}
+
+// ── Modal: novedades ──────────────────────────────────────────────────────────
+
+function _openNovModal(empId) {
+  const emp = _employees.find(e => e.id === empId);
+  _modalEmpId = empId;
+  document.getElementById("nm3NovTitle").textContent = emp ? emp.fullName : "Novedades";
+  document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(empId);
+  document.getElementById("nm3NovModal").removeAttribute("hidden");
+  _wireNovModal();
+}
+
+function _wireNovModal() {
+  document.getElementById("nm3NovAdd")?.addEventListener("click", () => {
+    const typeEl = document.getElementById("nm3NovType");
+    const daysEl = document.getElementById("nm3NovDays");
+    const id     = typeEl?.value;
+    if (!id) { typeEl?.focus(); return; }
+    const days    = Math.max(1, parseInt(daysEl?.value, 10) || 1);
+    const novType = NOVELTY_TYPES.find(t => t.id === id);
+    if (!novType) return;
+    getEs(_modalEmpId).novedades.push({ ...novType, days });
+    document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(_modalEmpId);
+    _wireNovModal();
+    _refreshRow(_modalEmpId);
+    _refreshFooter();
+  });
+
+  document.querySelectorAll(".nm3-del-nov").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      getEs(_modalEmpId).novedades.splice(idx, 1);
+      document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(_modalEmpId);
+      _wireNovModal();
+      _refreshRow(_modalEmpId);
+      _refreshFooter();
+    });
+  });
+}
+
+function _closeNovModal() {
+  document.getElementById("nm3NovModal")?.setAttribute("hidden", "");
+  _modalEmpId = null;
+}
+
+// ── Modal: cálculo ────────────────────────────────────────────────────────────
+
+function _openCalcModal(empId) {
+  const emp = _employees.find(e => e.id === empId);
+  if (!emp) return;
+  document.getElementById("nm3CalcTitle").textContent = emp.fullName;
+  document.getElementById("nm3CalcBody").innerHTML    = isHourBased(emp) ? _calcBodyHtmlHours(emp) : _calcBodyHtml(emp);
+  document.getElementById("nm3CalcModal").removeAttribute("hidden");
+}
+
+function _closeCalcModal() {
+  document.getElementById("nm3CalcModal")?.setAttribute("hidden", "");
+}
+
+function _calcBodyHtmlHours(emp) {
+  const es      = getEs(emp.id);
+  const calc    = calcHourEmployee(emp);
+  const modCfg  = (_salaryConfig.modalities || {})[emp.modalityClass] || {};
+  const salBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
+
+  const horasRows = es.horasDiarias.length
+    ? es.horasDiarias.map(d => `
+      <tr>
+        <td>${d.fecha}</td>
+        <td class="nm3-ar">${d.horas}h</td>
+        <td class="nm3-ar nm3-green">+ ${fmtCOP(Math.round(calc.valorHora * d.horas))}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="3" class="nm3-empty-td">Sin horas registradas</td></tr>`;
+
+  return `
+<div class="nm3-calc-wrap">
+  <div class="nm3-calc-info">
+    <div class="nm3-ci"><span>Documento</span><b>${escapeHtml(emp.documentType || "CC")} ${escapeHtml(emp.documentNumber)}</b></div>
+    <div class="nm3-ci"><span>Cargo</span><b>${escapeHtml(emp.cargo || "—")}</b></div>
+    <div class="nm3-ci"><span>Grupo</span><b>${_getGroup(emp)}</b></div>
+    <div class="nm3-ci"><span>Salario base</span><b>${fmtCOP(salBase)}</b></div>
+    <div class="nm3-ci"><span>Valor hora (÷240)</span><b>${fmtCOP(calc.valorHora)}</b></div>
+    <div class="nm3-ci"><span>Total horas</span><b>${calc.totalHoras}h</b></div>
+  </div>
+  <table class="nm3-tbl nm3-tbl--calc">
+    <tbody>
+      <tr class="nm3-calc-sec"><td colspan="3">📅 Horas trabajadas</td></tr>
+      <tr><th>Fecha</th><th class="nm3-ar">Horas</th><th class="nm3-ar">Valor</th></tr>
+      ${horasRows}
+      <tr class="nm3-calc-sec"><td colspan="3">💰 Devengados</td></tr>
+      <tr><td>Devengado (${calc.totalHoras}h × ${fmtCOP(calc.valorHora)})</td><td colspan="2" class="nm3-ar nm3-green">+ ${fmtCOP(calc.devengado)}</td></tr>
+      <tr class="nm3-calc-sub"><td><b>Total devengado</b></td><td colspan="2" class="nm3-ar"><b>${fmtCOP(calc.devengado)}</b></td></tr>
+      <tr class="nm3-calc-sec"><td colspan="3">🔻 Deducciones</td></tr>
+      <tr><td>Salud empleado (4%)</td><td colspan="2" class="nm3-ar nm3-red">− ${fmtCOP(calc.salud)}</td></tr>
+      <tr><td>Pensión empleado (4%)</td><td colspan="2" class="nm3-ar nm3-red">− ${fmtCOP(calc.pension)}</td></tr>
+      <tr class="nm3-calc-sub"><td><b>Total deducciones</b></td><td colspan="2" class="nm3-ar nm3-red"><b>− ${fmtCOP(calc.totalDed)}</b></td></tr>
+      <tr class="nm3-calc-neto"><td>NETO A PAGAR</td><td colspan="2" class="nm3-ar"><strong>${fmtCOP(calc.neto)}</strong></td></tr>
+    </tbody>
+  </table>
+</div>`;
+}
+
+// ── Modal: horas diarias ──────────────────────────────────────────────────────
+
+function _horasBodyHtml(empId) {
+  const es      = getEs(empId);
+  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
+  const start   = new Date((_currentPeriod?.period_start || new Date().toISOString().slice(0, 10)) + "T00:00:00Z");
+  const end     = new Date((_currentPeriod?.period_end   || new Date().toISOString().slice(0, 10)) + "T00:00:00Z");
+
+  const horasMap = {};
+  for (const d of es.horasDiarias) horasMap[d.fecha] = d.horas;
+
+  const days = [];
+  const cur  = new Date(start);
+  while (cur <= end) { days.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
+
+  const DOW = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+  const totalHoras = es.horasDiarias.reduce((s, d) => s + (Number(d.horas) || 0), 0);
+  const emp        = _employees.find(e => e.id === empId);
+  const modCfg     = (_salaryConfig.modalities || {})[emp?.modalityClass] || {};
+  const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
+  const valorHora  = Math.round(salaryBase / 240);
+  const devengado  = Math.round(valorHora * totalHoras);
+
+  const dayInputs = days.map(fecha => {
+    const d          = new Date(fecha + "T00:00:00Z");
+    const dow        = d.getUTCDay();
+    const isWeekend  = dow === 0 || dow === 6;
+    const horas      = horasMap[fecha] ?? "";
+    return `
+<div class="nm3-horas-day ${isWeekend ? "nm3-horas-day--wknd" : ""}">
+  <div class="nm3-horas-dow">${DOW[dow]}</div>
+  <div class="nm3-horas-date">${d.getUTCDate()}</div>
+  ${canEdit
+    ? `<input type="number" class="nm3-horas-inp" data-fecha="${fecha}" value="${horas}" min="0" max="24" placeholder="0">`
+    : `<div class="nm3-horas-ro">${horas !== "" ? horas + "h" : "—"}</div>`}
+</div>`;
+  }).join("");
+
+  return `
+<div class="nm3-horas-wrap">
+  ${canEdit ? `
+  <div class="nm3-horas-actions">
+    <button class="nm3-btn nm3-btn--sm nm3-btn--outline" id="nm3HorasFillWk">Días hábiles (8h)</button>
+    <button class="nm3-btn nm3-btn--sm nm3-btn--outline" id="nm3HorasClear">Limpiar todo</button>
+  </div>` : ""}
+  <div class="nm3-horas-grid">${dayInputs}</div>
+  <div class="nm3-horas-summary" id="nm3HorasSummary">
+    <span>Total horas: <strong>${totalHoras}h</strong></span>
+    <span>Valor/hora: <strong>${fmtCOP(valorHora)}</strong></span>
+    <span>Devengado: <strong class="nm3-green">${fmtCOP(devengado)}</strong></span>
+  </div>
+</div>`;
+}
+
+function _openHorasModal(empId) {
+  const emp = _employees.find(e => e.id === empId);
+  _modalEmpId = empId;
+  document.getElementById("nm3HorasTitle").textContent = emp ? emp.fullName : "Horas diarias";
+  document.getElementById("nm3HorasBody").innerHTML    = _horasBodyHtml(empId);
+  document.getElementById("nm3HorasModal").removeAttribute("hidden");
+  _wireHorasModal(empId);
+}
+
+function _closeHorasModal() {
+  document.getElementById("nm3HorasModal")?.setAttribute("hidden", "");
+  _modalEmpId = null;
+}
+
+function _wireHorasModal(empId) {
+  const body = document.getElementById("nm3HorasBody");
+  if (!body) return;
+
+  const _update = () => {
+    const es   = getEs(empId);
+    const inps = body.querySelectorAll(".nm3-horas-inp");
+    es.horasDiarias = [];
+    inps.forEach(inp => {
+      const horas = Number(inp.value) || 0;
+      if (horas > 0) es.horasDiarias.push({ fecha: inp.dataset.fecha, horas });
+    });
+    const totalHoras = es.horasDiarias.reduce((s, d) => s + d.horas, 0);
+    const emp        = _employees.find(e => e.id === empId);
+    const modCfg     = (_salaryConfig.modalities || {})[emp?.modalityClass] || {};
+    const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
+    const valorHora  = Math.round(salaryBase / 240);
+    const devengado  = Math.round(valorHora * totalHoras);
+    const sumEl      = document.getElementById("nm3HorasSummary");
+    if (sumEl) sumEl.innerHTML = `
+      <span>Total horas: <strong>${totalHoras}h</strong></span>
+      <span>Valor/hora: <strong>${fmtCOP(valorHora)}</strong></span>
+      <span>Devengado: <strong class="nm3-green">${fmtCOP(devengado)}</strong></span>`;
+    _refreshRow(empId);
+    _refreshFooter();
   };
 
-  document.getElementById('nmTopContractSelect')?.addEventListener('change', async e => {
-    await reloadView({ topContractId: e.target.value || '' });
+  body.querySelectorAll(".nm3-horas-inp").forEach(inp => inp.addEventListener("input", _update));
+
+  document.getElementById("nm3HorasFillWk")?.addEventListener("click", () => {
+    body.querySelectorAll(".nm3-horas-inp").forEach(inp => {
+      const dow = new Date(inp.dataset.fecha + "T00:00:00Z").getUTCDay();
+      if (dow !== 0 && dow !== 6) inp.value = "8";
+    });
+    _update();
   });
 
-  document.getElementById('nmTopMunicipalitySelect')?.addEventListener('change', async e => {
-    await reloadView({ topMunicipality: e.target.value || '' });
+  document.getElementById("nm3HorasClear")?.addEventListener("click", () => {
+    body.querySelectorAll(".nm3-horas-inp").forEach(inp => { inp.value = ""; });
+    _update();
+  });
+}
+
+// ── Modal: turnos realizados ──────────────────────────────────────────────────
+
+function _turnosBodyHtml(empId) {
+  const es      = getEs(empId);
+  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
+  const modalities = Object.keys(_salaryConfig.modalities || {});
+
+  const rows = es.turnos.length
+    ? es.turnos.map((t, i) => `
+      <tr>
+        <td>${escapeHtml(t.modalidad)}</td>
+        <td class="nm3-ar">${t.dias} d</td>
+        ${canEdit ? `<td><button class="nm3-del-turno" data-idx="${i}" title="Eliminar">✕</button></td>` : ""}
+      </tr>`).join("")
+    : `<tr><td colspan="${canEdit ? 3 : 2}" class="nm3-empty-td">Sin turnos registrados.</td></tr>`;
+
+  return `
+<div class="nm3-nov-wrap">
+  <table class="nm3-tbl nm3-tbl--modal">
+    <thead>
+      <tr>
+        <th>Modalidad</th>
+        <th class="nm3-ar">Días</th>
+        ${canEdit ? "<th></th>" : ""}
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  ${canEdit ? `
+  <div class="nm3-nov-form">
+    <div class="nm3-nov-form-lbl">Agregar turno realizado</div>
+    <div class="nm3-nov-form-row">
+      <select class="nm3-sel nm3-nov-sel" id="nm3TurnoMod">
+        <option value="">— Modalidad —</option>
+        ${modalities.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("")}
+      </select>
+      <input type="number" class="nm3-nc-inp" id="nm3TurnoDias" value="1" min="1" max="30" placeholder="Días" style="width:72px">
+      <span class="nm3-unit">días</span>
+      <button class="nm3-btn nm3-btn--primary nm3-btn--sm" id="nm3TurnoAdd">＋ Agregar</button>
+    </div>
+  </div>` : ""}
+</div>`;
+}
+
+function _openTurnosModal(empId) {
+  const emp = _employees.find(e => e.id === empId);
+  _modalEmpId = empId;
+  document.getElementById("nm3TurnosTitle").textContent = emp ? emp.fullName : "Turnos realizados";
+  document.getElementById("nm3TurnosBody").innerHTML    = _turnosBodyHtml(empId);
+  document.getElementById("nm3TurnosModal").removeAttribute("hidden");
+  _wireTurnosModal();
+}
+
+function _closeTurnosModal() {
+  document.getElementById("nm3TurnosModal")?.setAttribute("hidden", "");
+  _modalEmpId = null;
+}
+
+function _wireTurnosModal() {
+  document.getElementById("nm3TurnoAdd")?.addEventListener("click", () => {
+    const modEl  = document.getElementById("nm3TurnoMod");
+    const diasEl = document.getElementById("nm3TurnoDias");
+    const mod    = modEl?.value;
+    if (!mod) { modEl?.focus(); return; }
+    const dias = Math.max(1, parseInt(diasEl?.value, 10) || 1);
+    getEs(_modalEmpId).turnos.push({ modalidad: mod, dias });
+    document.getElementById("nm3TurnosBody").innerHTML = _turnosBodyHtml(_modalEmpId);
+    _wireTurnosModal();
+    _refreshRow(_modalEmpId);
+    _refreshFooter();
   });
 
-  document.getElementById('nmTopPeriodSelect')?.addEventListener('change', async e => {
-    state.payrollPeriodId = e.target.value || null;
-    await reloadView({}, { resetPage: true });
-  });
-
-  document.getElementById('nmFilterPeriod')?.addEventListener('change', async e => {
-    state.payrollPeriodId = e.target.value || null;
-    await reloadView({}, { resetPage: true });
-  });
-
-  document.getElementById('nmPayrollSearch')?.addEventListener('input', e => {
-    const nextValue = e.target.value || '';
-    window.clearTimeout(payrollSearchTimer);
-    payrollSearchTimer = window.setTimeout(async () => {
-      await reloadView({ search: nextValue });
-    }, 220);
-  });
-
-  [
-    ['nmFilterSite', 'filterSite'],
-    ['nmFilterModality', 'filterModality'],
-    ['nmFilterRole', 'filterRole'],
-    ['nmFilterStatus', 'filterStatus'],
-    ['nmFilterCompany', 'filterCompanyId'],
-    ['nmFilterContract', 'filterContractId'],
-    ['nmFilterMunicipality', 'filterMunicipality'],
-    ['nmFilterContractType', 'filterContractType'],
-  ].forEach(([id, key]) => {
-    document.getElementById(id)?.addEventListener('change', async e => {
-      await reloadView({ [key]: e.target.value || '' });
+  document.querySelectorAll(".nm3-del-turno").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      getEs(_modalEmpId).turnos.splice(idx, 1);
+      document.getElementById("nm3TurnosBody").innerHTML = _turnosBodyHtml(_modalEmpId);
+      _wireTurnosModal();
+      _refreshRow(_modalEmpId);
+      _refreshFooter();
     });
   });
+}
 
-  document.getElementById('nmBtnClearFilters')?.addEventListener('click', async () => {
-    Object.assign(view, {
-      topContractId: state.currentUser?.contractId ? String(state.currentUser.contractId) : '',
-      topMunicipality: '',
-      search: '',
-      filterSite: '',
-      filterModality: '',
-      filterRole: '',
-      filterStatus: '',
-      filterCompanyId: '',
-      filterContractId: '',
-      filterMunicipality: '',
-      filterContractType: '',
-      page: 1,
-    });
-    await _reload();
-  });
+// ── Refreshes parciales ───────────────────────────────────────────────────────
 
-  document.querySelectorAll('[data-payroll-page]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const nextPage = Number(btn.dataset.payrollPage || view.page || 1);
-      if (!Number.isFinite(nextPage) || nextPage < 1) return;
-      view.page = nextPage;
-      await _reload();
-    });
-  });
+function _refreshTbody() {
+  const tbody   = document.getElementById("nm3Tbody");
+  const theadEl = document.getElementById("nm3Thead");
+  const countEl = document.getElementById("nm3Count");
+  if (!tbody) return;
+  if (theadEl) theadEl.innerHTML = _tableHeaderHtml();
+  const filtered = _filtered();
+  tbody.innerHTML = filtered.length
+    ? filtered.map((e, i) => _rowForEmp(e, i)).join("")
+    : `<tr><td colspan="${_colCount()}" class="nm3-empty-td">Sin resultados.</td></tr>`;
+  if (countEl) countEl.textContent = `${filtered.length} de ${_employees.length}`;
+  _refreshFooter();
+}
 
-  wrap.addEventListener('click', e => {
-    const calcTrigger = e.target.closest('[data-payroll-trigger-calc]');
-    if (calcTrigger) {
-      e.preventDefault();
-      document.getElementById('nmBtnCalculate')?.click();
-      return;
-    }
+function _refreshRow(empId) {
+  const tbody = document.getElementById("nm3Tbody");
+  if (!tbody) return;
+  const emp = _employees.find(e => e.id === empId);
+  if (!emp) return;
+  const existing = tbody.querySelector(`[data-emp-id="${empId}"]`);
+  if (!existing) return;
+  const allFiltered = _filtered();
+  const idx  = allFiltered.findIndex(e => e.id === empId);
+  const temp = document.createElement("tbody");
+  temp.innerHTML = _rowForEmp(emp, idx >= 0 ? idx : 0);
+  existing.replaceWith(temp.firstElementChild);
+}
 
-    const targetPanel = e.target.closest('[data-nm-open-panel]');
-    if (targetPanel) {
-      e.preventDefault();
-      const panel = document.getElementById(targetPanel.dataset.nmOpenPanel || '');
-      if (!panel) return;
-      if (panel.tagName === 'DETAILS') panel.open = true;
-      panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-  });
+function _refreshRowCalc(empId) {
+  const emp = _employees.find(e => e.id === empId);
+  if (!emp) return;
+  const es   = getEs(empId);
+  const calc = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
+  const row  = document.querySelector(`#nm3Tbody [data-emp-id="${empId}"]`);
+  if (!row) return;
+  const devEl  = row.querySelector(".nm3-td-dev");
+  const dedEl  = row.querySelector(".nm3-td-ded");
+  const netoEl = row.querySelector(".nm3-td-neto");
+  if (devEl)  devEl.textContent = fmtCOP(calc.totalDev);
+  if (dedEl)  dedEl.innerHTML   = `<div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div><div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>`;
+  if (netoEl) netoEl.textContent = fmtCOP(calc.neto);
+}
 
-  // Period select
-  document.getElementById('nmPeriodSelect')?.addEventListener('change', async e => {
-    state.payrollPeriodId = e.target.value || null;
-    await _reload();
-  });
-
-  // Toggle create period form
-  const btnToggle = document.getElementById('nmBtnToggleCreate');
-  if (btnToggle) {
-    btnToggle.addEventListener('click', () => {
-      const fw = document.getElementById('nmCreatePeriodWrap');
-      if (!fw) return;
-      const opening = fw.classList.contains('hidden');
-      fw.classList.toggle('hidden', !opening);
-      btnToggle.textContent = opening ? '✕ Cancelar' : '+ Nuevo período';
-    });
+function _refreshFooter() {
+  const el   = document.getElementById("nm3Footer");
+  const pill = document.getElementById("nm3DonePill");
+  if (el) el.innerHTML = _totalsHtml();
+  if (pill) {
+    const done = [..._empState.values()].filter(e => e.checked).length;
+    pill.textContent = `${done}/${_employees.length} revisados`;
   }
-
-  document.getElementById('nmBtnCancelCreate')?.addEventListener('click', () => {
-    document.getElementById('nmCreatePeriodWrap')?.classList.add('hidden');
-    const btn = document.getElementById('nmBtnToggleCreate');
-    if (btn) btn.textContent = '+ Nuevo período';
-  });
-
-  document.getElementById('nmBtnSavePeriod')?.addEventListener('click', async () => {
-    const label = document.getElementById('nmNewLabel')?.value.trim();
-    const start = document.getElementById('nmNewStart')?.value;
-    const end   = document.getElementById('nmNewEnd')?.value;
-    if (!label) { showWarning('Ingresa una etiqueta para el período.'); return; }
-    if (!start || !end) { showWarning('Las fechas de inicio y fin son obligatorias.'); return; }
-    if (start >= end) { showWarning('La fecha fin debe ser posterior al inicio.'); return; }
-    const btn = document.getElementById('nmBtnSavePeriod');
-    btn.disabled = true; btn.textContent = 'Creando…';
-    try {
-      const companyId  = state.currentUser?.companyId  || state.currentUser?.company_id  || 1;
-      const contractId = state.currentUser?.contractId || state.currentUser?.contract_id || null;
-      const res = await apiFetch('/payroll/periods', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label, periodStart: start, periodEnd: end, companyId, contractId }),
-      });
-      state.payrollPeriodId = String(res.data?.id || '');
-      showSuccess('Período creado correctamente.');
-      await _reload();
-    } catch (e) {
-      showError(e.message || 'Error al crear el período.');
-      btn.disabled = false; btn.textContent = 'Crear período';
-    }
-  });
-
-  // Toggle novedad form
-  document.getElementById('nmBtnAddNovedad')?.addEventListener('click', () => {
-    document.getElementById('nmNovedadFormWrap')?.classList.toggle('hidden');
-  });
-
-  document.getElementById('nmBtnCancelNovedad')?.addEventListener('click', () => {
-    document.getElementById('nmNovedadFormWrap')?.classList.add('hidden');
-  });
-
-  // Municipality cascade in novedad form
-  document.getElementById('nmNovMunicipality')?.addEventListener('change', async e => {
-    const mun = e.target.value;
-    const empSel = document.getElementById('nmNovEmployee');
-    if (!empSel) return;
-    if (!mun) {
-      empSel.innerHTML = '<option value="">Primero selecciona municipio</option>';
-      empSel.disabled = true;
-      return;
-    }
-    empSel.innerHTML = '<option value="">Cargando…</option>';
-    empSel.disabled = true;
-    try {
-      const pp = await apiFetch('/personnel');
-      const rows = Array.isArray(pp.data) ? pp.data : Array.isArray(pp.personnel) ? pp.personnel : [];
-      const munNorm = mun.toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-      const filtered = rows.filter(e => {
-        const s = String(e.status || e.estado || '').toUpperCase();
-        const active = s === 'ACTIVO' || s === 'ACTIVE';
-        const em = String(e.educationalMunicipality || e.educational_municipality ||
-                          e.municipio_institucional || e.municipality || e.municipio || '')
-                   .toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-        return active && em === munNorm;
-      });
-      empSel.innerHTML = `<option value="">Selecciona empleado (${filtered.length})</option>` +
-        filtered.map(e => {
-          const name = e.fullName || e.full_name || e.nombre_completo || '';
-          const doc  = e.documentNumber || e.numero_documento || '';
-          return `<option value="${escapeAttr(String(e.id))}">${escapeHtml(name)} — ${escapeHtml(doc)}</option>`;
-        }).join('');
-      empSel.disabled = false;
-    } catch {
-      empSel.innerHTML = '<option value="">Error cargando empleados</option>';
-      empSel.disabled = false;
-    }
-  });
-
-  // Save novedad
-  document.getElementById('nmBtnSaveNovedad')?.addEventListener('click', async () => {
-    const fw         = document.getElementById('nmNovedadFormWrap');
-    const periodId   = fw?.dataset.periodId;
-    const employeeId = document.getElementById('nmNovEmployee')?.value;
-    const noveltyType = document.getElementById('nmNovType')?.value;
-    const startDate  = document.getElementById('nmNovStartDate')?.value;
-    const endDate    = document.getElementById('nmNovEndDate')?.value;
-    const days       = document.getElementById('nmNovDays')?.value;
-    const observations = document.getElementById('nmNovObservations')?.value;
-
-    if (!employeeId)  { showWarning('Selecciona un empleado.'); return; }
-    if (!noveltyType) { showWarning('Selecciona el tipo de novedad.'); return; }
-    if (!startDate)   { showWarning('La fecha de inicio es obligatoria.'); return; }
-
-    const btn = document.getElementById('nmBtnSaveNovedad');
-    btn.disabled = true; btn.textContent = 'Guardando…';
-    try {
-      const endpoint = periodId
-        ? `/payroll/periods/${periodId}/novelties`
-        : '/payroll/novelties';
-      await apiFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId, noveltyType, startDate, endDate: endDate || null, days: days || null, observations }),
-      });
-      showSuccess('Novedad registrada correctamente.');
-      await _reload();
-    } catch (e) {
-      showError(e.message || 'Error al guardar la novedad.');
-      btn.disabled = false; btn.textContent = 'Guardar novedad';
-    }
-  });
-
-  // Approve novedades
-  document.querySelectorAll('.nm-action-approve').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const novId = btn.dataset.novId;
-      btn.disabled = true;
-      try {
-        await apiFetch(`/payroll/novelties/${novId}/status`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'APROBADA' }),
-        });
-        showSuccess('Novedad aprobada.');
-        await _reload();
-      } catch (e) {
-        showError(e.message || 'Error al aprobar.');
-        btn.disabled = false;
-      }
-    });
-  });
-
-  // Reject novedades
-  document.querySelectorAll('.nm-action-reject').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const novId = btn.dataset.novId;
-      const reason = window.prompt('Motivo del rechazo (obligatorio):');
-      if (reason === null) return;
-      if (!reason.trim()) { showWarning('El motivo del rechazo es obligatorio.'); return; }
-      btn.disabled = true;
-      try {
-        await apiFetch(`/payroll/novelties/${novId}/status`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'RECHAZADA', reviewNotes: reason }),
-        });
-        showWarning('Novedad rechazada.');
-        await _reload();
-      } catch (e) {
-        showError(e.message || 'Error al rechazar.');
-        btn.disabled = false;
-      }
-    });
-  });
-
-  // Mark municipality as done
-  document.querySelectorAll('.nm-btn-done[data-municipality]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const municipality = btn.dataset.municipality;
-      const periodId = btn.dataset.periodId;
-      btn.disabled = true; btn.textContent = 'Guardando…';
-      try {
-        await apiFetch(`/payroll/periods/${periodId}/municipality-status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ municipality, isComplete: true }),
-        });
-        showSuccess(`Municipio ${municipality} marcado como terminado.`);
-        await _reload();
-      } catch (e) {
-        showError(e.message || 'Error al marcar municipio.');
-        btn.disabled = false; btn.textContent = 'Marcar terminado';
-      }
-    });
-  });
-
-  // Calculate
-  document.getElementById('nmBtnCalculate')?.addEventListener('click', async () => {
-    const periodId = state.payrollPeriodId;
-    if (!periodId) return;
-    if (!confirm('¿Calcular la nómina para este período?')) return;
-    const btn = document.getElementById('nmBtnCalculate');
-    btn.disabled = true; btn.textContent = '⚙ Calculando…';
-    try {
-      const res = await apiFetch(`/payroll/periods/${periodId}/calculate`, { method: 'POST' });
-      showSuccess(res.message || 'Nómina calculada correctamente.');
-      await _reload();
-    } catch (e) {
-      showError(e.message || 'Error al calcular.');
-      btn.disabled = false; btn.textContent = '⚙ Calcular nómina';
-    }
-  });
-
-  // Payslip / detail
-  document.querySelectorAll('.nm-action-slip, .nm-action-detail').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const empId = btn.dataset.empId;
-      const periodId = btn.dataset.periodId;
-      const empName = btn.dataset.empName || '';
-      btn.disabled = true;
-      try {
-        const res = await apiFetch(`/payroll/employees/${empId}/slip?periodId=${periodId}`);
-        _showSlipModal(res.data, empName);
-      } catch (e) {
-        showError(e.message || 'No se pudo cargar el desprendible.');
-      } finally { btn.disabled = false; }
-    });
-  });
-
-  // Confirm and send
-  document.getElementById('nmBtnConfirmAndSend')?.addEventListener('click', async () => {
-    const periodId = document.getElementById('nmBtnConfirmAndSend')?.dataset.periodId;
-    if (!confirm('¿Confirmar la nómina y enviar desprendibles? Esta acción cierra el período de forma IRREVERSIBLE.')) return;
-    const btn = document.getElementById('nmBtnConfirmAndSend');
-    btn.disabled = true; btn.textContent = 'Procesando…';
-    try {
-      const res = await apiFetch(`/payroll/periods/${periodId}/confirm-and-send`, { method: 'POST' });
-      showSuccess(res.message || 'Nómina confirmada y desprendibles enviados.');
-      await _reload();
-    } catch (e) {
-      showError(e.message || 'Error al confirmar.');
-      btn.disabled = false; btn.textContent = 'Confirmar nómina y enviar desprendibles';
-    }
-  });
 }
 
-// ── Internal ──────────────────────────────────────────────────────────────────
+// ── API calls ─────────────────────────────────────────────────────────────────
 
-async function _reload() {
-  const { openModule } = await import('../nav.js');
-  await openModule('nomina_novedades');
+async function _loadPeriods() {
+  const contractId = getContractId();
+  if (!contractId) return;
+  try {
+    const r = await apiFetch(`/nomina/periods?contractId=${contractId}`);
+    _periods = Array.isArray(r.data) ? r.data : [];
+  } catch { _periods = []; }
 }
 
-function _showSlipModal(data, empName) {
-  if (!data) { showError('No hay datos de desprendible disponibles.'); return; }
+async function _loadPeriodDetail(periodId) {
+  const contractId = getContractId();
+  try {
+    const [periodResp, empsResp, salResp] = await Promise.all([
+      apiFetch(`/nomina/periods/${periodId}`),
+      apiFetch(`/nomina/employees?contractId=${contractId}`),
+      apiFetch(`/config/contracts/${contractId}/salary-config`),
+    ]);
 
-  const existing = document.getElementById('nmSlipModal');
-  if (existing) existing.remove();
+    _currentPeriod = periodResp.data.period;
+    _employees     = Array.isArray(empsResp.data) ? empsResp.data : [];
+    _salaryConfig  = salResp.data || {};
+    _searchText    = "";
+    _filterHasNov  = false;
 
-  const modal = document.createElement('div');
-  modal.id = 'nmSlipModal';
-  modal.className = 'nm-modal-overlay';
-  modal.innerHTML = `
-    <div class="nm-modal">
-      <div class="nm-modal-head">
-        <h3>Desprendible — ${escapeHtml(empName || data.employeeName || '')}</h3>
-        <button class="nm-modal-close" type="button" title="Cerrar">✕</button>
-      </div>
-      <div class="nm-modal-body">
-        <div class="nm-slip-grid">
-          <div class="nm-slip-section nm-slip-full">
-            <h4>Información del empleado</h4>
-            <div class="nm-slip-2col">
-              <div class="nm-slip-row"><span>Nombre:</span><span>${escapeHtml(data.employeeName || '—')}</span></div>
-              <div class="nm-slip-row"><span>Documento:</span><span>${escapeHtml(data.documentNumber || '—')}</span></div>
-              <div class="nm-slip-row"><span>Cargo:</span><span>${escapeHtml(data.workTimeType || '—')}</span></div>
-              <div class="nm-slip-row"><span>Municipio:</span><span>${escapeHtml(data.municipality || '—')}</span></div>
-              <div class="nm-slip-row"><span>Institución:</span><span>${escapeHtml(data.institution || '—')}</span></div>
-              <div class="nm-slip-row"><span>Modalidad:</span><span>${escapeHtml(data.modality || '—')}</span></div>
-              <div class="nm-slip-row"><span>Días trabajados:</span><span>${data.workedDays ?? '—'}</span></div>
-            </div>
-          </div>
-          <div class="nm-slip-section">
-            <h4>Devengados</h4>
-            <div class="nm-slip-row"><span>Salario base:</span><span>${fmtMoney(data.baseSalary)}</span></div>
-            <div class="nm-slip-row"><span>Aux. transporte:</span><span>${fmtMoney(data.transportAllowance)}</span></div>
-            <div class="nm-slip-row"><span>Otros ingresos:</span><span>${fmtMoney(data.otherEarnings)}</span></div>
-            <div class="nm-slip-row nm-slip-subtotal"><span>Total devengado:</span><span>${fmtMoney(data.totalDevengado)}</span></div>
-          </div>
-          <div class="nm-slip-section">
-            <h4>Deducciones</h4>
-            <div class="nm-slip-row"><span>Salud (4%):</span><span>${fmtMoney(data.deduccionSalud)}</span></div>
-            <div class="nm-slip-row"><span>Pensión (4%):</span><span>${fmtMoney(data.deduccionPension)}</span></div>
-            <div class="nm-slip-row"><span>Desc. novedades:</span><span>${fmtMoney(data.novedadDescuento)}</span></div>
-            <div class="nm-slip-row nm-slip-subtotal"><span>Total deducciones:</span><span>${fmtMoney(data.totalDeducciones)}</span></div>
-          </div>
-          <div class="nm-slip-section nm-slip-full">
-            <div class="nm-slip-neto-row"><span>NETO A PAGAR:</span><span>${fmtMoney(data.netoPagar)}</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="nm-modal-foot">
-        <button type="button" class="nm-btn nm-btn-primary" onclick="window.print()">Imprimir</button>
-        <button type="button" class="nm-modal-close nm-btn nm-btn-ghost">Cerrar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  modal.querySelectorAll('.nm-modal-close').forEach(b => b.addEventListener('click', () => modal.remove()));
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    _empState.clear();
+    for (const emp of _employees) {
+      _empState.set(emp.id, { diasNoClase: 0, novedades: [], horasDiarias: [], turnos: [], checked: false });
+    }
+    for (const r of (periodResp.data.results || [])) {
+      const es = _empState.get(Number(r.employeeId));
+      if (es) {
+        es.diasNoClase  = r.diasNoClase || 0;
+        es.novedades    = Array.isArray(r.novedades)    ? r.novedades    : [];
+        es.horasDiarias = Array.isArray(r.horasDiarias) ? r.horasDiarias : [];
+        es.turnos       = Array.isArray(r.turnos)       ? r.turnos       : [];
+      }
+    }
+
+    _view = "detail";
+    _renderDetailView();
+  } catch (err) {
+    showError("Error cargando el período: " + err.message);
+  }
+}
+
+async function _saveLiquidation() {
+  if (!_currentPeriod) return;
+  const btn = document.getElementById("nm3BtnSave");
+  if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
+
+  try {
+    const lines = _employees.map(emp => {
+      const es        = getEs(emp.id);
+      const hourBased = isHourBased(emp);
+      return {
+        employeeId: emp.id, fullName: emp.fullName,
+        documentNumber: emp.documentNumber, documentType: emp.documentType,
+        siteName: emp.siteName, institutionName: emp.institutionName,
+        municipalityName: emp.municipalityName, modality: emp.modality,
+        modalityClass: emp.modalityClass, workdayType: emp.workdayType,
+        cargo: emp.cargo || "",
+        diasNoClase:  es.diasNoClase,
+        novedades:    es.novedades,
+        horasDiarias: es.horasDiarias,
+        turnos:       es.turnos,
+        payrollType:  hourBased ? "horas" : "mensual",
+      };
+    });
+
+    const r = await apiFetch(`/nomina/periods/${_currentPeriod.id}/save`, {
+      method: "POST",
+      body: JSON.stringify({ lines }),
+    });
+
+    _currentPeriod.status = "CALCULADO";
+    showSuccess(`Nómina guardada · ${r.data.totals.employees} empleados`);
+    _renderDetailView();
+  } catch (err) {
+    showError("Error al guardar: " + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = "💾 Guardar"; }
+  }
+}
+
+async function _closePeriod() {
+  if (!_currentPeriod) return;
+  if (!confirm(`¿Cerrar definitivamente la nómina "${_currentPeriod.label}"? Esta acción no se puede revertir.`)) return;
+  try {
+    await apiFetch(`/nomina/periods/${_currentPeriod.id}/close`, { method: "POST" });
+    _currentPeriod.status = "CERRADO";
+    showSuccess("Período cerrado");
+    _renderDetailView();
+  } catch (err) {
+    showError("Error al cerrar: " + err.message);
+  }
+}
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+
+export async function loadPayrollModule() {
+  _view = "list"; _currentPeriod = null; _employees = [];
+  _salaryConfig = {}; _empState.clear(); _searchText = ""; _filterHasNov = false;
+  _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
+  _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
+  await _loadPeriods();
+  return `<div class="nm3-shell"><div id="nm3-root"></div></div>`;
+}
+
+export function wirePayrollEvents() {
+  _renderListView();
 }

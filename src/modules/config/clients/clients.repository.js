@@ -2,6 +2,11 @@
 
 const pool = require("../../../db/pool");
 
+// Auto-migration: add salary_config column if it doesn't exist yet
+pool.query(
+  `ALTER TABLE contract_settings ADD COLUMN IF NOT EXISTS salary_config JSONB DEFAULT '{}'::jsonb`
+).catch(err => console.warn("[migration] salary_config:", err.message));
+
 async function listClients() {
   const { rows } = await pool.query(`
     SELECT
@@ -162,12 +167,14 @@ async function getContractConfig(id) {
                'position_mode',    cs.position_mode,
                'modules',          cs.modules,
                'positions',        cs.positions,
-               'role_permissions', cs.role_permissions)
+               'role_permissions', cs.role_permissions,
+               'salary_config',    COALESCE(cs.salary_config, '{}'::jsonb))
         ELSE json_build_object(
                'position_mode',    'licitacion',
                'modules',          '{}'::jsonb,
                'positions',        '[]'::jsonb,
-               'role_permissions', '{}'::jsonb)
+               'role_permissions', '{}'::jsonb,
+               'salary_config',    '{}'::jsonb)
       END AS settings
     FROM contracts ct
     JOIN  companies co        ON co.id = ct.company_id
@@ -177,15 +184,16 @@ async function getContractConfig(id) {
   return rows[0] || null;
 }
 
-async function upsertContractSettings(contractId, { position_mode, modules, positions, role_permissions }) {
+async function upsertContractSettings(contractId, { position_mode, modules, positions, role_permissions, salary_config }) {
   const { rows } = await pool.query(`
-    INSERT INTO contract_settings (contract_id, position_mode, modules, positions, role_permissions, updated_at)
-    VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, NOW())
+    INSERT INTO contract_settings (contract_id, position_mode, modules, positions, role_permissions, salary_config, updated_at)
+    VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, COALESCE($6::jsonb, '{}'::jsonb), NOW())
     ON CONFLICT (contract_id) DO UPDATE
       SET position_mode    = EXCLUDED.position_mode,
           modules          = EXCLUDED.modules,
           positions        = EXCLUDED.positions,
           role_permissions = EXCLUDED.role_permissions,
+          salary_config    = COALESCE(EXCLUDED.salary_config, contract_settings.salary_config),
           updated_at       = NOW()
     RETURNING *
   `, [
@@ -194,8 +202,31 @@ async function upsertContractSettings(contractId, { position_mode, modules, posi
     JSON.stringify(modules          || {}),
     JSON.stringify(positions        || []),
     JSON.stringify(role_permissions || {}),
+    salary_config != null ? JSON.stringify(salary_config) : null,
   ]);
   return rows[0];
+}
+
+async function getSalaryConfig(contractId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(salary_config, '{}'::jsonb) AS salary_config
+     FROM contract_settings WHERE contract_id = $1`,
+    [contractId]
+  );
+  return rows[0]?.salary_config || {};
+}
+
+async function upsertSalaryConfigOnly(contractId, salaryConfig) {
+  const { rows } = await pool.query(`
+    INSERT INTO contract_settings
+      (contract_id, position_mode, modules, positions, role_permissions, salary_config, updated_at)
+    VALUES ($1, 'licitacion', '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, $2::jsonb, NOW())
+    ON CONFLICT (contract_id) DO UPDATE
+      SET salary_config = EXCLUDED.salary_config,
+          updated_at    = NOW()
+    RETURNING salary_config
+  `, [contractId, JSON.stringify(salaryConfig || {})]);
+  return rows[0]?.salary_config || {};
 }
 
 // ── Contract users ────────────────────────────────────────────────────────────
@@ -280,5 +311,6 @@ module.exports = {
   listClients, getClientById, createClient, updateClient,
   createContract, updateContract,
   getContractConfig, upsertContractSettings,
+  getSalaryConfig, upsertSalaryConfigOnly,
   getContractUsers, createContractUser, updateContractUser,
 };

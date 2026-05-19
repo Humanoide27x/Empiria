@@ -218,13 +218,13 @@ export function toMunicipalityArray(text) {
 export function formatCompany(companyId) {
   if (companyId === null || companyId === undefined || companyId === "") return "Sin asignar";
   const found = state.companies.find((item) => item.id === Number(companyId));
-  return found ? `${found.name} (${found.id})` : String(companyId);
+  return found ? found.name : `Empresa #${companyId}`;
 }
 
 export function formatContract(contractId) {
   if (contractId === null || contractId === undefined || contractId === "") return "Sin asignar";
   const found = state.contracts.find((item) => item.id === Number(contractId));
-  return found ? `${found.name} (${found.id})` : String(contractId);
+  return found ? found.name : `Contrato #${contractId}`;
 }
 
 export function getCompanyOptionsHtml(currentValue = "") {

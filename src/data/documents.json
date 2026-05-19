@@ -1,1 +1,19 @@
-[]
+[
+  {
+    "id": 1779050349345,
+    "employeeId": 125,
+    "documentType": "CEDULA",
+    "issueDate": "",
+    "expirationDate": "",
+    "fileName": "CC_GLORIA_AMPARO_MARIN_GOMEZ.pdf",
+    "storedFileName": "employee_125_1779050349343_CC_GLORIA_AMPARO_MARIN_GOMEZ.pdf",
+    "fileUrl": "/uploads/documents/employee_125_1779050349343_CC_GLORIA_AMPARO_MARIN_GOMEZ.pdf",
+    "validationStatus": "VALIDADO",
+    "uploadedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedAt": "2026-05-17T20:40:06.205Z",
+    "rejectionReason": "",
+    "createdAt": "2026-05-17T20:39:09.345Z",
+    "updatedAt": "2026-05-17T20:40:06.205Z"
+  }
+]

@@ -157,4 +157,16 @@ export const moduleViews = {
     title: "Configuración",
     submodules: [],
   },
+  seguridad_salud_trabajo: {
+    title: "Seguridad y Salud en el Trabajo",
+    submodules: [],
+  },
+  registro_novedades: {
+    title: "Registro de Novedades",
+    submodules: [],
+  },
+  repositorio_hojas_vida: {
+    title: "Repositorio de Hojas de Vida",
+    submodules: [],
+  },
 };

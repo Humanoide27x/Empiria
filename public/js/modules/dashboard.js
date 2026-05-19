@@ -1,717 +1,1142 @@
-import { state } from '../state.js';
-import { apiFetch } from '../api.js';
-import { escapeHtml } from '../utils.js';
-import { showSuccess, showError } from '../toast.js';
-import { dashboardCleaner } from '../nav.js';
+import { apiFetch } from "../api.js";
+import { escapeHtml } from "../utils.js";
+import { showSuccess, showError } from "../toast.js";
+import { dashboardCleaner } from "../nav.js";
 
-// ── Module state ──────────────────────────────────────────────────────────────
-let _charts     = {};
-let _timer      = null;
-let _munId      = "";
-let _contractId = "";
-let _cargoType  = "real";
-let _cargoMonth = "";
-let _widgetConfig = [];   // current contract's widget config
+const ROOT_ID = "dashboardWorkspacePremiumRoot";
+const REFRESH_MS = 60_000;
+const MONTHS_ES = ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+const ICON_PEOPLE = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="4" r="2.5" fill="currentColor" opacity=".8"/><path d="M1.5 12.5C1.5 10 4 8 7 8s5.5 2 5.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" opacity=".8"/></svg>`;
+const ICON_TC = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7l3.5 3.5 6.5-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_MT = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M7 4v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_PCT = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="4" cy="4" r="1.8" stroke="currentColor" stroke-width="1.4"/><circle cx="10" cy="10" r="1.8" stroke="currentColor" stroke-width="1.4"/><line x1="3.5" y1="11" x2="10.5" y2="3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+const ICON_MAP = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1.5C4.8 1.5 3 3.3 3 5.5c0 3.2 4 7.5 4 7.5s4-4.3 4-7.5C11 3.3 9.2 1.5 7 1.5z" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="7" cy="5.5" r="1.4" fill="currentColor"/></svg>`;
+const ICON_REFRESH = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11.5 7A4.5 4.5 0 1 1 8.5 2.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8.5 1v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+let _timer = null;
+let _selectedMunicipalityId = "";
 
 export function _clearDashboardTimers() {
-  if (_timer) { clearInterval(_timer); _timer = null; }
-  for (const c of Object.values(_charts)) { try { c.destroy(); } catch {} }
-  _charts       = {};
-  _munId        = "";
-  _contractId   = "";
-  _cargoType    = "real";
-  _cargoMonth   = "";
-  _widgetConfig = [];
+  if (_timer) {
+    clearInterval(_timer);
+    _timer = null;
+  }
+  _selectedMunicipalityId = "";
 }
+
 dashboardCleaner.fn = _clearDashboardTimers;
 
-// ── Chart.js lazy loader ──────────────────────────────────────────────────────
-function loadChartJs() {
-  return new Promise(resolve => {
-    if (window.Chart) { resolve(); return; }
-    if (!document.getElementById("chartjs-script")) {
-      const s = document.createElement("script");
-      s.id = "chartjs-script";
-      s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js";
-      s.onload = resolve; s.onerror = resolve;
-      document.head.appendChild(s);
-    } else { resolve(); }
+function getStatusMeta(status) {
+  const value = String(status || "").toUpperCase();
+  if (value === "ESTABLE") return { label: "Estable", color: "#2ECF9A" };
+  if (value === "ALERTA") return { label: "Alerta", color: "#F7C948" };
+  if (value === "CRITICO") return { label: "Critico", color: "#FF4D4F" };
+  return { label: "Sin operacion", color: "#CBD5E1" };
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("es-CO");
+}
+
+function formatMonthDay(day, month) {
+  return `${String(day || 0).padStart(2, "0")} ${MONTHS_ES[Number(month) || 0] || ""}`.trim();
+}
+
+function formatEventDate(date, time) {
+  if (!date) return "Sin fecha";
+  const parts = String(date).split("-");
+  if (parts.length !== 3) return escapeHtml(String(date));
+  const [, month, day] = parts;
+  const timeLabel = time ? ` · ${String(time).slice(0, 5)}` : "";
+  return `${Number(day)} ${MONTHS_ES[Number(month)] || month}${timeLabel}`;
+}
+
+function getMunicipalityOptions(summary = {}) {
+  const rows = Array.isArray(summary.coverageByMunicipality) ? summary.coverageByMunicipality : [];
+  const map = new Map();
+  rows.forEach((item) => {
+    if (!item || item.municipalityId == null) return;
+    const id = String(item.municipalityId);
+    if (!map.has(id)) {
+      map.set(id, {
+        id,
+        name: item.municipalityName || "Sin municipio",
+      });
+    }
   });
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function fmtCOP(n) {
-  if (!n) return "$0";
-  if (n >= 1_000_000_000) return "$" + (n / 1_000_000_000).toFixed(1) + "B";
-  if (n >= 1_000_000)     return "$" + (n / 1_000_000).toFixed(1) + "M";
-  return "$" + Number(n).toLocaleString("es-CO");
-}
-function semColor(pct) {
-  if (pct === null || pct === undefined) return "#94a3b8";
-  return pct >= 95 ? "#16a34a" : pct >= 85 ? "#d97706" : "#dc2626";
-}
-function semClass(status) {
-  if (status === "ok")       return "ck-sem-ok";
-  if (status === "warning")  return "ck-sem-warning";
-  if (status === "critical") return "ck-sem-critical";
-  return "ck-sem-nodata";
-}
-function severityIcon(s) {
-  if (s === "critical") return `<span class="ck-alert-dot ck-alert-dot-critical"></span>`;
-  if (s === "warning")  return `<span class="ck-alert-dot ck-alert-dot-warning"></span>`;
-  if (s === "info")     return `<span class="ck-alert-dot ck-alert-dot-info"></span>`;
-  if (s === "ok")       return `<span class="ck-alert-dot ck-alert-dot-ok"></span>`;
-  return "";
-}
-function activityIcon(type) {
-  if (type === "INGRESO")         return "👤";
-  if (type === "ACTUALIZACION")   return "✏️";
-  if (type.includes("RETIRO"))    return "🚪";
-  if (type.includes("INCAPACI"))  return "🏥";
-  if (type.includes("VACACION"))  return "🏖️";
-  if (type.includes("NOVEDAD"))   return "📋";
-  return "📌";
-}
-function relativeTime(ts) {
-  const diff = Date.now() - new Date(ts).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1)   return "Hace un momento";
-  if (m < 60)  return `Hace ${m} min`;
-  const h = Math.floor(m / 60);
-  if (h < 24)  return `Hace ${h} h`;
-  const d = Math.floor(h / 24);
-  return `Hace ${d} día(s)`;
-}
-const isOpsOnly = () => {
-  const r = String(state.currentUser?.role || "").toLowerCase();
-  return r === "operacion";
-};
-
-// ── Build API URL with filters ────────────────────────────────────────────────
-function kpisUrl() {
-  const p = new URLSearchParams();
-  if (_munId)      p.set("municipality_id", _munId);
-  if (_contractId) p.set("contract_id", _contractId);
-  return "/dashboard/kpis" + (p.toString() ? "?" + p.toString() : "");
-}
-
-// ── Widget HTML generators ────────────────────────────────────────────────────
-
-function htmlPersonalActivo() {
+function buildLoadingState() {
   return `
-  <div class="ck-kpi-card ck-kpi-green ck-card-active" id="ck-card-personal" tabindex="0" role="button" title="Ver detalle">
-    <div class="ck-kpi-icon">👥</div>
-    <div class="ck-kpi-inner">
-      <div class="ck-kpi-label">Personal Activo</div>
-      <div class="ck-kpi-value" id="ck-v-active">—</div>
-      <div class="ck-kpi-sub"   id="ck-s-active">cargando…</div>
-    </div>
-  </div>`;
-}
-
-function htmlCoberturaMapa() {
-  return `
-  <div class="ck-panel ck-panel-map" data-widget="cobertura_mapa">
-    <div class="ck-panel-hdr">
-      <span>🗺️ Mapa de Cobertura por Municipio</span>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span class="ck-sem-badge ck-sem-ok"       style="font-size:11px">✅ <span id="ck-cov-ok">—</span></span>
-        <span class="ck-sem-badge ck-sem-warning"   style="font-size:11px">⚠️ <span id="ck-cov-warn">—</span></span>
-        <span class="ck-sem-badge ck-sem-critical"  style="font-size:11px">🔴 <span id="ck-cov-crit">—</span></span>
-      </div>
-    </div>
-    <div class="ck-panel-body ck-panel-scroll">
-      <table class="ck-table">
-        <thead><tr>
-          <th>Municipio</th><th class="ck-th-num">Req.</th><th class="ck-th-num">Contr.</th>
-          <th class="ck-th-num">%</th><th style="width:70px">Barra</th><th>Estado</th>
-        </tr></thead>
-        <tbody id="ck-cov-tbody"><tr><td colspan="6" class="ck-empty">Cargando…</td></tr></tbody>
-      </table>
-    </div>
-  </div>`;
-}
-
-function htmlCoberturaTcMt() {
-  return `
-  <div class="ck-tc-mt-row" data-widget="cobertura_tc_mt">
-    <div class="ck-tc-card ck-tc-blue">
-      <div class="ck-tc-head">⏱ Tiempo Completo</div>
-      <div class="ck-tc-stats">
-        <div class="ck-tc-stat"><span class="ck-tc-lbl">TC REQ</span><span class="ck-tc-val" id="ck-v-tc-req">—</span></div>
-        <div class="ck-tc-divider"></div>
-        <div class="ck-tc-stat"><span class="ck-tc-lbl">TC CONT</span><span class="ck-tc-val" id="ck-v-tc-cont">—</span></div>
-      </div>
-      <div class="ck-tc-pct-row">
-        <span id="ck-v-tc-pct" class="ck-tc-pct">—</span>
-        <div class="ck-kpi-prog" style="flex:1"><div class="ck-kpi-prog-bar" id="ck-prog-tc"></div></div>
-      </div>
-    </div>
-    <div class="ck-tc-card ck-tc-teal">
-      <div class="ck-tc-head">⏰ Medio Tiempo</div>
-      <div class="ck-tc-stats">
-        <div class="ck-tc-stat"><span class="ck-tc-lbl">MT REQ</span><span class="ck-tc-val" id="ck-v-mt-req">—</span></div>
-        <div class="ck-tc-divider"></div>
-        <div class="ck-tc-stat"><span class="ck-tc-lbl">MT CONT</span><span class="ck-tc-val" id="ck-v-mt-cont">—</span></div>
-      </div>
-      <div class="ck-tc-pct-row">
-        <span id="ck-v-mt-pct" class="ck-tc-pct">—</span>
-        <div class="ck-kpi-prog" style="flex:1"><div class="ck-kpi-prog-bar" id="ck-prog-mt"></div></div>
-      </div>
-    </div>
-  </div>`;
-}
-
-function htmlTc20Requerido() {
-  return `
-  <div class="ck-tc20-card" data-widget="tc20_requerido">
-    <div class="ck-tc20-icon">📐</div>
-    <div class="ck-tc20-body">
-      <div class="ck-tc20-label">20% TC Requerido</div>
-      <div class="ck-tc20-value" id="ck-v-tc20">—</div>
-      <div class="ck-tc20-sub"   id="ck-s-tc20">cargando…</div>
-    </div>
-  </div>`;
-}
-
-function htmlGenderSplit() {
-  return `
-  <div class="ck-gender-row" data-widget="gender_split">
-    <div class="ck-gender-card ck-gender-female">
-      <div class="ck-gender-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="7" r="4"/>
-          <path d="M8 12c-2 1.5-3 4-2.5 6.5C6 21 9 22 12 22s6-1 6.5-3.5C19 16 18 13.5 16 12"/>
-          <path d="M9.5 12.5C10.5 14 11 15 12 15s1.5-1 2.5-2.5"/>
-        </svg>
-      </div>
-      <div class="ck-gender-body">
-        <div class="ck-gender-count" id="ck-v-female">—</div>
-        <div class="ck-gender-lbl">Mujeres</div>
-        <div class="ck-gender-breakdown">
-          <span class="ck-gb-tag ck-gb-active">Activas <strong id="ck-v-female-active">—</strong></span>
-          <span class="ck-gb-sep">·</span>
-          <span class="ck-gb-tag ck-gb-inactive">Inactivas <strong id="ck-v-female-inactive">—</strong></span>
+    <article class="dashboard-card">
+      <div class="dashboard-empty-state">
+        <div>
+          <strong>Cargando dashboard</strong>
+          <p>Consultando resumen operativo en tiempo real...</p>
         </div>
       </div>
-    </div>
-    <div class="ck-gender-card ck-gender-male">
-      <div class="ck-gender-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="7" r="4"/>
-          <path d="M8 13c-2 1-3.5 3-3.5 5.5V22h15v-3.5C19.5 16 18 14 16 13"/>
-          <line x1="12" y1="11" x2="12" y2="22"/>
-        </svg>
-      </div>
-      <div class="ck-gender-body">
-        <div class="ck-gender-count" id="ck-v-male">—</div>
-        <div class="ck-gender-lbl">Hombres</div>
-        <div class="ck-gender-breakdown">
-          <span class="ck-gb-tag ck-gb-active">Activos <strong id="ck-v-male-active">—</strong></span>
-          <span class="ck-gb-sep">·</span>
-          <span class="ck-gb-tag ck-gb-inactive">Inactivos <strong id="ck-v-male-inactive">—</strong></span>
+    </article>
+  `;
+}
+
+function buildErrorState(message) {
+  return `
+    <article class="dashboard-card">
+      <div class="dashboard-empty-state">
+        <div>
+          <strong>No se pudo cargar el dashboard</strong>
+          <p>${escapeHtml(message || "Ocurrio un error inesperado")}</p>
         </div>
       </div>
-    </div>
-  </div>`;
+    </article>
+  `;
 }
 
-function htmlDistribucionEdad() {
-  return `
-  <div class="ck-panel" data-widget="distribucion_edad">
-    <div class="ck-panel-hdr"><span>🎂 Distribución por Edad</span></div>
-    <div class="ck-age-chart-wrap">
-      <div class="ck-age-donut-container"><canvas id="ck-chart-age"></canvas></div>
-      <div id="ck-age-legend" class="ck-age-legend"></div>
-    </div>
-  </div>`;
+function buildEmptyState(message) {
+  return `<div class="dashboard-empty-state"><div><strong>${escapeHtml(message)}</strong></div></div>`;
 }
 
-function htmlPersonalPorCargo() {
+function buildGauge(percent, status) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent || 0)));
+  const meta = getStatusMeta(status);
+  const radius = 54;
+  const circumference = 2 * Math.PI * radius;
+  const stroke = (safePercent / 100) * circumference;
+
   return `
-  <div class="ck-panel" data-widget="personal_por_cargo">
-    <div class="ck-panel-hdr ck-cargo-hdr">
-      <span>📋 Personal por Cargo</span>
-      <div class="ck-cargo-controls">
-        <input type="month" id="ck-cargo-month" class="ck-month-input" title="Filtrar por mes" />
-        <div class="ck-cargo-tabs">
-          <button class="ck-cargo-tab active" data-type="real">Cargo Real</button>
-          <button class="ck-cargo-tab" data-type="licitacion">Licitación</button>
-        </div>
+    <div class="dashboard-gauge">
+      <svg viewBox="0 0 140 140" role="img" aria-label="Cobertura ${safePercent}%">
+        <circle cx="70" cy="70" r="${radius}" fill="none" stroke="#E8EEF8" stroke-width="12"></circle>
+        <circle
+          cx="70"
+          cy="70"
+          r="${radius}"
+          fill="none"
+          stroke="${meta.color}"
+          stroke-width="12"
+          stroke-linecap="round"
+          transform="rotate(-90 70 70)"
+          stroke-dasharray="${stroke} ${circumference}"
+        ></circle>
+      </svg>
+      <div class="dashboard-gauge-center">
+        <strong>${safePercent}%</strong>
+        <span>${escapeHtml(meta.label)}</span>
       </div>
     </div>
-    <div class="ck-panel-body ck-panel-scroll">
-      <table class="ck-table ck-cargo-table">
-        <thead><tr>
-          <th class="ck-th-cargo">Cargo</th>
-          <th class="ck-th-num">Activos</th>
-          <th class="ck-th-num">Retirados</th>
-        </tr></thead>
-        <tbody id="ck-cargo-tbody"><tr><td colspan="3" class="ck-empty">Cargando…</td></tr></tbody>
-      </table>
-    </div>
-  </div>`;
+  `;
 }
 
-function htmlAlertas() {
+function buildDonutBackground(items = []) {
+  const safeItems = items.filter((item) => Number(item.value || 0) > 0);
+  const total = safeItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  if (!total) return "conic-gradient(#E8EEF8 0deg 360deg)";
+
+  let currentAngle = 0;
+  const segments = safeItems.map((item) => {
+    const nextAngle = currentAngle + (Number(item.value || 0) / total) * 360;
+    const segment = `${item.color || "#0B7CFF"} ${currentAngle}deg ${nextAngle}deg`;
+    currentAngle = nextAngle;
+    return segment;
+  });
+
+  return `conic-gradient(${segments.join(", ")})`;
+}
+
+function buildDonut(items = [], totalLabel = "Total") {
+  const total = items.reduce((sum, item) => sum + Number(item.value || 0), 0);
   return `
-  <div class="ck-panel ck-alerts-panel" data-widget="alertas">
-    <div class="ck-panel-hdr">
-      <span>🚨 Alertas del Sistema</span>
-      <span id="ck-alert-count" class="ck-panel-badge ck-badge-green">—</span>
+    <div class="dashboard-donut" style="background:${buildDonutBackground(items)}">
+      <div class="dashboard-donut-center">
+        <strong>${formatNumber(total)}</strong>
+        <span>${escapeHtml(totalLabel)}</span>
+      </div>
     </div>
-    <div class="ck-panel-body ck-panel-scroll" id="ck-alerts-list">
-      <div class="ck-empty">Cargando…</div>
-    </div>
-  </div>`;
+  `;
 }
 
-// ── Widget map: id → html generator ──────────────────────────────────────────
-const WIDGET_HTML = {
-  personal_activo:    htmlPersonalActivo,
-  cobertura_mapa:     htmlCoberturaMapa,
-  cobertura_tc_mt:    htmlCoberturaTcMt,
-  tc20_requerido:     htmlTc20Requerido,
-  gender_split:       htmlGenderSplit,
-  distribucion_edad:  htmlDistribucionEdad,
-  personal_por_cargo: htmlPersonalPorCargo,
-  alertas:            htmlAlertas,
-};
+function buildSideList(items = [], total = 0) {
+  if (!items.length) return buildEmptyState("Sin datos disponibles");
 
-// ── Build full dashboard HTML from config ─────────────────────────────────────
-function buildDashboardHtml(orderedWidgets) {
-  const visible = new Set(orderedWidgets.filter(w => w.visible).map(w => w.id));
+  return `
+    <div class="dashboard-side-list">
+      ${items.map((item) => {
+        const value = Number(item.value || 0);
+        const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+        return `
+          <div class="dashboard-side-list-item">
+            <div class="dashboard-side-list-label">
+              <span class="dashboard-dot" style="background:${item.color || "#0B7CFF"}"></span>
+              <span>${escapeHtml(item.label || "Sin dato")}</span>
+            </div>
+            <div class="dashboard-side-list-value">
+              <strong>${formatNumber(value)}</strong>
+              <small>${percent}%</small>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
 
-  // KPI right-column widgets
-  const rightColWidgets = ["personal_activo", "cobertura_tc_mt", "tc20_requerido"];
-  const hasMap      = visible.has("cobertura_mapa");
-  const hasRightCol = rightColWidgets.some(id => visible.has(id));
-  const hasRow3     = visible.has("distribucion_edad") || visible.has("personal_por_cargo");
+function buildBarChart(items = [], emptyMessage = "Sin datos disponibles") {
+  const safeItems = items.filter((item) => Number(item.value || 0) > 0);
+  if (!safeItems.length) return buildEmptyState(emptyMessage);
 
-  const sections = [];
+  const maxValue = Math.max(...safeItems.map((item) => Number(item.value || 0)), 1);
+  const total = safeItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
 
-  // Main grid: coverage map + right KPI column
-  if (hasMap || hasRightCol) {
-    const leftHtml  = hasMap      ? htmlCoberturaMapa() : "";
-    const rightHtml = hasRightCol ? `<div class="ck-right-col">${rightColWidgets.filter(id => visible.has(id)).map(id => WIDGET_HTML[id]()).join("")}</div>` : "";
-    const gridMod   = !hasMap ? " ck-grid-no-left" : (!hasRightCol ? " ck-grid-no-right" : "");
-    sections.push(`<div class="ck-main-grid${gridMod}">${leftHtml}${rightHtml}</div>`);
+  return `
+    <div class="dashboard-bar-chart">
+      ${safeItems.map((item) => {
+        const value = Number(item.value || 0);
+        const width = Math.max(8, Math.round((value / maxValue) * 100));
+        const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+        return `
+          <div class="dashboard-bar-row">
+            <div class="dashboard-bar-row-head">
+              <span>${escapeHtml(item.label || "Sin dato")}</span>
+              <strong>${formatNumber(value)} · ${percent}%</strong>
+            </div>
+            <div class="dashboard-bar-track">
+              <div class="dashboard-bar-fill" style="width:${width}%;background:${item.color || "#0B7CFF"}"></div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function getCoverageTiles(rows = []) {
+  return rows.map((item) => {
+    const meta = getStatusMeta(item.coverageStatus);
+    return {
+      id: item.municipalityId ?? item.municipalityName,
+      name: item.municipalityName || "Sin municipio",
+      statusLabel: meta.label,
+      color: meta.color,
+      requiredTotal: Number(item.requiredTotal || item.requiredTc || 0) + Number(item.requiredMt || 0) - Number(item.requiredTc || 0),
+      contractedTotal: Number(item.contractedTotal || item.contractedTc || 0) + Number(item.contractedMt || 0) - Number(item.contractedTc || 0),
+      requiredTc: Number(item.requiredTc || 0),
+      contractedTc: Number(item.contractedTc || 0),
+      requiredMt: Number(item.requiredMt || 0),
+      contractedMt: Number(item.contractedMt || 0),
+      coveragePercent: Number(item.coveragePercent || 0),
+    };
+  }).map((item) => ({
+    ...item,
+    requiredTotal: Number(item.requiredTc || 0) + Number(item.requiredMt || 0),
+    contractedTotal: Number(item.contractedTc || 0) + Number(item.contractedMt || 0),
+  }));
+}
+
+function shortMunicipality(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "N/A";
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+}
+
+function buildCoverageMap(rows = []) {
+  if (!rows.length) return buildEmptyState("Sin datos de cobertura");
+
+  const columns = rows.length <= 4 ? 2 : rows.length <= 8 ? 3 : 4;
+  const tileWidth = 150;
+  const tileHeight = 84;
+  const gap = 16;
+  const width = columns * tileWidth + (columns - 1) * gap;
+  const rowCount = Math.ceil(rows.length / columns);
+  const height = rowCount * tileHeight + (rowCount - 1) * gap;
+
+  return `
+    <svg class="dashboard-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Cobertura operativa por municipio">
+      ${rows.map((item, index) => {
+        const col = index % columns;
+        const row = Math.floor(index / columns);
+        const x = col * (tileWidth + gap);
+        const y = row * (tileHeight + gap) + (col % 2 === 1 ? 6 : 0);
+        const coverageLabel = item.requiredTotal > 0 ? `${item.coveragePercent}%` : "S/O";
+        return `
+          <g transform="translate(${x} ${y})">
+            <path
+              d="M16 0 H132 Q150 0 150 16 V48 Q150 67 134 73 L92 84 H16 Q0 84 0 68 V16 Q0 0 16 0 Z"
+              fill="${item.color}"
+              fill-opacity="0.10"
+              stroke="${item.color}"
+              stroke-width="2"
+            ></path>
+            <text x="16" y="24" class="dashboard-map-code">${escapeHtml(shortMunicipality(item.name))}</text>
+            <text x="16" y="46" class="dashboard-map-name">${escapeHtml(item.name)}</text>
+            <text x="16" y="66" class="dashboard-map-pct">${escapeHtml(coverageLabel)}</text>
+          </g>
+        `;
+      }).join("")}
+    </svg>
+  `;
+}
+
+function buildCoverageList(rows = []) {
+  if (!rows.length) return buildEmptyState("Sin municipios operativos");
+
+  return `
+    <div class="dashboard-side-list">
+      ${rows.map((item) => {
+        const percentLabel = item.requiredTotal > 0 ? `${item.coveragePercent}%` : "S/O";
+        return `
+          <div class="dashboard-side-list-item">
+            <div class="dashboard-side-list-label">
+              <span class="dashboard-dot" style="background:${item.color}"></span>
+              <div>
+                <strong>${escapeHtml(item.name)}</strong>
+                <small>TC ${formatNumber(item.contractedTc)}/${formatNumber(item.requiredTc)} · MT ${formatNumber(item.contractedMt)}/${formatNumber(item.requiredMt)}</small>
+              </div>
+            </div>
+            <div class="dashboard-side-list-value">
+              <strong>${escapeHtml(percentLabel)}</strong>
+              <small>${escapeHtml(item.statusLabel)}</small>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function buildAgendaList(items = [], type) {
+  if (!items.length) {
+    return buildEmptyState(type === "birthday" ? "Sin cumpleanos este mes" : "Sin proximos eventos");
   }
 
-  // Remaining widgets in config order (exclude those already rendered)
-  const alreadyRendered = new Set(["cobertura_mapa", "personal_activo", "cobertura_tc_mt", "tc20_requerido"]);
+  return `
+    <div class="dashboard-side-list">
+      ${items.map((item) => {
+        const title = type === "birthday" ? item.name : item.title;
+        const badge = type === "birthday"
+          ? formatMonthDay(item.day, item.month)
+          : formatEventDate(item.date, item.time);
+        const meta = type === "birthday"
+          ? [item.position, item.municipality].filter(Boolean).join(" · ")
+          : (item.description || "Evento programado");
 
-  // Row-3 pair: edad + cargo (shown side-by-side)
-  const row3Ids = ["distribucion_edad", "personal_por_cargo"];
+        return `
+          <div class="dashboard-side-list-item">
+            <div class="dashboard-date-pill">${escapeHtml(badge || "—")}</div>
+            <div class="dashboard-side-list-copy">
+              <strong>${escapeHtml(title || "Sin dato")}</strong>
+              <small>${escapeHtml(meta || "Sin detalle")}</small>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
 
-  const remainingOrder = orderedWidgets
-    .filter(w => w.visible && !alreadyRendered.has(w.id));
+function buildTopKpi(valueLabel, title, subtitle, accent = "#0B7CFF", icon = "") {
+  return `
+    <article class="dashboard-kpi-card" style="--kpi-accent:${accent}">
+      <div class="dkpi-row">
+        <span>${escapeHtml(title)}</span>
+        ${icon ? `<div class="dkpi-icon" style="background:${accent}1A;color:${accent}">${icon}</div>` : ""}
+      </div>
+      <strong>${escapeHtml(valueLabel)}</strong>
+      <small>${escapeHtml(subtitle)}</small>
+    </article>
+  `;
+}
 
-  for (const w of remainingOrder) {
-    if (alreadyRendered.has(w.id)) continue;
-    if (row3Ids.includes(w.id)) {
-      // Collect consecutive row3 items and wrap together
-      if (!alreadyRendered.has("__row3__")) {
-        alreadyRendered.add("__row3__");
-        const row3Html = row3Ids.filter(id => visible.has(id)).map(id => WIDGET_HTML[id]()).join("");
-        sections.push(`<div class="ck-row3">${row3Html}</div>`);
-        row3Ids.forEach(id => alreadyRendered.add(id));
+function buildWorkspace(summary = {}) {
+  const coverageRows = getCoverageTiles(Array.isArray(summary.coverageByMunicipality) ? summary.coverageByMunicipality : []);
+  const municipalities = getMunicipalityOptions(summary);
+  const genderItems = Array.isArray(summary.employeesByGender) ? summary.employeesByGender : [];
+  const modalityItems = Array.isArray(summary.employeesByModality) ? summary.employeesByModality : [];
+  const ageItems = Array.isArray(summary.employeesByAgeRange) ? summary.employeesByAgeRange : [];
+  const areaItems = Array.isArray(summary.employeesByArea) ? summary.employeesByArea : [];
+  const birthdays = Array.isArray(summary.birthdaysThisMonth) ? summary.birthdaysThisMonth : [];
+  const events = Array.isArray(summary.upcomingEvents) ? summary.upcomingEvents : [];
+  const genderTotal = genderItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const modalityTotal = modalityItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const statusMeta = getStatusMeta(summary.coverageStatus);
+
+  return `
+    <section class="dashboard-kpi-grid">
+      ${buildTopKpi(formatNumber(summary.activeEmployees), "Empleados activos", "Personal activo en base real", "#0B7CFF", ICON_PEOPLE)}
+      ${buildTopKpi(`${formatNumber(summary.requiredTc)} / ${formatNumber(summary.contractedTc)}`, "TC Req · TC Cont", "Cobertura tiempo completo", "#2ECF9A", ICON_TC)}
+      ${buildTopKpi(`${formatNumber(summary.requiredMt)} / ${formatNumber(summary.contractedMt)}`, "MT Req · MT Cont", "Cobertura medio tiempo", "#8B5CF6", ICON_MT)}
+      ${buildTopKpi(formatNumber(summary.required20PercentTc), "20% TC Requerido", "Proyeccion minima requerida", "#F59E0B", ICON_PCT)}
+
+      <article class="dashboard-kpi-card" style="--kpi-accent:#64748B">
+        <div class="dkpi-row">
+          <span>Municipios</span>
+          <div class="dkpi-icon" style="background:#64748B1A;color:#64748B">${ICON_MAP}</div>
+        </div>
+        <select id="dashboardSummaryMunicipality">
+          <option value="">Todos los municipios</option>
+          ${municipalities.map((item) => `
+            <option value="${escapeHtml(item.id)}" ${String(item.id) === String(_selectedMunicipalityId) ? "selected" : ""}>
+              ${escapeHtml(item.name)}
+            </option>
+          `).join("")}
+        </select>
+        <small>${municipalities.length ? `${municipalities.length} municipio(s) disponibles` : "Sin municipios disponibles"}</small>
+      </article>
+
+      <button type="button" class="dashboard-kpi-card dashboard-kpi-card--action" id="dashboardSummaryRefresh">
+        <div class="dkpi-row">
+          <span>Actualizar datos</span>
+          <div class="dkpi-icon" style="background:rgba(255,255,255,0.18);color:#fff">${ICON_REFRESH}</div>
+        </div>
+        <strong>En tiempo real</strong>
+        <small>Refrescar resumen operativo</small>
+      </button>
+    </section>
+
+    <section class="dashboard-main-grid">
+      <div class="dashboard-column-stack dashboard-column-stack--left">
+        <article class="dashboard-card dashboard-card--state">
+          <div class="dashboard-card-head">
+            <div>
+              <p>Estado general de la operacion</p>
+              <h3 style="color:${statusMeta.color}">${escapeHtml(statusMeta.label)}</h3>
+            </div>
+            <span class="dashboard-card-pill" style="background:${statusMeta.color}1A;color:${statusMeta.color};border-color:${statusMeta.color}30">${formatNumber(summary.coveragePercent)}%</span>
+          </div>
+
+          <div class="dashboard-card-body dashboard-card-body--state">
+            ${buildGauge(summary.coveragePercent, summary.coverageStatus)}
+
+            <div class="dashboard-side-list">
+              <div class="dashboard-side-list-item">
+                <div class="dashboard-side-list-label">
+                  <span class="dashboard-dot" style="background:#2ECF9A"></span>
+                  <span>Estable</span>
+                </div>
+                <div class="dashboard-side-list-value"><strong>OK</strong></div>
+              </div>
+              <div class="dashboard-side-list-item">
+                <div class="dashboard-side-list-label">
+                  <span class="dashboard-dot" style="background:#F7C948"></span>
+                  <span>Alerta</span>
+                </div>
+                <div class="dashboard-side-list-value"><strong>Atencion</strong></div>
+              </div>
+              <div class="dashboard-side-list-item">
+                <div class="dashboard-side-list-label">
+                  <span class="dashboard-dot" style="background:#FF4D4F"></span>
+                  <span>Critico</span>
+                </div>
+                <div class="dashboard-side-list-value"><strong>Riesgo</strong></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="dashboard-card dashboard-card--gender">
+          <div class="dashboard-card-head">
+            <div>
+              <p>Distribucion por genero</p>
+              <h3>Composicion activa</h3>
+            </div>
+          </div>
+
+          <div class="dashboard-card-body dashboard-card-body--distribution">
+            ${buildDonut(genderItems, "personas")}
+            ${buildSideList(genderItems, genderTotal)}
+          </div>
+        </article>
+      </div>
+
+      <article class="dashboard-card dashboard-card--coverage">
+        <div class="dashboard-card-head">
+          <div>
+            <p>Cobertura operativa en tiempo real</p>
+            <h3>Municipios en operacion</h3>
+          </div>
+          <span class="dashboard-card-pill">${coverageRows.length}</span>
+        </div>
+
+        <div class="dashboard-card-body dashboard-card-body--map">
+          <div class="dashboard-map-wrap">${buildCoverageMap(coverageRows)}</div>
+          <div class="dashboard-side-panel">${buildCoverageList(coverageRows)}</div>
+        </div>
+
+        <div class="dashboard-legend">
+          <span><i style="background:#2ECF9A"></i>Estable</span>
+          <span><i style="background:#F7C948"></i>Alerta</span>
+          <span><i style="background:#FF4D4F"></i>Critico</span>
+          <span><i style="background:#CBD5E1"></i>Sin operacion</span>
+        </div>
+      </article>
+
+      <div class="dashboard-column-stack dashboard-column-stack--right">
+        <article class="dashboard-card dashboard-card--birthdays">
+          <div class="dashboard-card-head">
+            <div>
+              <p>Cumpleanos del mes</p>
+              <h3>Celebraciones</h3>
+            </div>
+          </div>
+          <div class="dashboard-card-body">
+            ${buildAgendaList(birthdays, "birthday")}
+          </div>
+        </article>
+
+        <article class="dashboard-card dashboard-card--events">
+          <div class="dashboard-card-head">
+            <div>
+              <p>Proximos eventos</p>
+              <h3>Agenda operativa</h3>
+            </div>
+          </div>
+          <div class="dashboard-card-body">
+            ${buildAgendaList(events, "event")}
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-kpi-grid dashboard-kpi-grid--bottom">
+      <article class="dashboard-card">
+        <div class="dashboard-card-head">
+          <div>
+            <p>Distribucion por modalidad</p>
+            <h3>Modalidades activas</h3>
+          </div>
+        </div>
+        <div class="dashboard-card-body dashboard-card-body--distribution">
+          ${buildDonut(modalityItems, "modalidades")}
+          ${buildSideList(modalityItems, modalityTotal)}
+        </div>
+      </article>
+
+      <article class="dashboard-card">
+        <div class="dashboard-card-head">
+          <div>
+            <p>Distribucion por edad</p>
+            <h3>Rangos etarios</h3>
+          </div>
+        </div>
+        <div class="dashboard-card-body">
+          ${buildBarChart(ageItems, "Sin datos de edad")}
+        </div>
+      </article>
+
+      <article class="dashboard-card">
+        <div class="dashboard-card-head">
+          <div>
+            <p>Distribucion por area</p>
+            <h3>Areas registradas</h3>
+          </div>
+        </div>
+        <div class="dashboard-card-body">
+          ${buildBarChart(areaItems, "Sin datos de area")}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function buildLegacyDistribution(source = {}, pairs = [], colors = []) {
+  return pairs
+    .map(([label, key], index) => ({
+      label,
+      value: Number(source?.[key] || 0),
+      color: colors[index % colors.length] || "#0B7CFF",
+    }))
+    .filter((item) => item.value > 0);
+}
+
+function normalizeLegacySummary(payload = {}) {
+  const kpis = payload?.kpis || {};
+  const coverageRows = Object.entries(payload?.coverageByMunicipality || {}).map(([municipalityName, item]) => {
+    const requiredTc = Number(item?.requiredTc || 0);
+    const requiredMt = Number(item?.requiredMt || 0);
+    const contractedTc = Number(item?.contractedTc || 0);
+    const contractedMt = Number(item?.contractedMt || 0);
+    const requiredTotal = requiredTc + requiredMt;
+    const contractedTotal = contractedTc + contractedMt;
+    const coveragePercent = requiredTotal > 0 ? Math.round((contractedTotal / requiredTotal) * 100) : 0;
+
+    return {
+      municipalityId: municipalityName,
+      municipalityName,
+      requiredTc,
+      contractedTc,
+      requiredMt,
+      contractedMt,
+      requiredTotal,
+      contractedTotal,
+      coveragePercent,
+      coverageStatus: getStatusMeta(
+        requiredTotal <= 0
+          ? "SIN_OPERACION"
+          : coveragePercent >= 85
+            ? "ESTABLE"
+            : coveragePercent >= 60
+              ? "ALERTA"
+              : "CRITICO"
+      ).label.toUpperCase().replace(/\s+/g, "_"),
+    };
+  });
+
+  const totalRequired = Number(kpis.requiredTc || 0) + Number(kpis.requiredMt || 0);
+  const totalContracted = Number(kpis.contractedTc || 0) + Number(kpis.contractedMt || 0);
+  const coveragePercent = totalRequired > 0 ? Math.round((totalContracted / totalRequired) * 100) : 0;
+  const coverageStatus = totalRequired <= 0
+    ? "SIN_OPERACION"
+    : coveragePercent >= 85
+      ? "ESTABLE"
+      : coveragePercent >= 60
+        ? "ALERTA"
+        : "CRITICO";
+
+  return {
+    activeEmployees: Number(kpis.activePersonnel || 0),
+    requiredTc: Number(kpis.requiredTc || 0),
+    contractedTc: Number(kpis.contractedTc || 0),
+    requiredMt: Number(kpis.requiredMt || 0),
+    contractedMt: Number(kpis.contractedMt || 0),
+    required20PercentTc: Number(kpis.tcPct20 || 0),
+    coveragePercent,
+    coverageStatus,
+    coverageByMunicipality: coverageRows,
+    employeesByGender: buildLegacyDistribution(
+      kpis,
+      [["Mujeres", "femaleCount"], ["Hombres", "maleCount"]],
+      ["#8B5CF6", "#0B7CFF"]
+    ),
+    employeesByModality: buildLegacyDistribution(
+      kpis,
+      [["Tiempo completo", "contractedTc"], ["Medio tiempo", "contractedMt"]],
+      ["#0B7CFF", "#2ECF9A"]
+    ),
+    employeesByAgeRange: Array.isArray(payload?.ageBrackets)
+      ? payload.ageBrackets.map((label, index) => ({
+          label,
+          value: Number(payload?.ageGenderByBracket?.[label]?.female || 0) + Number(payload?.ageGenderByBracket?.[label]?.male || 0),
+          color: ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F"][index % 6],
+        })).filter((item) => item.value > 0)
+      : [],
+    employeesByArea: [],
+    birthdaysThisMonth: [],
+    upcomingEvents: [],
+  };
+}
+
+async function loadDashboardSummary() {
+  const params = new URLSearchParams();
+  if (_selectedMunicipalityId) params.set("municipality_id", _selectedMunicipalityId);
+  const url = `/dashboard/summary${params.toString() ? `?${params.toString()}` : ""}`;
+
+  try {
+    const response = await apiFetch(url);
+    return response?.data || {};
+  } catch (error) {
+    if (error?.status !== 401 && error?.status !== 403 && error?.status !== 404) {
+      throw error;
+    }
+
+    const legacyParams = new URLSearchParams();
+    if (_selectedMunicipalityId) legacyParams.set("municipality", _selectedMunicipalityId);
+    const legacyUrl = `/dashboard-summary${legacyParams.toString() ? `?${legacyParams.toString()}` : ""}`;
+    const legacyResponse = await apiFetch(legacyUrl);
+    return normalizeLegacySummary(legacyResponse);
+  }
+}
+
+async function renderDashboardWorkspace(showToast = false) {
+  const root = document.getElementById(ROOT_ID);
+  if (!root) return;
+
+  const summary = await loadDashboardSummary();
+  root.innerHTML = buildWorkspace(summary);
+
+  const municipalitySelect = document.getElementById("dashboardSummaryMunicipality");
+  const refreshButton = document.getElementById("dashboardSummaryRefresh");
+
+  if (municipalitySelect) {
+    municipalitySelect.addEventListener("change", async (event) => {
+      _selectedMunicipalityId = event.target.value || "";
+      try {
+        const workspaceRoot = document.getElementById(ROOT_ID);
+        if (workspaceRoot) workspaceRoot.innerHTML = buildLoadingState();
+        await renderDashboardWorkspace(false);
+      } catch (error) {
+        const workspaceRoot = document.getElementById(ROOT_ID);
+        if (workspaceRoot) workspaceRoot.innerHTML = buildErrorState(error.message || "No se pudo aplicar el filtro");
+        showError(error.message || "No se pudo aplicar el filtro");
       }
-      continue;
-    }
-    if (WIDGET_HTML[w.id]) {
-      sections.push(WIDGET_HTML[w.id]());
-      alreadyRendered.add(w.id);
-    }
-  }
-
-  return sections.join("\n");
-}
-
-// ── Render functions ──────────────────────────────────────────────────────────
-function renderKpis(d) {
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  const pct = d.pct_coverage;
-
-  set("ck-v-active",   d.active ?? "—");
-  set("ck-s-active",   `${d.total ?? 0} total · ${d.inactive ?? 0} inactivos`);
-  set("ck-v-tc-req",   d.required_tc ?? "—");
-  set("ck-v-tc-cont",  d.tc_count ?? "—");
-  set("ck-v-mt-req",   d.required_mt ?? "—");
-  set("ck-v-mt-cont",  d.mt_count ?? "—");
-  set("ck-v-tc20",     d.tc_20pct ?? "—");
-  set("ck-s-tc20",     `20% de ${d.required_tc ?? 0} TC requeridos`);
-
-  const tcPct = d.required_tc ? Math.round((d.tc_count / d.required_tc) * 100) : null;
-  const mtPct = d.required_mt ? Math.round((d.mt_count / d.required_mt) * 100) : null;
-  const tcBar = document.getElementById("ck-prog-tc");
-  const mtBar = document.getElementById("ck-prog-mt");
-  if (tcBar) { tcBar.style.width = Math.min(tcPct ?? 0, 100) + "%"; tcBar.style.background = semColor(tcPct); }
-  if (mtBar) { mtBar.style.width = Math.min(mtPct ?? 0, 100) + "%"; mtBar.style.background = semColor(mtPct); }
-
-  const tcPctEl = document.getElementById("ck-v-tc-pct");
-  const mtPctEl = document.getElementById("ck-v-mt-pct");
-  if (tcPctEl) { tcPctEl.textContent = tcPct !== null ? tcPct + "%" : "—"; tcPctEl.style.color = semColor(tcPct); }
-  if (mtPctEl) { mtPctEl.textContent = mtPct !== null ? mtPct + "%" : "—"; mtPctEl.style.color = semColor(mtPct); }
-
-  set("ck-v-docs",    (d.expiring_soon_docs ?? 0) + (d.pending_docs ?? 0));
-  set("ck-v-payroll", isOpsOnly() ? "—" : fmtCOP(d.payroll_total));
-
-  set("ck-v-female",          d.female_active   ?? "—");
-  set("ck-v-female-active",   d.female_active   ?? "—");
-  set("ck-v-female-inactive", d.female_inactive ?? "—");
-  set("ck-v-male",            d.male_active     ?? "—");
-  set("ck-v-male-active",     d.male_active     ?? "—");
-  set("ck-v-male-inactive",   d.male_inactive   ?? "—");
-
-  set("ck-last-update", new Date().toLocaleTimeString("es-CO"));
-
-  const ageWrap = document.getElementById("ck-age-bars");
-  if (ageWrap && d.age_brackets) {
-    const brackets = d.age_brackets;
-    const maxVal = Math.max(1, ...Object.values(brackets));
-    ageWrap.innerHTML = Object.entries(brackets).map(([label, count]) => {
-      const p = Math.round((count / maxVal) * 100);
-      return `<div class="ck-age-row">
-        <span class="ck-age-label">${label}</span>
-        <div class="ck-age-track"><div class="ck-age-fill" style="width:${p}%"></div></div>
-        <span class="ck-age-count">${count}</span>
-      </div>`;
-    }).join("");
-  }
-
-  const novBadge = document.getElementById("ck-novelty-badge");
-  if (novBadge) {
-    const nov = d.pending_novelties ?? 0;
-    novBadge.textContent = nov > 0 ? nov + " pend." : "Al día";
-    novBadge.className = "ck-kpi-badge " + (nov > 0 ? "ck-badge-yellow" : "ck-badge-green");
-  }
-}
-
-function renderMunFilter(list) {
-  const sel = document.getElementById("ck-filter-mun");
-  if (!sel) return;
-  const prev = sel.value;
-  sel.innerHTML = `<option value="">Todos los municipios</option>` +
-    list.map(m => `<option value="${m.id}" ${String(m.id) === String(prev) ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("");
-}
-
-function renderCoverageMap(rows) {
-  const tbody = document.getElementById("ck-cov-tbody");
-  if (!tbody) return;
-  const ok   = rows.filter(r => r.status === "ok").length;
-  const warn = rows.filter(r => r.status === "warning").length;
-  const crit = rows.filter(r => r.status === "critical").length;
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  set("ck-cov-ok", ok); set("ck-cov-warn", warn); set("ck-cov-crit", crit);
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="6" class="ck-empty">Sin datos de cobertura</td></tr>`; return; }
-  tbody.innerHTML = rows.map(r => {
-    const pct = r.coverage_pct;
-    const cls = semClass(r.status);
-    const bar = pct !== null
-      ? `<div class="ck-mini-bar"><div class="ck-mini-bar-fill" style="width:${Math.min(pct,100)}%;background:${semColor(pct)}"></div></div>`
-      : `<div class="ck-mini-bar"></div>`;
-    return `<tr>
-      <td class="ck-td-mun" title="${escapeHtml(r.municipality_name)}">${escapeHtml(r.municipality_name)}</td>
-      <td class="ck-td-num">${r.required}</td>
-      <td class="ck-td-num">${r.contracted}</td>
-      <td class="ck-td-num" style="font-weight:600;color:${semColor(pct)}">${pct !== null ? pct + "%" : "—"}</td>
-      <td>${bar}</td>
-      <td><span class="${cls} ck-sem-badge">${r.status === "ok" ? "OK" : r.status === "warning" ? "Alerta" : r.status === "critical" ? "Crítico" : "S/D"}</span></td>
-    </tr>`;
-  }).join("");
-}
-
-function renderAlerts(alerts) {
-  const list = document.getElementById("ck-alerts-list");
-  if (!list) return;
-  if (!alerts.length) { list.innerHTML = `<div class="ck-alert-ok">Sin alertas activas</div>`; return; }
-  const countEl = document.getElementById("ck-alert-count");
-  if (countEl) {
-    const critical = alerts.filter(a => a.severity === "critical").length;
-    countEl.textContent = critical > 0 ? critical + " críticas" : alerts.length + " alertas";
-    countEl.className = "ck-panel-badge " + (critical > 0 ? "ck-badge-red" : "ck-badge-yellow");
-  }
-  list.innerHTML = alerts.map(a => {
-    const action = a.action_url && a.action_url !== "#" && a.severity !== "ok"
-      ? `<a href="${escapeHtml(a.action_url)}" class="ck-alert-action">Ver →</a>` : "";
-    return `<div class="ck-alert-item ck-alert-${a.severity}">
-      <div class="ck-alert-left">${severityIcon(a.severity)}<span class="ck-alert-msg">${escapeHtml(a.message)}</span></div>
-      ${action}
-    </div>`;
-  }).join("");
-  list.querySelectorAll("a.ck-alert-action[href^='#']").forEach(a => {
-    a.addEventListener("click", e => {
-      e.preventDefault();
-      const navBtn = document.querySelector(`[data-module="${a.getAttribute("href").slice(1)}"]`);
-      if (navBtn) navBtn.click();
     });
-  });
-}
+  }
 
-function renderActivity(items) {
-  const feed = document.getElementById("ck-activity-feed");
-  if (!feed) return;
-  if (!items.length) { feed.innerHTML = `<div class="ck-empty">Sin actividad reciente</div>`; return; }
-  feed.innerHTML = items.slice(0, 10).map(item => `
-    <div class="ck-activity-item">
-      <div class="ck-activity-icon">${activityIcon(item.type)}</div>
-      <div class="ck-activity-body">
-        <div class="ck-activity-desc">${escapeHtml(item.description)}</div>
-        <div class="ck-activity-time">${relativeTime(item.timestamp)}</div>
-      </div>
-    </div>`).join("");
-}
+  if (refreshButton) {
+    refreshButton.addEventListener("click", async () => {
+      refreshButton.disabled = true;
+      try {
+        const workspaceRoot = document.getElementById(ROOT_ID);
+        if (workspaceRoot) workspaceRoot.innerHTML = buildLoadingState();
+        await renderDashboardWorkspace(false);
+        showSuccess("Dashboard actualizado");
+      } catch (error) {
+        const workspaceRoot = document.getElementById(ROOT_ID);
+        if (workspaceRoot) workspaceRoot.innerHTML = buildErrorState(error.message || "No se pudo actualizar el dashboard");
+        showError(error.message || "No se pudo actualizar el dashboard");
+      } finally {
+        refreshButton.disabled = false;
+      }
+    });
+  }
 
-const AGE_COLORS = ["#6366f1","#3b82f6","#06b6d4","#10b981","#f59e0b","#ef4444"];
-
-async function renderAgeChart(brackets) {
-  const canvas = document.getElementById("ck-chart-age");
-  const legend = document.getElementById("ck-age-legend");
-  if (!canvas || !brackets) return;
-  await loadChartJs();
-  const Chart = window.Chart;
-  if (!Chart) return;
-  if (_charts.age) { try { _charts.age.destroy(); } catch {} }
-  const labels = Object.keys(brackets);
-  const values = Object.values(brackets);
-  const total  = values.reduce((s, v) => s + v, 0) || 1;
-  _charts.age = new Chart(canvas, {
-    type: "doughnut",
-    data: { labels, datasets: [{ data: values, backgroundColor: AGE_COLORS, borderWidth: 2, borderColor: "#fff", hoverOffset: 6 }] },
-    options: {
-      responsive: true, maintainAspectRatio: false, cutout: "62%",
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} (${Math.round(ctx.parsed/total*100)}%)` } },
-      },
-    },
-  });
-  if (legend) {
-    legend.innerHTML = labels.map((lbl, i) => `
-      <div class="ck-age-leg-item">
-        <span class="ck-age-leg-dot" style="background:${AGE_COLORS[i]}"></span>
-        <span class="ck-age-leg-lbl">${lbl} años</span>
-        <span class="ck-age-leg-val">${values[i]}</span>
-        <span class="ck-age-leg-pct">${Math.round(values[i]/total*100)}%</span>
-      </div>`).join("");
+  if (showToast) {
+    showSuccess("Dashboard actualizado");
   }
 }
 
-function renderCargoTable(rows) {
-  const tbody = document.getElementById("ck-cargo-tbody");
-  if (!tbody) return;
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="3" class="ck-empty">Sin datos para este período</td></tr>`; return; }
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td class="ck-td-cargo" title="${escapeHtml(r.cargo)}">${escapeHtml(r.cargo)}</td>
-      <td class="ck-td-num ck-td-active">${r.active}</td>
-      <td class="ck-td-num ck-td-retired">${r.retired}</td>
-    </tr>`).join("");
-}
-
-// ── Modal ─────────────────────────────────────────────────────────────────────
-function openModal(title, html) {
-  const overlay = document.getElementById("ck-modal");
-  const titleEl = document.getElementById("ck-modal-title");
-  const bodyEl  = document.getElementById("ck-modal-body");
-  if (!overlay) return;
-  titleEl.textContent = title;
-  bodyEl.innerHTML    = html;
-  overlay.removeAttribute("hidden");
-}
-function closeModal() {
-  document.getElementById("ck-modal")?.setAttribute("hidden", "");
-}
-function kpiDetailHtml_personal(d) {
-  const ageBrackets = d.age_brackets || {};
-  const ageHtml = Object.entries(ageBrackets).map(([label, val]) =>
-    `<div class="ck-modal-stat"><div class="ck-modal-stat-val">${val}</div><div class="ck-modal-stat-lbl">${label} años</div></div>`
-  ).join("");
-  return `<div class="ck-modal-grid">
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.active}</div><div class="ck-modal-stat-lbl">Activos</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.inactive}</div><div class="ck-modal-stat-lbl">Inactivos</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.novelty}</div><div class="ck-modal-stat-lbl">Novedad</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.total}</div><div class="ck-modal-stat-lbl">Total</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.tc_count}</div><div class="ck-modal-stat-lbl">TC</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.mt_count}</div><div class="ck-modal-stat-lbl">MT</div></div>
-    <div class="ck-modal-stat" style="border-top:1px solid #f1f5f9;padding-top:8px"><div class="ck-modal-stat-val" style="color:#db2777">${d.female_active ?? 0}</div><div class="ck-modal-stat-lbl">♀ Mujeres activas</div></div>
-    <div class="ck-modal-stat" style="border-top:1px solid #f1f5f9;padding-top:8px"><div class="ck-modal-stat-val" style="color:#2563eb">${d.male_active ?? 0}</div><div class="ck-modal-stat-lbl">♂ Hombres activos</div></div>
-    <div class="ck-modal-stat" style="border-top:1px solid #f1f5f9;padding-top:8px"><div class="ck-modal-stat-val" style="color:#7c3aed">${d.tc_20pct ?? 0}</div><div class="ck-modal-stat-lbl">20% TC requerido</div></div>
-  </div>
-  ${ageHtml ? `<p class="ck-modal-note" style="margin-top:12px;font-weight:600">Edades (activos):</p><div class="ck-modal-grid" style="margin-top:6px">${ageHtml}</div>` : ""}`;
-}
-function kpiDetailHtml_coverage(d) {
-  const pct = d.pct_coverage;
-  return `<div class="ck-modal-grid">
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val" style="color:${semColor(pct)}">${pct !== null ? pct + "%" : "—"}</div><div class="ck-modal-stat-lbl">Cobertura global</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.required}</div><div class="ck-modal-stat-lbl">Requeridos total</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.contracted}</div><div class="ck-modal-stat-lbl">Contratados activos</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.required_tc}</div><div class="ck-modal-stat-lbl">Req. TC</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.tc_count}</div><div class="ck-modal-stat-lbl">Contrat. TC</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.required_mt}</div><div class="ck-modal-stat-lbl">Req. MT</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.mt_count}</div><div class="ck-modal-stat-lbl">Contrat. MT</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.municipalities_covered}</div><div class="ck-modal-stat-lbl">Municipios con cobertura</div></div>
-  </div>`;
-}
-function kpiDetailHtml_docs(d) {
-  return `<div class="ck-modal-grid">
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val ck-val-warn">${d.expiring_soon_docs}</div><div class="ck-modal-stat-lbl">Certificados próx. a vencer (30 días)</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val ck-val-crit">${d.pending_docs}</div><div class="ck-modal-stat-lbl">Sin certificado de manipulación</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val ck-val-warn">${d.pending_novelties}</div><div class="ck-modal-stat-lbl">Novedades pendientes</div></div>
-  </div>
-  <p class="ck-modal-note">Aplica solo a empleados con estado ACTIVO.</p>`;
-}
-function kpiDetailHtml_payroll(d) {
-  return `<div class="ck-modal-grid">
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${fmtCOP(d.payroll_total)}</div><div class="ck-modal-stat-lbl">Nómina estimada mensual</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.tc_count}</div><div class="ck-modal-stat-lbl">Empleados TC</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.mt_count}</div><div class="ck-modal-stat-lbl">Empleados MT</div></div>
-    <div class="ck-modal-stat"><div class="ck-modal-stat-val">${d.pending_novelties}</div><div class="ck-modal-stat-lbl">Novedades pendientes</div></div>
-  </div>
-  <p class="ck-modal-note">Estimación: TC × SMLMV + MT × SMLMV/2. No incluye prestaciones.</p>`;
-}
-
-// ── Full refresh ──────────────────────────────────────────────────────────────
-async function refreshAll() {
-  const hasCovMap   = !!document.getElementById("ck-cov-tbody");
-  const hasCargo    = !!document.getElementById("ck-cargo-tbody");
-  const hasAlerts   = !!document.getElementById("ck-alerts-list");
-
-  const fetches = [apiFetch(kpisUrl())];
-  if (hasCovMap) fetches.push(apiFetch("/dashboard/coverage-map")); else fetches.push(Promise.resolve({ data: [] }));
-  if (hasCargo && !isOpsOnly()) fetches.push(apiFetch(`/dashboard/staff-by-cargo?type=${_cargoType}`)); else fetches.push(Promise.resolve({ data: [] }));
-  if (hasAlerts) fetches.push(apiFetch("/dashboard/alerts")); else fetches.push(Promise.resolve({ data: [] }));
-
-  const [kpisRes, covRes, cargoRes, alertsRes] = await Promise.all(fetches);
-
-  const d = kpisRes?.data || {};
-  renderKpis(d);
-  if (d.municipalities_list?.length) renderMunFilter(d.municipalities_list);
-  renderCoverageMap(covRes?.data || []);
-  if (d.age_brackets) await renderAgeChart(d.age_brackets);
-  renderCargoTable(cargoRes?.data || []);
-  renderAlerts(alertsRes?.data || []);
-}
-
-// ── Main loader ───────────────────────────────────────────────────────────────
 export async function loadDashboardModule() {
   _clearDashboardTimers();
 
-  // 1. Fetch widget config for this contract
-  let widgetConfig = [];
-  try {
-    const cfgRes = await apiFetch("/module-config/dashboard");
-    widgetConfig = cfgRes?.data || [];
-    _widgetConfig = widgetConfig;
-  } catch {
-    // fall back to showing all widgets
-    _widgetConfig = [];
-  }
+  const inlineStyles = `
+    <style id="dashboardWorkspacePremiumInline">
+      #${ROOT_ID} {
+        --dw-bg: #f7faff;
+        --dw-card: #ffffff;
+        --dw-border: rgba(226, 232, 240, 0.9);
+        --dw-shadow: 0 14px 34px rgba(15, 23, 42, 0.05), 0 2px 6px rgba(15, 23, 42, 0.03);
+        --dw-text: #0b1b3a;
+        --dw-muted: #7f8da3;
+        --dw-blue: #0b7cff;
+        --dw-soft: #f1f6ff;
+        display: grid !important;
+        grid-template-rows: auto auto auto !important;
+        gap: 18px !important;
+        padding: 18px !important;
+        background:
+          radial-gradient(circle at top left, rgba(11,124,255,.05), transparent 24%),
+          linear-gradient(180deg, #f8fbff 0%, #f4f8fd 100%) !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        box-sizing: border-box !important;
+        font-family: "Inter", system-ui, sans-serif !important;
+      }
 
-  // 2. Build dynamic content
-  const contentHtml = buildDashboardHtml(widgetConfig);
+      #${ROOT_ID} *,
+      #${ROOT_ID} *::before,
+      #${ROOT_ID} *::after {
+        box-sizing: border-box !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-grid {
+        display: grid !important;
+        grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+        gap: 16px !important;
+        align-items: stretch !important;
+      }
+
+      #${ROOT_ID} .dashboard-main-grid {
+        display: grid !important;
+        grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.45fr) minmax(280px, 0.92fr) !important;
+        gap: 16px !important;
+        align-items: start !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-grid--bottom {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: 16px !important;
+        align-items: start !important;
+      }
+
+      #${ROOT_ID} .dashboard-column-stack {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 16px !important;
+        align-content: start !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card,
+      #${ROOT_ID} .dashboard-card {
+        background: var(--dw-card) !important;
+        border: 1px solid var(--dw-border) !important;
+        border-radius: 22px !important;
+        box-shadow: var(--dw-shadow) !important;
+        overflow: hidden !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card {
+        min-height: 126px !important;
+        padding: 18px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card span,
+      #${ROOT_ID} .dashboard-card-head p {
+        margin: 0 !important;
+        color: var(--dw-muted) !important;
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        letter-spacing: .08em !important;
+        text-transform: uppercase !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card strong {
+        margin: 0 !important;
+        color: var(--dw-text) !important;
+        font-size: clamp(24px, 1.5vw, 32px) !important;
+        line-height: 1 !important;
+        font-weight: 800 !important;
+        letter-spacing: -.05em !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card small {
+        color: var(--dw-muted) !important;
+        font-size: 11px !important;
+        line-height: 1.3 !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card select {
+        min-height: 42px !important;
+        padding: 10px 12px !important;
+        border-radius: 14px !important;
+        border: 1px solid var(--dw-border) !important;
+        background: #fbfdff !important;
+        color: var(--dw-text) !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card--action {
+        background: linear-gradient(135deg, #0b7cff 0%, #2487ff 100%) !important;
+        border-color: transparent !important;
+        box-shadow: 0 18px 40px rgba(11,124,255,.2) !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card--action span,
+      #${ROOT_ID} .dashboard-kpi-card--action strong,
+      #${ROOT_ID} .dashboard-kpi-card--action small {
+        color: #fff !important;
+      }
+
+      #${ROOT_ID} .dashboard-card {
+        padding: 18px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 14px !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-head {
+        display: flex !important;
+        align-items: flex-start !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-head h3 {
+        margin: 4px 0 0 !important;
+        color: var(--dw-text) !important;
+        font-size: 20px !important;
+        line-height: 1.05 !important;
+        letter-spacing: -.04em !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-pill,
+      #${ROOT_ID} .dashboard-date-pill {
+        background: var(--dw-soft) !important;
+        color: var(--dw-blue) !important;
+        border-radius: 999px !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-body--state,
+      #${ROOT_ID} .dashboard-card-body--distribution {
+        display: grid !important;
+        grid-template-columns: 140px minmax(0, 1fr) !important;
+        gap: 14px !important;
+        align-items: center !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-body--map {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 250px !important;
+        gap: 16px !important;
+        align-items: start !important;
+      }
+
+      #${ROOT_ID} .dashboard-gauge,
+      #${ROOT_ID} .dashboard-donut {
+        width: 132px !important;
+        height: 132px !important;
+        margin: 0 auto !important;
+      }
+
+      #${ROOT_ID} .dashboard-map-frame {
+        min-height: 280px !important;
+        padding: 16px !important;
+        border: 1px solid var(--dw-border) !important;
+        border-radius: 18px !important;
+        background: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%) !important;
+      }
+
+      #${ROOT_ID} .dashboard-map {
+        width: 100% !important;
+        min-height: 248px !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-panel {
+        padding-left: 14px !important;
+        border-left: 1px solid var(--dw-border) !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-list {
+        display: grid !important;
+        gap: 10px !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-list-item {
+        padding: 12px !important;
+        border-radius: 16px !important;
+        border: 1px solid var(--dw-border) !important;
+        background: #fafcff !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-list-label strong,
+      #${ROOT_ID} .dashboard-side-list-copy strong,
+      #${ROOT_ID} .dashboard-side-list-value strong {
+        color: var(--dw-text) !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-list-label small,
+      #${ROOT_ID} .dashboard-side-list-copy small,
+      #${ROOT_ID} .dashboard-side-list-value small,
+      #${ROOT_ID} .dashboard-gauge-center span,
+      #${ROOT_ID} .dashboard-donut-center span {
+        color: var(--dw-muted) !important;
+      }
+
+      #${ROOT_ID} .dashboard-legend {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 10px 12px !important;
+        padding-top: 10px !important;
+        border-top: 1px solid var(--dw-border) !important;
+        color: var(--dw-muted) !important;
+        font-size: 11px !important;
+      }
+
+      #${ROOT_ID} .dashboard-bar-chart {
+        display: grid !important;
+        gap: 12px !important;
+      }
+
+      #${ROOT_ID} .dashboard-bar-track {
+        height: 10px !important;
+        border-radius: 999px !important;
+        background: #eef3f8 !important;
+      }
+
+      /* ── KPI ACCENT TOP LINE ─────────────────────────────── */
+      #${ROOT_ID} .dashboard-kpi-card {
+        position: relative !important;
+        overflow: hidden !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card::before {
+        content: "" !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        height: 3px !important;
+        background: var(--kpi-accent, var(--dw-blue)) !important;
+        border-radius: 22px 22px 0 0 !important;
+        opacity: 0.85 !important;
+      }
+
+      /* ── KPI ICON BADGE ──────────────────────────────────── */
+      #${ROOT_ID} .dkpi-row {
+        display: flex !important;
+        align-items: flex-start !important;
+        justify-content: space-between !important;
+        gap: 6px !important;
+      }
+
+      #${ROOT_ID} .dkpi-icon {
+        width: 30px !important;
+        height: 30px !important;
+        border-radius: 9px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+      }
+
+      /* ── KPI VALUE TYPOGRAPHY ────────────────────────────── */
+      #${ROOT_ID} .dashboard-kpi-card strong {
+        font-size: clamp(22px, 1.5vw, 30px) !important;
+        letter-spacing: -0.055em !important;
+        line-height: 1 !important;
+      }
+
+      /* ── CARD HEAD SEPARATOR ─────────────────────────────── */
+      #${ROOT_ID} .dashboard-card-head {
+        padding-bottom: 12px !important;
+        border-bottom: 1px solid var(--dw-border) !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-pill {
+        padding: 5px 13px !important;
+        font-size: 11px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.03em !important;
+        border: 1px solid rgba(11,124,255,0.15) !important;
+        box-shadow: 0 2px 6px rgba(11,124,255,0.08) !important;
+      }
+
+      /* ── CARD HOVER LIFT ─────────────────────────────────── */
+      #${ROOT_ID} .dashboard-card {
+        transition: transform 0.15s ease, box-shadow 0.2s ease !important;
+      }
+
+      #${ROOT_ID} .dashboard-card:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 22px 48px rgba(11,27,58,.09), 0 4px 12px rgba(11,27,58,.04) !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card:not(button) {
+        transition: transform 0.15s ease, box-shadow 0.2s ease !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card:not(button):hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 14px 34px rgba(11,27,58,.08), 0 2px 8px rgba(11,27,58,.04) !important;
+      }
+
+      /* ── BAR CHART POLISH ────────────────────────────────── */
+      #${ROOT_ID} .dashboard-bar-fill {
+        position: relative !important;
+        overflow: hidden !important;
+        transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+
+      #${ROOT_ID} .dashboard-bar-fill::after {
+        content: "" !important;
+        position: absolute !important;
+        inset: 0 !important;
+        background: linear-gradient(90deg, rgba(255,255,255,0) 50%, rgba(255,255,255,0.22)) !important;
+        border-radius: inherit !important;
+      }
+
+      #${ROOT_ID} .dashboard-bar-track {
+        height: 9px !important;
+        border-radius: 999px !important;
+        background: #edf1f8 !important;
+      }
+
+      /* ── SIDE LIST ITEM POLISH ───────────────────────────── */
+      #${ROOT_ID} .dashboard-side-list-item {
+        transition: background 0.12s ease, box-shadow 0.12s ease !important;
+      }
+
+      #${ROOT_ID} .dashboard-side-list-item:hover {
+        background: #f5f8ff !important;
+        box-shadow: 0 2px 8px rgba(11,27,58,.04) !important;
+      }
+
+      /* ── DATE PILL POLISH ────────────────────────────────── */
+      #${ROOT_ID} .dashboard-date-pill {
+        padding: 7px 10px !important;
+        font-size: 10px !important;
+        font-weight: 800 !important;
+        letter-spacing: 0.06em !important;
+        background: rgba(11,124,255,0.07) !important;
+        color: #0b68d3 !important;
+        border: 1px solid rgba(11,124,255,0.12) !important;
+        border-radius: 10px !important;
+      }
+
+      /* ── COVERAGE MAP TILE FILL ──────────────────────────── */
+      #${ROOT_ID} .dashboard-map-wrap {
+        background: linear-gradient(180deg, #f9fbff 0%, #f3f7fe 100%) !important;
+        border-radius: 16px !important;
+        padding: 16px !important;
+        border: 1px solid rgba(148,163,184,0.1) !important;
+      }
+
+      /* ── ACTION BUTTON REFRESH ───────────────────────────── */
+      #${ROOT_ID} .dashboard-kpi-card--action {
+        background: linear-gradient(135deg, #0b7cff 0%, #1d8aff 60%, #3a9dff 100%) !important;
+        box-shadow: 0 18px 42px rgba(11,124,255,.22), 0 4px 12px rgba(11,124,255,.16) !important;
+      }
+
+      #${ROOT_ID} .dashboard-kpi-card--action strong {
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0 !important;
+      }
+
+      @media (max-width: 1280px) {
+        #${ROOT_ID} .dashboard-kpi-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+        #${ROOT_ID} .dashboard-main-grid {
+          grid-template-columns: 1fr 1fr !important;
+        }
+        #${ROOT_ID} .dashboard-main-grid > .dashboard-card--coverage {
+          grid-column: 1 / -1 !important;
+        }
+        #${ROOT_ID} .dashboard-kpi-grid--bottom {
+          grid-template-columns: 1fr 1fr !important;
+        }
+      }
+
+      @media (max-width: 900px) {
+        #${ROOT_ID} {
+          padding: 12px !important;
+          gap: 12px !important;
+        }
+        #${ROOT_ID} .dashboard-kpi-grid,
+        #${ROOT_ID} .dashboard-main-grid,
+        #${ROOT_ID} .dashboard-kpi-grid--bottom,
+        #${ROOT_ID} .dashboard-column-stack {
+          grid-template-columns: 1fr !important;
+          grid-template-rows: auto !important;
+          gap: 12px !important;
+        }
+        #${ROOT_ID} .dashboard-card-body--state,
+        #${ROOT_ID} .dashboard-card-body--distribution,
+        #${ROOT_ID} .dashboard-card-body--map {
+          grid-template-columns: 1fr !important;
+        }
+        #${ROOT_ID} .dashboard-side-panel {
+          padding-left: 0 !important;
+          border-left: none !important;
+        }
+      }
+    </style>
+  `;
 
   const html = `
-<div class="personnel-premium-module">
-<article class="personnel-premium-card">
-<div class="ck-wrap">
-
-  <section class="personnel-premium-hero ck-hero">
-    <div>
-      <span class="personnel-premium-eyebrow">Módulo operativo</span>
-      <h2>Dashboard</h2>
-      <p>Estado operativo en tiempo real — personal, cobertura y alertas PAE.</p>
+    ${inlineStyles}
+    <div class="dashboard-workspace-premium dashboard-workspace-premium--final" id="${ROOT_ID}">
+      ${buildLoadingState()}
     </div>
-    <div class="ck-filters">
-      <select id="ck-filter-mun" class="ck-select" title="Filtrar por municipio">
-        <option value="">Todos los municipios</option>
-      </select>
-      <button id="ck-btn-refresh" class="btn btn-secondary">↺ Actualizar</button>
-    </div>
-  </section>
-
-  ${contentHtml}
-
-  <div class="ck-footer">
-    Última actualización: <span id="ck-last-update">—</span>
-    &nbsp;·&nbsp; Auto-refresh 60 s
-  </div>
-
-</div>
-</article>
-</div>
-
-<div class="ck-modal-overlay" id="ck-modal" hidden>
-  <div class="ck-modal">
-    <div class="ck-modal-hdr">
-      <span id="ck-modal-title" class="ck-modal-title">Detalle</span>
-      <button id="ck-modal-close" class="ck-modal-close" aria-label="Cerrar">×</button>
-    </div>
-    <div class="ck-modal-body" id="ck-modal-body"></div>
-  </div>
-</div>`;
+  `;
 
   setTimeout(async () => {
-    let kpisData = {};
     try {
-      await refreshAll();
-      const kpisRes = await apiFetch(kpisUrl());
-      kpisData = kpisRes?.data || {};
-    } catch (err) {
-      console.error("Dashboard init error", err);
+      await renderDashboardWorkspace(false);
+      _timer = setInterval(() => {
+        renderDashboardWorkspace(false).catch(() => {});
+      }, REFRESH_MS);
+    } catch (error) {
+      const root = document.getElementById(ROOT_ID);
+      if (root) root.innerHTML = buildErrorState(error.message || "No se pudo cargar el dashboard");
     }
-
-    // KPI cards → modal
-    const bindCard = (cardId, title, htmlFn) => {
-      const card = document.getElementById(cardId);
-      if (!card) return;
-      const open = () => apiFetch(kpisUrl()).then(r => openModal(title, htmlFn(r?.data || {})));
-      card.addEventListener("click",   open);
-      card.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") open(); });
-    };
-    bindCard("ck-card-personal", "Personal — Detalle",    kpiDetailHtml_personal);
-    bindCard("ck-card-coverage", "Cobertura — Detalle",   kpiDetailHtml_coverage);
-    bindCard("ck-card-docs",     "Documentos — Detalle",  kpiDetailHtml_docs);
-    if (!isOpsOnly()) bindCard("ck-card-payroll", "Nómina — Detalle", kpiDetailHtml_payroll);
-
-    document.getElementById("ck-modal-close")?.addEventListener("click", closeModal);
-    document.getElementById("ck-modal")?.addEventListener("click", e => { if (e.target.id === "ck-modal") closeModal(); });
-
-    const fetchCargo = async () => {
-      try {
-        const p = new URLSearchParams({ type: _cargoType });
-        if (_cargoMonth) p.set("month", _cargoMonth);
-        renderCargoTable((await apiFetch(`/dashboard/staff-by-cargo?${p}`))?.data || []);
-      } catch { showError("No se pudo cargar cargos"); }
-    };
-    document.querySelectorAll(".ck-cargo-tab").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".ck-cargo-tab").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        _cargoType = btn.dataset.type;
-        fetchCargo();
-      });
-    });
-    document.getElementById("ck-cargo-month")?.addEventListener("change", e => { _cargoMonth = e.target.value; fetchCargo(); });
-
-    document.getElementById("ck-filter-mun")?.addEventListener("change", async e => {
-      _munId = e.target.value;
-      try { await refreshAll(); } catch { showError("No se pudo aplicar el filtro"); }
-    });
-
-    const btn = document.getElementById("ck-btn-refresh");
-    if (btn) {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true; btn.textContent = "↺ Actualizando…";
-        try { await refreshAll(); showSuccess("Dashboard actualizado"); }
-        catch { showError("No se pudo actualizar"); }
-        finally { btn.disabled = false; btn.textContent = "↺ Actualizar"; }
-      });
-    }
-
-    _timer = setInterval(async () => { try { await refreshAll(); } catch { /* silent */ } }, 60_000);
-  }, 80);
+  }, 0);
 
   return html;
 }

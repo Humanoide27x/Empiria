@@ -49,7 +49,7 @@ export function renderAdminUsers() {
           <select name="contractId">
             <option value="">Sin asignar</option>
             ${state.contracts.map((contract) =>
-              `<option value="${contract.id}" ${contract.id === user.contractId ? "selected" : ""}>${contract.name} (${contract.id})</option>`
+              `<option value="${contract.id}" ${contract.id === user.contractId ? "selected" : ""}>${contract.name}</option>`
             ).join("")}
           </select>
         </label>
@@ -96,12 +96,12 @@ export async function loadReferenceData() {
 
   fillOptionSelect(elements.createCompanyId, state.companies, {
     valueKey: "id",
-    labelBuilder: (company) => `${company.name} (${company.id})`,
+    labelBuilder: (company) => company.name,
     includeEmpty: true,
   });
   fillOptionSelect(elements.createContractId, state.contracts, {
     valueKey: "id",
-    labelBuilder: (contract) => `${contract.name} (${contract.id})`,
+    labelBuilder: (contract) => contract.name,
     includeEmpty: true,
   });
 }
@@ -141,9 +141,14 @@ export async function renderDashboard(user, access) {
   if (elements.sbCompany)      elements.sbCompany.textContent      = formatCompany(user.companyId);
   if (elements.sbContract)     elements.sbContract.textContent     = formatContract(user.contractId);
   if (elements.sbMunicipality) {
-    const munText = user.assignedMunicipalities?.length ? user.assignedMunicipalities.join(", ") : "Sin restricción";
-    elements.sbMunicipality.textContent = munText;
-    elements.sbMunicipality.title = munText;
+    const muns = user.assignedMunicipalities || [];
+    if (muns.length) {
+      elements.sbMunicipality.innerHTML = muns.map(m => `<span class="sb-mun-chip">${m}</span>`).join("");
+      elements.sbMunicipality.title = muns.join(", ");
+    } else {
+      elements.sbMunicipality.innerHTML = `<span class="sb-mun-chip sb-mun-free">Sin restricción</span>`;
+      elements.sbMunicipality.title = "Sin restricción";
+    }
   }
 
   // Avatar initials + user dropdown
@@ -209,8 +214,7 @@ export function resetDashboard() {
   if (elements.topModuleBreadcrumb) elements.topModuleBreadcrumb.title = "Dashboard";
   if (elements.sbCompany)       elements.sbCompany.textContent = "-";
   if (elements.sbContract)      elements.sbContract.textContent = "-";
-  if (elements.sbMunicipality)  elements.sbMunicipality.textContent = "Sin restricciÃ³n";
-  if (elements.sbMunicipality)  elements.sbMunicipality.title = "Sin restricciÃ³n";
+  if (elements.sbMunicipality) { elements.sbMunicipality.innerHTML = `<span class="sb-mun-chip sb-mun-free">Sin restricción</span>`; elements.sbMunicipality.title = "Sin restricción"; }
   ["userAvatar", "userAvatarLg", "sidebarAvatar"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = "U";

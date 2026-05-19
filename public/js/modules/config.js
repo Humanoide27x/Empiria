@@ -39,11 +39,23 @@ const PERM_ACTIONS = [
   { key: "delete", label: "Eliminar" },
 ];
 
+// ── Modalities catalog (mirrors calculator.js) ───────────────────────────────
+const SALARY_MODALITIES = [
+  { key: "CAARES1", grp: "caares", label: "CAARES 1", jornada: "Tiempo completo",  defaultSalary: 1_750_905, desc: "1 manipuladora en residencia, jornada completa." },
+  { key: "CAARES2", grp: "caares", label: "CAARES 2", jornada: "Medio tiempo",     defaultSalary:   875_453, desc: "1 manipuladora de medio tiempo — apoya a CAARES 1." },
+  { key: "CAARES3", grp: "caares", label: "CAARES 3", jornada: "Tiempo completo",  defaultSalary: 1_750_905, desc: "Más de una manipuladora en residencia, jornada completa." },
+  { key: "CAARES4", grp: "caares", label: "CAARES 4", jornada: "Medio tiempo",     defaultSalary:   875_453, desc: "1 manipuladora de medio tiempo — apoya a CAARES 3." },
+  { key: "CAA1",    grp: "caa",    label: "CAA 1",    jornada: "Tiempo completo",  defaultSalary: 1_750_905, desc: "Externo jornada completa." },
+  { key: "CAA2",    grp: "caa",    label: "CAA 2",    jornada: "Tiempo parcial",   defaultSalary:   875_453, desc: "Externo jornada parcial." },
+  { key: "RI",      grp: "ri",     label: "RI",       jornada: "Según rango",      defaultSalary: 1_750_905, desc: "Ración industrializada." },
+];
+
 // ── Widget & field state (module personalizer) ────────────────────────────────
 let _ccpWidgets     = [];   // current widget config array
 let _ccpFields      = {};   // { slug: campos[] }
 let _ccpActiveFieldSlug = "personal";
 let _ccpDragSrc     = null; // drag source index
+let _ccpModConfig   = {};   // { [modKey]: { salary, adicionales: [{label,value}] } }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -557,10 +569,23 @@ export async function loadContractConfigPanel(contractId) {
     return `<div class="cfg-error">No fue posible cargar la configuración: ${escapeHtml(e.message)}</div>`;
   }
 
-  const settings = data.settings  || {};
-  const rawPos   = Array.isArray(settings.positions) ? settings.positions : [];
-  const modules  = settings.modules || {};
-  const posMode  = settings.position_mode || "licitacion";
+  const settings      = data.settings  || {};
+  const rawPos        = Array.isArray(settings.positions) ? settings.positions : [];
+  const modules       = settings.modules || {};
+  const posMode       = settings.position_mode || "licitacion";
+  const salaryConfig  = settings.salary_config  || {};
+  const cfgSMLV       = salaryConfig.smlv           ?? 1_750_905;
+  const cfgAuxTrans   = salaryConfig.aux_transporte ?? 249_095;
+  const cfgModalities = salaryConfig.modalities || {};
+  _ccpModConfig = {};
+  SALARY_MODALITIES.forEach(m => {
+    const raw = cfgModalities[m.key];
+    if (raw && typeof raw === "object") {
+      _ccpModConfig[m.key] = { salary: raw.salary ?? m.defaultSalary, adicionales: Array.isArray(raw.adicionales) ? [...raw.adicionales] : [] };
+    } else {
+      _ccpModConfig[m.key] = { salary: typeof raw === "number" ? raw : m.defaultSalary, adicionales: [] };
+    }
+  });
 
   let _lid = 1;
   _ccpData = rawPos.map(p => ({
@@ -640,6 +665,15 @@ export async function loadContractConfigPanel(contractId) {
         </svg>
       </span>
       <span class="pnl-tab-lbl">Usuarios</span>
+    </button>
+    <button type="button" class="pnl-tab" data-ccp-tab="calculadora">
+      <span class="pnl-tab-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </span>
+      <span class="pnl-tab-lbl">Calculadora</span>
     </button>
   </div>
 
@@ -808,6 +842,76 @@ export async function loadContractConfigPanel(contractId) {
       </div>
     </div>
 
+    <!-- TAB 5: Calculadora -->
+    <div class="ccp-panel" data-ccp-panel="calculadora">
+      <div class="ccp-panel-inner">
+        <div class="ccp-card">
+          <div class="ccp-panel-title">⚙ Configuración de Calculadora</div>
+          <p class="ccp-modules-hint">Define los valores base y el salario con adicionales por modalidad para este contrato.</p>
+
+          <div class="ccp-sc-section-title">Valores legales base</div>
+          <div class="ccp-salary-cfg-grid">
+            <label class="ccp-field">
+              <span>SMLV — Salario mínimo legal vigente <em>*</em></span>
+              <div class="ccp-salary-input-wrap">
+                <span class="ccp-salary-prefix">$</span>
+                <input id="ccpSMLV" type="number" min="0" step="1000" value="${cfgSMLV}" placeholder="1750905">
+              </div>
+              <span class="ccp-salary-ref">Legal 2026: $1.750.905</span>
+            </label>
+            <label class="ccp-field">
+              <span>Auxilio de transporte <em>*</em></span>
+              <div class="ccp-salary-input-wrap">
+                <span class="ccp-salary-prefix">$</span>
+                <input id="ccpAuxTrans" type="number" min="0" step="1000" value="${cfgAuxTrans}" placeholder="249095">
+              </div>
+              <span class="ccp-salary-ref">Legal 2026: $249.095</span>
+            </label>
+          </div>
+
+          <div class="ccp-sc-section-title" style="margin-top:22px">Salario y adicionales por modalidad</div>
+          <div class="ccp-sc-mod-list" id="ccpModList">
+            ${SALARY_MODALITIES.map(m => {
+              const cfg = _ccpModConfig[m.key];
+              return `
+            <div class="ccp-sc-mod-card">
+              <div class="ccp-sc-mod-row">
+                <span class="ccp-sc-mod-badge ccp-sc-mod-badge--${m.grp}">${escapeHtml(m.key)}</span>
+                <div class="ccp-sc-mod-info">
+                  <span class="ccp-sc-mod-desc">${escapeHtml(m.desc)}</span>
+                  <span class="ccp-sc-mod-jornada">${escapeHtml(m.jornada)}</span>
+                </div>
+                <div class="ccp-salary-input-wrap ccp-sc-mod-salary-wrap">
+                  <span class="ccp-salary-prefix">$</span>
+                  <input type="number" class="ccp-sc-mod-salary-input" data-mod="${escapeAttr(m.key)}"
+                    min="0" step="1000" value="${cfg.salary}">
+                </div>
+              </div>
+              <div class="ccp-sc-mod-adics" data-mod="${escapeAttr(m.key)}">
+                ${cfg.adicionales.map((a, i) => `
+                <div class="ccp-sc-adic-row">
+                  <input type="text" class="ccp-sc-adic-label" data-mod="${escapeAttr(m.key)}" data-idx="${i}"
+                    placeholder="Nombre del adicional" value="${escapeAttr(a.label)}">
+                  <div class="ccp-salary-input-wrap ccp-sc-adic-val-wrap">
+                    <span class="ccp-salary-prefix">$</span>
+                    <input type="number" class="ccp-sc-adic-value" data-mod="${escapeAttr(m.key)}" data-idx="${i}"
+                      min="0" step="1000" value="${a.value || 0}">
+                  </div>
+                  <button type="button" class="ccp-sc-adic-del" data-mod="${escapeAttr(m.key)}" data-idx="${i}" title="Eliminar">✕</button>
+                </div>`).join("")}
+                <button type="button" class="ccp-sc-add-adic-btn" data-mod="${escapeAttr(m.key)}">+ Adicional</button>
+              </div>
+            </div>`;
+            }).join("")}
+          </div>
+
+          <div class="ccp-save-row" style="margin-top:20px">
+            <button type="button" class="btn btn-primary" id="ccpSaveSalary">Guardar configuración</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>`;
 }
@@ -823,8 +927,9 @@ export function wireContractConfigEvents() {
         document.querySelectorAll(".ccp-panel").forEach(p => p.classList.remove("ccp-panel-active"));
         tab.classList.add("pnl-tab-active");
         document.querySelector(`.ccp-panel[data-ccp-panel="${key}"]`)?.classList.add("ccp-panel-active");
-        if (key === "usuarios") _loadUsersTab(state.cfgContractConfigId);
-        if (key === "modulos") { _loadWidgets(); _loadFields(_ccpActiveFieldSlug); }
+        if (key === "usuarios")    _loadUsersTab(state.cfgContractConfigId);
+        if (key === "modulos")     { _loadWidgets(); _loadFields(_ccpActiveFieldSlug); }
+        if (key === "calculadora") SALARY_MODALITIES.forEach(m => _renderModAdics(m.key));
       });
     });
 
@@ -1027,6 +1132,79 @@ export function wireContractConfigEvents() {
       roleTab.classList.add("ccp-role-tab-active");
       const body = document.getElementById("ccpRolePermsBody");
       if (body) body.innerHTML = _renderRolePermissions(role, _ccpRolePerms);
+    });
+
+    // ── Tab 5: Re-render adicionales de una modalidad ────────────────────────
+    function _renderModAdics(modKey) {
+      const container = document.querySelector(`.ccp-sc-mod-adics[data-mod="${modKey}"]`);
+      if (!container) return;
+      const adics = _ccpModConfig[modKey]?.adicionales || [];
+      container.innerHTML = adics.map((a, i) => `
+        <div class="ccp-sc-adic-row">
+          <input type="text" class="ccp-sc-adic-label" data-mod="${modKey}" data-idx="${i}"
+            placeholder="Nombre del adicional" value="${escapeAttr(a.label)}">
+          <div class="ccp-salary-input-wrap ccp-sc-adic-val-wrap">
+            <span class="ccp-salary-prefix">$</span>
+            <input type="number" class="ccp-sc-adic-value" data-mod="${modKey}" data-idx="${i}"
+              min="0" step="1000" value="${a.value || 0}">
+          </div>
+          <button type="button" class="ccp-sc-adic-del" data-mod="${modKey}" data-idx="${i}" title="Eliminar">✕</button>
+        </div>`).join("")
+        + `<button type="button" class="ccp-sc-add-adic-btn" data-mod="${modKey}">+ Adicional</button>`;
+    }
+
+    // Delegación de eventos en la lista de modalidades
+    document.getElementById("ccpModList")?.addEventListener("click", e => {
+      const del = e.target.closest(".ccp-sc-adic-del");
+      if (del) {
+        const { mod, idx } = del.dataset;
+        _ccpModConfig[mod].adicionales.splice(Number(idx), 1);
+        _renderModAdics(mod);
+        return;
+      }
+      const add = e.target.closest(".ccp-sc-add-adic-btn");
+      if (add) {
+        const mod = add.dataset.mod;
+        _ccpModConfig[mod].adicionales.push({ label: "", value: 0 });
+        _renderModAdics(mod);
+        const container = document.querySelector(`.ccp-sc-mod-adics[data-mod="${mod}"]`);
+        container?.querySelector(".ccp-sc-adic-label:last-of-type")?.focus();
+      }
+    });
+    document.getElementById("ccpModList")?.addEventListener("input", e => {
+      const lbl = e.target.closest(".ccp-sc-adic-label");
+      if (lbl) { _ccpModConfig[lbl.dataset.mod].adicionales[Number(lbl.dataset.idx)].label = lbl.value; return; }
+      const val = e.target.closest(".ccp-sc-adic-value");
+      if (val) { _ccpModConfig[val.dataset.mod].adicionales[Number(val.dataset.idx)].value = Math.round(parseFloat(val.value) || 0); }
+    });
+
+    // ── Tab 5: Guardar configuración calculadora ─────────────────────────────
+    document.getElementById("ccpSaveSalary")?.addEventListener("click", async () => {
+      const smlv     = Math.round(parseFloat(document.getElementById("ccpSMLV")?.value)    || 0);
+      const auxTrans = Math.round(parseFloat(document.getElementById("ccpAuxTrans")?.value) || 0);
+      if (smlv <= 0)     { showError("Ingresa un valor de SMLV válido.");                   return; }
+      if (auxTrans <= 0) { showError("Ingresa un valor de Auxilio de Transporte válido.");  return; }
+      const modalities = {};
+      SALARY_MODALITIES.forEach(m => {
+        const salaryInp = document.querySelector(`.ccp-sc-mod-salary-input[data-mod="${m.key}"]`);
+        modalities[m.key] = {
+          salary:      Math.round(parseFloat(salaryInp?.value) || m.defaultSalary),
+          adicionales: (_ccpModConfig[m.key]?.adicionales || []).filter(a => a.label.trim()),
+        };
+      });
+      const btn = document.getElementById("ccpSaveSalary");
+      btn.disabled = true; btn.textContent = "Guardando…";
+      try {
+        await apiFetch(`/config/contracts/${state.cfgContractConfigId}/salary-config`, {
+          method: "PUT",
+          body: JSON.stringify({ salary_config: { smlv, aux_transporte: auxTrans, modalities } }),
+        });
+        showSuccess("Configuración de calculadora guardada.");
+      } catch (e) {
+        showError(e.message || "No fue posible guardar.");
+      } finally {
+        btn.disabled = false; btn.textContent = "Guardar configuración";
+      }
     });
 
     // ── Tab 4: Guardar permisos ──────────────────────────────────────────────

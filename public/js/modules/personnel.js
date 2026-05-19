@@ -953,7 +953,7 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
   const companyField = lockedCompany
     ? `<select name="companyId" required disabled>
         <option value="${escapeAttr(String(cuVinc.companyId))}" selected>
-          ${escapeHtml(state.companies.find((c) => c.id === Number(cuVinc.companyId))?.name || String(cuVinc.companyId))}
+          ${escapeHtml(formatCompany(cuVinc.companyId))}
         </option>
        </select>
        <input type="hidden" name="companyId" value="${escapeAttr(String(cuVinc.companyId))}">`
@@ -961,7 +961,7 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
   const contractField = lockedContract
     ? `<select name="contractId" required disabled>
         <option value="${escapeAttr(String(cuVinc.contractId))}" selected>
-          ${escapeHtml(state.contracts.find((c) => c.id === Number(cuVinc.contractId))?.name || String(cuVinc.contractId))}
+          ${escapeHtml(formatContract(cuVinc.contractId))}
         </option>
        </select>
        <input type="hidden" name="contractId" value="${escapeAttr(String(cuVinc.contractId))}">`
@@ -1353,20 +1353,43 @@ function buildTabContratacion(draftValue, cargoReal) {
   `;
 }
 
+function _addMonths(dateStr, months) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return "";
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
 function buildTabSeguimiento(draftValue) {
   const hasSisben      = String(draftValue("sisben", "")) === "true";
   const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true";
 
+  const SISBEN_CATEGORIES = ["A1","A2","A3","B1","B2","B3","B4","B5","B6","B7","C1","C2","C3","C4","C5","C6","C7","C8","C9","C10","C11","C12","C13","C14","C15","C16","C17","C18","D1","D2","D3","D4","D5","D6","D7","D8","D9","D10","D11","D12","D13","D14","D15","D16","D17","D18","D19","D20","D21"];
+
+  const currentCat = draftValue("sisbenCategory") || "";
+  const currentIssue = draftValue("sisbenIssueDate") || "";
+  const autoExpiry = _addMonths(currentIssue, 3);
+  const currentExpiry = draftValue("sisbenExpirationDate") || autoExpiry;
+
   const sisbenBlock = hasSisben ? `
     <div class="subsection-title">Datos del SISBEN</div>
-    <div class="form-grid form-grid-2">
+    <div class="form-grid form-grid-3">
+      <label>
+        <span>Categoría SISBEN</span>
+        <select name="sisbenCategory">
+          <option value="">Selecciona</option>
+          ${SISBEN_CATEGORIES.map(c => `<option value="${c}" ${currentCat === c ? "selected" : ""}>${c}</option>`).join("")}
+        </select>
+      </label>
       <label>
         <span>Fecha de expedición SISBEN</span>
-        <input name="sisbenIssueDate" type="date" value="${escapeAttr(draftValue("sisbenIssueDate"))}" />
+        <input name="sisbenIssueDate" type="date" value="${escapeAttr(currentIssue)}"
+          onchange="(function(el){var exp=document.querySelector('[name=sisbenExpirationDate]');if(exp&&!exp.value){var d=new Date(el.value+'T00:00:00');d.setMonth(d.getMonth()+3);exp.value=d.toISOString().slice(0,10);}})(this)" />
       </label>
       <label>
         <span>Fecha de vencimiento SISBEN</span>
-        <input name="sisbenExpirationDate" type="date" value="${escapeAttr(draftValue("sisbenExpirationDate"))}" />
+        <input name="sisbenExpirationDate" type="date" value="${escapeAttr(currentExpiry)}" />
       </label>
     </div>
   ` : "";
@@ -1769,7 +1792,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     // ── Campos reactivos y sync — delegation sobre el form ───────────────
     const REACTIVE_FIELDS = [
       "expeditionDepartment", "birthDepartment", "companyId",
-      "educationalMunicipality", "institution", "site",
+      "municipalityId", "educationalMunicipality", "institution", "site",
       "cargo_real", "biologicalSex", "sisben", "hasResidenceCertificate", "presentedInOffer",
       "hasTermination", "terminationDate",
     ];
@@ -1810,7 +1833,17 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
           state.personnelDraft.birthMunicipality = "";
         if (e.target.name === "presentedInOffer" && e.target.value !== "true")
           state.personnelDraft.offerPosition = "";
+        if (e.target.name === "municipalityId") {
+          const munId = Number(e.target.value);
+          const munObj = META_MUNICIPALITIES.find((m) => m.id === munId);
+          state.personnelDraft.educationalMunicipality = munObj ? munObj.name : "";
+          state.personnelDraft.institution             = "";
+          state.personnelDraft.site                    = "";
+          state.personnelDraft.educationalModality     = "";
+        }
         if (e.target.name === "educationalMunicipality") {
+          const munObj = META_MUNICIPALITIES.find((m) => m.name === e.target.value);
+          if (munObj) state.personnelDraft.municipalityId = munObj.id;
           state.personnelDraft.institution         = "";
           state.personnelDraft.site                = "";
           state.personnelDraft.educationalModality = "";
@@ -2127,6 +2160,13 @@ function calculatePersonnelDashboardFrontend(rows = [], allDocuments = []) {
 
 // ── hydratePersonnelDraft ─────────────────────────────────────────────────────
 
+// Normaliza cualquier valor de fecha a "YYYY-MM-DD" para <input type="date">
+function fmtDate(v) {
+  if (!v) return "";
+  const s = String(v);
+  return s.length >= 10 ? s.slice(0, 10) : "";
+}
+
 function hydratePersonnelDraft(found) {
   const isPresentedInOffer =
     found.presentacion_en_licitacion === true  ||
@@ -2183,8 +2223,7 @@ function hydratePersonnelDraft(found) {
 
     educationalMunicipality:
       found.educationalMunicipality || found.educational_municipality ||
-      found.municipio_educativo     || found.municipio_institucional  ||
-      found.municipalityName        || found.municipality_name        || found.municipio || "",
+      found.municipio_educativo     || found.municipio_institucional  || "",
     institution:       found.institution || found.institutionName || found.institution_name || found.institucion_educativa || "",
     site:              found.site        || found.siteName        || found.site_name        || found.sede_educativa        || "",
     educationalModality: found.educationalModality || found.modality || found.modalidad || "",
@@ -2192,35 +2231,36 @@ function hydratePersonnelDraft(found) {
     contractType: found.tipo_contrato || found.contractType || "",
     workTimeType: found.workTimeType  || found.work_time_type || found.workdayType || found.workday_type || found.tipo_tiempo || "",
 
-    startDate:         found.fecha_inicio_real  || found.startDate         || "",
-    coverageStartDate: found.coverageStartDate  || found.coverage_start_date || found.fecha_inicio_cobertura || "",
-    terminationDate:   found.terminationDate    || found.fecha_retiro       || "",
-    hasTermination:    (found.terminationDate || found.fecha_retiro) ? "true" : "",
+    startDate:           fmtDate(found.fecha_inicio_real  || found.startDate  || found.start_date),
+    coverageStartDate:   fmtDate(found.coverageStartDate  || found.coverage_start_date || found.fecha_inicio_cobertura),
+    arlVinculationDate:  fmtDate(found.arlVinculationDate || found.fecha_real_vinculacion_arl || found.arl_vinculation_date),
+    terminationDate:     fmtDate(found.terminationDate    || found.fecha_retiro),
+    hasTermination:      (found.terminationDate || found.fecha_retiro) ? "true" : "",
 
     eps:             found.eps             || "",
     pensionFund:     found.fondo_pensiones || found.pensionFund   || found.pension_fund  || "",
     compensationBox: found.caja_compensacion || found.compensationBox || found.compensation_box || "COFREM",
     arl:             found.arl             || "SURA",
 
-    sisben:              found.sisben_tiene || found.sisben || "",
+    sisben:              found.sisben_tiene != null ? String(found.sisben_tiene) : (found.sisben != null ? String(found.sisben) : ""),
     sisbenCategory:      found.sisben_categoria || found.sisbenCategory || "",
-    sisbenIssueDate:     found.sisbenIssueDate  || found.sisben_issue_date || "",
-    sisbenExpirationDate: found.sisbenExpirationDate || found.sisben_expiration_date || "",
+    sisbenIssueDate:     fmtDate(found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date),
+    sisbenExpirationDate: fmtDate(found.sisbenExpirationDate || found.sisben_expiration_date || found.sisben_expiry),
 
     hasResidenceCertificate: found.hasResidenceCertificate || found.has_residence_certificate || "",
     residenceCertificateIssueDate:
-      found.residenceCertificateIssueDate || found.residence_certificate_issue_date || "",
+      fmtDate(found.residenceCertificateIssueDate || found.residence_certificate_issue_date),
     residenceCertificateExpiration:
-      found.residenceCertificateExpiration || found.residence_certificate_expiration || "",
+      fmtDate(found.residenceCertificateExpiration || found.residence_certificate_expiration || found.residence_certificate_expiry),
 
     foodHandlingCourseIssueDate:
-      found.foodHandlingCourseIssueDate || found.food_handling_course_issue_date || "",
+      fmtDate(found.foodHandlingCourseIssueDate || found.food_handling_course_issue_date),
     foodHandlingCourseExpirationDate:
-      found.foodHandlingCourseExpirationDate || found.food_handling_course_expiration_date || "",
+      fmtDate(found.foodHandlingCourseExpirationDate || found.food_handling_course_expiration_date || found.food_handling_course_expiry_date),
     foodHandlingExamIssueDate:
-      found.foodHandlingExamIssueDate || found.food_handling_exam_issue_date || "",
+      fmtDate(found.foodHandlingExamIssueDate || found.food_handling_exam_issue_date),
     foodHandlingExamExpirationDate:
-      found.foodHandlingExamExpirationDate || found.food_handling_exam_expiration_date || "",
+      fmtDate(found.foodHandlingExamExpirationDate || found.food_handling_exam_expiration_date || found.food_handling_exam_expiry_date),
 
     studies:       Array.isArray(found.studies)       ? found.studies       : [],
     workExperience: Array.isArray(found.workExperience) ? found.workExperience : [],
@@ -2528,16 +2568,26 @@ export async function renderPersonnelTableModule() {
             const photoUrl = e.target.result;
             try {
               await apiFetch("/personnel/photo", { method: "PATCH", body: JSON.stringify({ id: wrap.dataset.photoUploadId, photoUrl }) });
+              // Replace avatar in the detail panel
               const imgWrap = wrap.querySelector(".cv-photo-img, .cv-photo-initials");
               if (imgWrap) {
                 const img = document.createElement("img");
                 img.src = photoUrl; img.alt = "Foto"; img.className = "cv-photo-img";
                 imgWrap.replaceWith(img);
               }
-              // update in-memory row so reopening shows new photo
+              // Update in-memory row so CV view and re-renders show the new photo
               const empRow = rows.find(r => String(r.id) === String(wrap.dataset.photoUploadId));
               if (empRow) empRow.photoUrl = photoUrl;
-            } catch (err) { console.error("Error subiendo foto:", err.message); }
+              // Also update any table avatar chips that may show initials
+              document.querySelectorAll(`[data-row-photo-id="${wrap.dataset.photoUploadId}"]`).forEach(el => {
+                el.style.backgroundImage = `url(${photoUrl})`;
+                el.textContent = "";
+              });
+              showSuccess("Foto actualizada correctamente.", "Foto de perfil");
+            } catch (err) {
+              console.error("Error subiendo foto:", err.message);
+              showError(err.message || "No fue posible subir la foto.");
+            }
           };
           reader.readAsDataURL(file);
         });
@@ -3095,7 +3145,7 @@ export async function loadEmployeeDocumentsModule() {
         <span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>
       </div>
       <div class="document-check-actions">
-        ${found?.fileUrl ? `<a href="${escapeAttr(found.fileUrl)}" target="_blank" class="btn btn-secondary btn-row">Ver</a>` : ""}
+        ${found?.fileUrl ? `<button type="button" class="btn btn-secondary btn-row" data-view-document-url="${escapeAttr(found.fileUrl)}" data-view-document-name="${escapeAttr(req.name)}">Ver</button>` : ""}
         ${canValidate ? `
           <button type="button" class="btn btn-primary btn-row" data-validate-document-id="${escapeAttr(found.id)}">Validar</button>
           <button type="button" class="btn btn-danger btn-row" data-reject-document-id="${escapeAttr(found.id)}">Rechazar</button>
@@ -3172,16 +3222,57 @@ export async function loadEmployeeDocumentsModule() {
       } catch { showError("No fue posible guardar el documento."); }
     });
 
+    document.querySelectorAll("[data-view-document-url]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const url  = btn.dataset.viewDocumentUrl;
+        const name = btn.dataset.viewDocumentName || "Documento";
+        const overlay = document.createElement("div");
+        overlay.className = "pdf-preview-overlay";
+        overlay.innerHTML = `
+          <div class="pdf-preview-header">
+            <span class="pdf-preview-title">${escapeHtml(name)}</span>
+            <a href="${escapeAttr(url)}" download class="pdf-preview-close" style="margin-right:8px">Descargar</a>
+            <button type="button" class="pdf-preview-close" id="closePdfPreview">Cerrar ✕</button>
+          </div>
+          <iframe class="pdf-preview-frame" src="${escapeAttr(url)}" title="${escapeAttr(name)}"></iframe>
+        `;
+        document.body.appendChild(overlay);
+        overlay.querySelector("#closePdfPreview")?.addEventListener("click", () => overlay.remove());
+        overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") overlay.remove(); });
+        overlay.setAttribute("tabindex", "-1");
+        overlay.focus();
+      });
+    });
+
     document.querySelectorAll("[data-validate-document-id]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("¿Confirmas que este documento fue revisado y es válido?")) return;
-        try {
-          await apiFetch("/documents/validate", {
-            method: "PUT",
-            body: JSON.stringify({ id: btn.dataset.validateDocumentId, userName: state.currentUser?.name || "Usuario" }),
-          });
-          await openModule("gestion_personal");
-        } catch { showError("No fue posible validar el documento."); }
+      btn.addEventListener("click", () => {
+        const docId = btn.dataset.validateDocumentId;
+        const overlay = document.createElement("div");
+        overlay.className = "empiria-modal-overlay";
+        overlay.innerHTML = `
+          <div class="empiria-modal">
+            <h3>Validar documento</h3>
+            <p>¿Confirmas que este documento fue revisado y es válido? Esta acción quedará registrada.</p>
+            <div class="empiria-modal-actions">
+              <button type="button" id="btnCancelValidate" class="btn btn-secondary">Cancelar</button>
+              <button type="button" id="btnConfirmValidate" class="btn btn-primary">Sí, validar</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.querySelector("#btnCancelValidate")?.addEventListener("click", () => overlay.remove());
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+        overlay.querySelector("#btnConfirmValidate")?.addEventListener("click", async () => {
+          overlay.remove();
+          try {
+            await apiFetch("/documents/validate", {
+              method: "PUT",
+              body: JSON.stringify({ id: docId, userName: state.currentUser?.name || "Usuario" }),
+            });
+            showSuccess("Documento validado correctamente.", "Documento validado");
+            await openModule("gestion_personal");
+          } catch { showError("No fue posible validar el documento."); }
+        });
       });
     });
 
@@ -3333,7 +3424,7 @@ export function renderPersonnelCvModule() {
               <div class="cv-field"><span>Fecha de expedición</span><strong>${val([d.expeditionDay, d.expeditionMonth, d.expeditionYear].filter(Boolean).join("/"))}</strong></div>
               <div class="cv-field"><span>Lugar de expedición</span><strong>${val(d.expeditionMunicipality)} · ${val(d.expeditionDepartment)}</strong></div>
               <div class="cv-field"><span>Fecha de nacimiento</span><strong>${val([d.birthDay, d.birthMonth, d.birthYear].filter(Boolean).join("/"))}</strong></div>
-              <div class="cv-field"><span>Lugar de nacimiento</span><strong>${val(d.birthMunicipality)} · ${val(d.birthDepartment)}</strong></div>
+              <div class="cv-field"><span>Lugar de nacimiento</span><strong>${escapeHtml(_resolveMunName(d.birthMunicipality))} · ${val(d.birthDepartment)}</strong></div>
               <div class="cv-field"><span>Grupo sanguíneo</span><strong>${val(d.bloodType)}</strong></div>
               <div class="cv-field"><span>Sexo biológico</span><strong>${val(d.biologicalSex)}</strong></div>
             </div>

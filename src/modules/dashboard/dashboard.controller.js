@@ -42,6 +42,182 @@ function getAgeBracket(birthYear) {
   return AGE_BRACKETS.find(b => age >= b.min && age <= b.max)?.label || null;
 }
 
+function normalizeDashboardText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveCoverageStatus(percent, hasOperation = true) {
+  if (!hasOperation) return "SIN_OPERACION";
+  if (!Number.isFinite(percent)) return "SIN_OPERACION";
+  if (percent >= 85) return "ESTABLE";
+  if (percent >= 60) return "ALERTA";
+  return "CRITICO";
+}
+
+async function getTablePresence() {
+  const { rows } = await pool.query(`
+    SELECT
+      to_regclass('public.coverage_uploads')     IS NOT NULL AS has_coverage_uploads,
+      to_regclass('public.coverage_upload_rows') IS NOT NULL AS has_coverage_upload_rows,
+      to_regclass('public.calendar_events')      IS NOT NULL AS has_calendar_events,
+      to_regclass('public.positions')            IS NOT NULL AS has_positions
+  `);
+
+  return rows[0] || {};
+}
+
+async function getEmployeeColumnSet() {
+  const { rows } = await pool.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'employees'
+  `);
+
+  return new Set(rows.map((row) => String(row.column_name || "").trim()));
+}
+
+function buildEmployeeExpressions(employeeColumns) {
+  const has = (column) => employeeColumns.has(column);
+
+  const fullNameExpr = has("full_name")
+    ? `COALESCE(NULLIF(TRIM(e.full_name), ''), 'Sin nombre')`
+    : `'Sin nombre'`;
+
+  const workdayExpr = has("workday_type")
+    ? `UPPER(TRIM(COALESCE(e.workday_type, '')))`
+    : `''`;
+
+  const sexExpr = has("sex")
+    ? `UPPER(TRIM(COALESCE(e.sex, '')))`
+    : `''`;
+
+  const modalityExpr = has("modality")
+    ? `COALESCE(NULLIF(TRIM(e.modality), ''), 'Sin modalidad')`
+    : `'Sin modalidad'`;
+
+  const positionExpr = has("real_position")
+    ? `COALESCE(NULLIF(TRIM(e.real_position), ''), 'Sin cargo')`
+    : `'Sin cargo'`;
+
+  const birthYearParts = [];
+  if (has("birth_year")) birthYearParts.push("e.birth_year");
+  if (has("birth_date")) birthYearParts.push("EXTRACT(YEAR FROM e.birth_date)::int");
+  const birthYearExpr = birthYearParts.length
+    ? `COALESCE(${birthYearParts.join(", ")})`
+    : `NULL`;
+
+  const birthMonthParts = [];
+  if (has("birth_month")) birthMonthParts.push("e.birth_month");
+  if (has("birth_date")) birthMonthParts.push("EXTRACT(MONTH FROM e.birth_date)::int");
+  const birthMonthExpr = birthMonthParts.length
+    ? `COALESCE(${birthMonthParts.join(", ")})`
+    : `NULL`;
+
+  const birthDayParts = [];
+  if (has("birth_day")) birthDayParts.push("e.birth_day");
+  if (has("birth_date")) birthDayParts.push("EXTRACT(DAY FROM e.birth_date)::int");
+  const birthDayExpr = birthDayParts.length
+    ? `COALESCE(${birthDayParts.join(", ")})`
+    : `NULL`;
+
+  return {
+    fullNameExpr,
+    workdayExpr,
+    sexExpr,
+    modalityExpr,
+    positionExpr,
+    birthYearExpr,
+    birthMonthExpr,
+    birthDayExpr,
+  };
+}
+
+function buildDashboardEmployeeScope({
+  user,
+  resource,
+  selectedMunicipalityId,
+  includeAssignedMunicipalities = true,
+}) {
+  const joins = ["LEFT JOIN municipalities m ON m.id = e.municipality_id"];
+  const conditions = ["TRUE"];
+  const values = [];
+
+  if (user?.companyId) {
+    values.push(Number(user.companyId));
+    conditions.push(`e.company_id = $${values.length}`);
+  }
+
+  if (resource?.contractId) {
+    values.push(Number(resource.contractId));
+    conditions.push(`e.contract_id = $${values.length}`);
+  }
+
+  if (selectedMunicipalityId) {
+    values.push(Number(selectedMunicipalityId));
+    conditions.push(`e.municipality_id = $${values.length}`);
+  }
+
+  if (includeAssignedMunicipalities) {
+    const assignedMunicipalities = Array.isArray(user?.assignedMunicipalities)
+      ? user.assignedMunicipalities
+          .map((item) => String(item || "").trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+
+    if (assignedMunicipalities.length) {
+      values.push(assignedMunicipalities);
+      conditions.push(`LOWER(TRIM(COALESCE(m.name, ''))) = ANY($${values.length})`);
+    }
+  }
+
+  return {
+    joins,
+    conditions,
+    values,
+  };
+}
+
+function buildDistribution(rows = [], fallbackColors = []) {
+  return rows.map((row, index) => ({
+    label: row.label,
+    value: Number(row.value || 0),
+    color: row.color || fallbackColors[index % fallbackColors.length] || "#0B7CFF",
+  }));
+}
+
+function buildMunicipalityDistribution(rows = []) {
+  return rows.map((row) => {
+    const requiredTc = Number(row.required_tc || 0);
+    const contractedTc = Number(row.contracted_tc || 0);
+    const requiredMt = Number(row.required_mt || 0);
+    const contractedMt = Number(row.contracted_mt || 0);
+    const requiredTotal = requiredTc + requiredMt;
+    const contractedTotal = contractedTc + contractedMt;
+    const coveragePercent = requiredTotal > 0
+      ? Math.round((contractedTotal / requiredTotal) * 100)
+      : 0;
+    const hasOperation = requiredTotal > 0;
+
+    return {
+      municipalityId: row.municipality_id ? Number(row.municipality_id) : null,
+      municipalityName: row.municipality_name || "Sin municipio",
+      requiredTc,
+      contractedTc,
+      requiredMt,
+      contractedMt,
+      requiredTotal,
+      contractedTotal,
+      coveragePercent,
+      coverageStatus: resolveCoverageStatus(coveragePercent, hasOperation),
+    };
+  });
+}
+
 function handleDashboardSummary(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
 
@@ -234,6 +410,357 @@ function handleDashboardSummary(req, res, url) {
       municipalitiesList,
     });
   })(req, res, url);
+}
+
+function handleDashboardWorkspaceSummary(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+
+  withModuleProtection(
+    MODULES.DASHBOARD,
+    ACTIONS.VIEW,
+    async (_, innerRes, innerUrl, user, resource) => {
+      if (isDemoUser(user)) {
+        sendJson(innerRes, 200, {
+          ok: true,
+          data: {
+            activeEmployees: 0,
+            requiredTc: 0,
+            contractedTc: 0,
+            requiredMt: 0,
+            contractedMt: 0,
+            required20PercentTc: 0,
+            coveragePercent: 0,
+            coverageStatus: "SIN_OPERACION",
+            coverageByMunicipality: [],
+            employeesByGender: [],
+            employeesByModality: [],
+            employeesByAgeRange: [],
+            employeesByArea: [],
+            birthdaysThisMonth: [],
+            upcomingEvents: [],
+          },
+        });
+        return;
+      }
+
+      const selectedMunicipalityIdRaw =
+        innerUrl.searchParams.get("municipality_id") ||
+        innerUrl.searchParams.get("municipalityId") ||
+        "";
+      const parsedMunicipalityId = selectedMunicipalityIdRaw
+        ? Number(selectedMunicipalityIdRaw)
+        : null;
+      const selectedMunicipalityId = Number.isFinite(parsedMunicipalityId)
+        ? parsedMunicipalityId
+        : null;
+
+      const [
+        presence,
+        employeeColumns,
+      ] = await Promise.all([
+        getTablePresence(),
+        getEmployeeColumnSet(),
+      ]);
+
+      const employeeExpr = buildEmployeeExpressions(employeeColumns);
+      const employeeScope = buildDashboardEmployeeScope({
+        user,
+        resource,
+        selectedMunicipalityId,
+      });
+      const employeeFromSql = `
+        FROM employees e
+        ${employeeScope.joins.join("\n")}
+        WHERE ${employeeScope.conditions.join(" AND ")}
+      `;
+
+      const employeeSummaryQuery = `
+        SELECT
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO') AS active_employees,
+          COUNT(*) FILTER (
+            WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+              AND ${employeeExpr.workdayExpr} = 'TC'
+          ) AS contracted_tc,
+          COUNT(*) FILTER (
+            WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+              AND ${employeeExpr.workdayExpr} = 'MT'
+          ) AS contracted_mt
+        ${employeeFromSql}
+      `;
+
+      const genderQuery = `
+        SELECT
+          CASE
+            WHEN ${employeeExpr.sexExpr} IN ('F', 'FEMENINO', 'MUJER') THEN 'Mujeres'
+            WHEN ${employeeExpr.sexExpr} IN ('M', 'MASCULINO', 'HOMBRE') THEN 'Hombres'
+            ELSE 'Sin dato'
+          END AS label,
+          COUNT(*) AS value
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC, 1 ASC
+      `;
+
+      const modalityQuery = `
+        SELECT
+          ${employeeExpr.modalityExpr} AS label,
+          COUNT(*) AS value
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC, 1 ASC
+      `;
+
+      const ageQuery = `
+        SELECT
+          CASE
+            WHEN ${employeeExpr.birthYearExpr} IS NULL THEN 'Sin dato'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} <= 25 THEN '18-25'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 26 AND 35 THEN '26-35'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 36 AND 45 THEN '36-45'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 46 AND 55 THEN '46-55'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 56 AND 60 THEN '56-60'
+            ELSE '60+'
+          END AS label,
+          COUNT(*) AS value,
+          CASE
+            WHEN ${employeeExpr.birthYearExpr} IS NULL THEN 7
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} <= 25 THEN 1
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 26 AND 35 THEN 2
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 36 AND 45 THEN 3
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 46 AND 55 THEN 4
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 56 AND 60 THEN 5
+            ELSE 6
+          END AS sort_order
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        GROUP BY 1, 3
+        ORDER BY sort_order ASC
+      `;
+
+      const birthdaysQuery = `
+        SELECT
+          e.id,
+          ${employeeExpr.fullNameExpr} AS full_name,
+          ${employeeExpr.positionExpr} AS position_name,
+          m.name AS municipality_name,
+          ${employeeExpr.birthDayExpr} AS birth_day,
+          ${employeeExpr.birthMonthExpr} AS birth_month
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+          AND ${employeeExpr.birthMonthExpr} = EXTRACT(MONTH FROM CURRENT_DATE)::int
+          AND ${employeeExpr.birthDayExpr} BETWEEN 1 AND 31
+        ORDER BY ${employeeExpr.birthDayExpr} ASC, ${employeeExpr.fullNameExpr} ASC
+        LIMIT 12
+      `;
+
+      const employeeTasks = [
+        pool.query(employeeSummaryQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] employeeSummaryQuery falló:", err.message); return { rows: [] }; }),
+        pool.query(genderQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] genderQuery falló:", err.message); return { rows: [] }; }),
+        pool.query(modalityQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] modalityQuery falló:", err.message); return { rows: [] }; }),
+        pool.query(ageQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] ageQuery falló:", err.message); return { rows: [] }; }),
+        pool.query(birthdaysQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] birthdaysQuery falló:", err.message); return { rows: [] }; }),
+      ];
+
+      if (presence.has_positions) {
+        const areaQuery = `
+          SELECT
+            COALESCE(NULLIF(TRIM(p.area), ''), 'Sin area') AS label,
+            COUNT(*) AS value
+          FROM employees e
+          LEFT JOIN municipalities m ON m.id = e.municipality_id
+          INNER JOIN positions p
+            ON p.company_id = e.company_id
+           AND (p.contract_id = e.contract_id OR p.contract_id IS NULL)
+           AND UPPER(TRIM(p.name)) = UPPER(TRIM(${employeeExpr.positionExpr}))
+           AND p.active = true
+          WHERE ${employeeScope.conditions.join(" AND ")}
+            AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+          GROUP BY 1
+          ORDER BY COUNT(*) DESC, 1 ASC
+        `;
+        employeeTasks.push(pool.query(areaQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] areaQuery falló:", err.message); return { rows: [] }; }));
+      }
+
+      const employeeResults = await Promise.all(employeeTasks);
+      const employeeSummary = employeeResults[0].rows[0] || {};
+      const genderRows = employeeResults[1].rows || [];
+      const modalityRows = employeeResults[2].rows || [];
+      const ageRows = employeeResults[3].rows || [];
+      const birthdayRows = employeeResults[4].rows || [];
+      const areaRows = presence.has_positions ? employeeResults[5]?.rows || [] : [];
+
+      let coverageByMunicipality = [];
+      let requiredTc = 0;
+      let requiredMt = 0;
+
+      if (presence.has_coverage_uploads && presence.has_coverage_upload_rows) {
+        const coverageValues = [];
+        const uploadConditions = ["TRUE"];
+        const rowConditions = ["r.upload_id = (SELECT id FROM latest_upload)"];
+        const employeeCoverageConditions = ["TRUE"];
+
+        if (user?.companyId) {
+          coverageValues.push(Number(user.companyId));
+          uploadConditions.push(`u.company_id = $${coverageValues.length}`);
+
+          coverageValues.push(Number(user.companyId));
+          employeeCoverageConditions.push(`e.company_id = $${coverageValues.length}`);
+        }
+
+        if (resource?.contractId) {
+          coverageValues.push(Number(resource.contractId));
+          uploadConditions.push(`u.contract_id = $${coverageValues.length}`);
+
+          coverageValues.push(Number(resource.contractId));
+          employeeCoverageConditions.push(`e.contract_id = $${coverageValues.length}`);
+        }
+
+        if (selectedMunicipalityId) {
+          coverageValues.push(Number(selectedMunicipalityId));
+          rowConditions.push(`LOWER(TRIM(r.municipality)) = (
+            SELECT LOWER(TRIM(name))
+            FROM municipalities
+            WHERE id = $${coverageValues.length}
+            LIMIT 1
+          )`);
+
+          coverageValues.push(Number(selectedMunicipalityId));
+          employeeCoverageConditions.push(`e.municipality_id = $${coverageValues.length}`);
+        }
+
+        const assignedMunicipalities = Array.isArray(user?.assignedMunicipalities)
+          ? user.assignedMunicipalities
+              .map((item) => String(item || "").trim().toLowerCase())
+              .filter(Boolean)
+          : [];
+        if (assignedMunicipalities.length) {
+          coverageValues.push(assignedMunicipalities);
+          rowConditions.push(`LOWER(TRIM(r.municipality)) = ANY($${coverageValues.length})`);
+
+          coverageValues.push(assignedMunicipalities);
+          employeeCoverageConditions.push(`LOWER(TRIM(COALESCE(m.name, ''))) = ANY($${coverageValues.length})`);
+        }
+
+        const coverageQuery = `
+          WITH latest_upload AS (
+            SELECT u.id
+            FROM coverage_uploads u
+            WHERE ${uploadConditions.join(" AND ")}
+            ORDER BY u.created_at DESC, u.id DESC
+            LIMIT 1
+          ),
+          coverage AS (
+            SELECT
+              mun.id AS municipality_id,
+              COALESCE(mun.name, TRIM(r.municipality)) AS municipality_name,
+              COALESCE(SUM(r.required_tc), 0) AS required_tc,
+              COALESCE(SUM(r.required_mt), 0) AS required_mt
+            FROM coverage_upload_rows r
+            LEFT JOIN municipalities mun
+              ON LOWER(TRIM(mun.name)) = LOWER(TRIM(r.municipality))
+            WHERE ${rowConditions.join(" AND ")}
+            GROUP BY mun.id, COALESCE(mun.name, TRIM(r.municipality))
+          ),
+          employees AS (
+            SELECT
+              m.id AS municipality_id,
+              m.name AS municipality_name,
+              COUNT(*) FILTER (
+                WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+                  AND ${employeeExpr.workdayExpr} = 'TC'
+              ) AS contracted_tc,
+              COUNT(*) FILTER (
+                WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+                  AND ${employeeExpr.workdayExpr} = 'MT'
+              ) AS contracted_mt
+            FROM employees e
+            LEFT JOIN municipalities m ON m.id = e.municipality_id
+            WHERE ${employeeCoverageConditions.join(" AND ")}
+            GROUP BY m.id, m.name
+          )
+          SELECT
+            COALESCE(c.municipality_id, emp.municipality_id) AS municipality_id,
+            COALESCE(c.municipality_name, emp.municipality_name) AS municipality_name,
+            COALESCE(c.required_tc, 0) AS required_tc,
+            COALESCE(c.required_mt, 0) AS required_mt,
+            COALESCE(emp.contracted_tc, 0) AS contracted_tc,
+            COALESCE(emp.contracted_mt, 0) AS contracted_mt
+          FROM coverage c
+          FULL OUTER JOIN employees emp
+            ON LOWER(TRIM(COALESCE(emp.municipality_name, ''))) = LOWER(TRIM(COALESCE(c.municipality_name, '')))
+          WHERE COALESCE(c.municipality_name, emp.municipality_name) IS NOT NULL
+          ORDER BY (COALESCE(c.required_tc, 0) + COALESCE(c.required_mt, 0)) DESC,
+                   COALESCE(c.municipality_name, emp.municipality_name) ASC
+        `;
+
+        const coverageResult = await pool.query(coverageQuery, coverageValues).catch(() => null);
+
+        if (coverageResult?.rows?.length) {
+          coverageByMunicipality = buildMunicipalityDistribution(coverageResult.rows);
+          requiredTc = coverageByMunicipality.reduce((sum, item) => sum + item.requiredTc, 0);
+          requiredMt = coverageByMunicipality.reduce((sum, item) => sum + item.requiredMt, 0);
+        }
+      }
+
+      const upcomingEvents = presence.has_calendar_events
+        ? await pool.query(
+            `
+            SELECT id, title, event_date, event_time, description
+            FROM calendar_events
+            WHERE event_date >= CURRENT_DATE
+              ${user?.companyId ? `AND (company_id = $1 OR company_id IS NULL)` : ""}
+            ORDER BY event_date ASC, event_time ASC NULLS LAST
+            LIMIT 8
+            `,
+            user?.companyId ? [Number(user.companyId)] : []
+          ).then(r => r.rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            date: row.event_date,
+            time: row.event_time || null,
+            description: row.description || "",
+          }))).catch(err => { console.error("[dashboard/summary] upcomingEvents falló:", err.message); return []; })
+        : [];
+
+      const contractedTc = Number(employeeSummary.contracted_tc || 0);
+      const contractedMt = Number(employeeSummary.contracted_mt || 0);
+      const totalRequired = requiredTc + requiredMt;
+      const totalContracted = contractedTc + contractedMt;
+      const coveragePercent = totalRequired > 0
+        ? Math.round((totalContracted / totalRequired) * 100)
+        : 0;
+
+      sendJson(innerRes, 200, {
+        ok: true,
+        data: {
+          activeEmployees: Number(employeeSummary.active_employees || 0),
+          requiredTc,
+          contractedTc,
+          requiredMt,
+          contractedMt,
+          required20PercentTc: Math.ceil(requiredTc * 0.2),
+          coveragePercent,
+          coverageStatus: resolveCoverageStatus(coveragePercent, totalRequired > 0),
+          coverageByMunicipality,
+          employeesByGender: buildDistribution(genderRows, ["#8B5CF6", "#0B7CFF", "#CBD5E1"]),
+          employeesByModality: buildDistribution(modalityRows, ["#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6"]),
+          employeesByAgeRange: buildDistribution(ageRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F", "#CBD5E1"]),
+          employeesByArea: buildDistribution(areaRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#8B5CF6", "#F7C948", "#FF4D4F"]),
+          birthdaysThisMonth: birthdayRows.map((row) => ({
+            id: row.id,
+            name: row.full_name,
+            day: Number(row.birth_day || 0),
+            month: Number(row.birth_month || 0),
+            position: row.position_name || "Sin cargo",
+            municipality: row.municipality_name || "Sin municipio",
+          })),
+          upcomingEvents,
+        },
+      });
+    }
+  )(req, res, url);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -783,11 +1310,174 @@ function handleDashboardStaffByCargo(req, res, url) {
   })(req, res, url);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET  /dashboard/events          — lista eventos futuros (todos los roles)
+// POST /dashboard/events          — crear evento (solo administrador)
+// DELETE /dashboard/events/:id   — borrar evento (solo administrador)
+// ─────────────────────────────────────────────────────────────────────────────
+function isAdmin(user) {
+  return String(user.role || "").toLowerCase() === "administrador";
+}
+
+function handleDashboardEvents(req, res, url) {
+  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, innerUrl, user) => {
+
+    // ── GET: listar eventos próximos ──────────────────────────────────────────
+    if (req.method === "GET") {
+      const vals = user.companyId ? [user.companyId] : [];
+      const compFilter = user.companyId
+        ? `AND (company_id = $1 OR company_id IS NULL)`
+        : "";
+      const { rows } = await pool.query(`
+        SELECT id, title, event_date, event_time, description, company_id, created_by
+        FROM calendar_events
+        WHERE event_date >= CURRENT_DATE
+          ${compFilter}
+        ORDER BY event_date ASC, event_time ASC NULLS LAST
+        LIMIT 30
+      `, vals);
+
+      const data = rows.map(r => ({
+        id:          r.id,
+        title:       r.title,
+        date:        r.event_date,           // "YYYY-MM-DD"
+        time:        r.event_time || null,   // "HH:MM:SS" or null
+        description: r.description || "",
+        companyId:   r.company_id,
+        createdBy:   r.created_by,
+      }));
+      sendJson(innerRes, 200, { ok: true, data });
+      return;
+    }
+
+    // ── POST: crear evento (solo admin) ───────────────────────────────────────
+    if (req.method === "POST") {
+      if (!isAdmin(user)) {
+        sendJson(innerRes, 403, { ok: false, message: "Solo los administradores pueden crear eventos" });
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { title, date, time, description } = JSON.parse(body || "{}");
+      if (!title || !date) {
+        sendJson(innerRes, 400, { ok: false, message: "Título y fecha son obligatorios" });
+        return;
+      }
+      const { rows } = await pool.query(`
+        INSERT INTO calendar_events (title, event_date, event_time, description, company_id, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, title, event_date, event_time, description, company_id
+      `, [
+        title.trim(),
+        date,
+        time || null,
+        description?.trim() || null,
+        user.companyId || null,
+        user.name || user.username,
+      ]);
+      sendJson(innerRes, 201, { ok: true, data: rows[0] });
+      return;
+    }
+
+    sendMethodNotAllowed(innerRes);
+  })(req, res, url);
+}
+
+function handleDashboardEventDelete(req, res, url, eventId) {
+  if (req.method !== "DELETE") { sendMethodNotAllowed(res); return; }
+
+  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, _u, user) => {
+    if (!isAdmin(user)) {
+      sendJson(innerRes, 403, { ok: false, message: "Solo los administradores pueden eliminar eventos" });
+      return;
+    }
+    const vals = user.companyId
+      ? [eventId, user.companyId]
+      : [eventId];
+    const compFilter = user.companyId ? "AND (company_id = $2 OR company_id IS NULL)" : "";
+    const { rowCount } = await pool.query(
+      `DELETE FROM calendar_events WHERE id = $1 ${compFilter}`,
+      vals
+    );
+    if (!rowCount) {
+      sendJson(innerRes, 404, { ok: false, message: "Evento no encontrado" });
+      return;
+    }
+    sendJson(innerRes, 200, { ok: true });
+  })(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /dashboard/birthdays?limit=15
+// Devuelve los próximos cumpleaños del personal activo, ordenados por fecha
+// más próxima (hoy primero, luego días siguientes, sin pasados).
+// ─────────────────────────────────────────────────────────────────────────────
+function handleDashboardBirthdays(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+
+  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, innerUrl, user) => {
+    const limit = Math.min(Number(innerUrl.searchParams.get("limit") || 15), 50);
+
+    const compFilter = user.companyId ? `AND company_id = $1` : "";
+    const vals       = user.companyId ? [user.companyId] : [];
+
+    // sort_key: mes*100+dia para este año si aún no pasó, si ya pasó +1300 para
+    // que quede al final y aparezca como "próximo año".
+    // Se excluyen días 29-31 en febrero para evitar make_date errors.
+    const { rows } = await pool.query(`
+      SELECT
+        TRIM(COALESCE(e.first_name,'') || ' ' || COALESCE(e.first_last_name,'')) AS name,
+        e.birth_day   AS day,
+        e.birth_month AS month,
+        e.cargo,
+        m.name AS municipality_name,
+        CASE
+          WHEN (e.birth_month > EXTRACT(MONTH FROM CURRENT_DATE)::int)
+            OR (e.birth_month  = EXTRACT(MONTH FROM CURRENT_DATE)::int
+                AND e.birth_day >= EXTRACT(DAY  FROM CURRENT_DATE)::int)
+          THEN e.birth_month * 100 + e.birth_day
+          ELSE e.birth_month * 100 + e.birth_day + 1300
+        END AS sort_key
+      FROM employees e
+      LEFT JOIN municipalities m ON m.id = e.municipality_id
+      WHERE UPPER(TRIM(e.status)) = 'ACTIVO'
+        AND e.birth_day   BETWEEN 1 AND 28
+        AND e.birth_month BETWEEN 1 AND 12
+        ${compFilter.replace('company_id', 'e.company_id')}
+      ORDER BY sort_key ASC
+      LIMIT $${vals.length + 1}
+    `, [...vals, limit]);
+
+    const today = new Date();
+    const todayMonth = today.getMonth() + 1;
+    const todayDay   = today.getDate();
+
+    const data = rows.map(r => {
+      const sortKey = Number(r.sort_key);
+      const isToday = Number(r.month) === todayMonth && Number(r.day) === todayDay;
+      const targetYear = sortKey > 1300
+        ? today.getFullYear() + 1
+        : today.getFullYear();
+      const date = `${String(r.day).padStart(2,"0")}/${String(r.month).padStart(2,"0")}/${targetYear}`;
+      const daysUntil = isToday
+        ? 0
+        : Math.round((new Date(targetYear, Number(r.month) - 1, Number(r.day)) - today) / 86400000);
+      return { name: r.name, day: Number(r.day), month: Number(r.month), date, daysUntil, isToday, cargo: r.cargo || null, municipality: r.municipality_name || null };
+    });
+
+    sendJson(innerRes, 200, { ok: true, data });
+  })(req, res, url);
+}
+
 module.exports = {
   handleDashboardSummary,
+  handleDashboardWorkspaceSummary,
   handleDashboardKpis,
   handleDashboardAlerts,
   handleDashboardCoverageMap,
   handleDashboardRecentActivity,
   handleDashboardStaffByCargo,
+  handleDashboardBirthdays,
+  handleDashboardEvents,
+  handleDashboardEventDelete,
 };
