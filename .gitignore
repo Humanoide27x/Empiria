@@ -27,3 +27,8 @@ EMPIRIA-SECRETS.txt
 # OS
 .DS_Store
 Thumbs.db
+
+AnyDesk.exe
+gcapi.dll
+empiria_backup.dump
+empiria_db_sql

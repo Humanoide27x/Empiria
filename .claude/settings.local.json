@@ -62,7 +62,9 @@
       "Bash(findstr /n \"personnel\\\\|handlePersonnel\" src\\\\server.js)",
       "Bash(grep -r \"sisben\\\\|residence_certificate\\\\|presented_in_offer\\\\|residence_municipality\\\\|sisben_exp_date\" src/ --include=\"*.sql\")",
       "Bash(grep -r \"sisben\" src/db/ --include=\"*.js\" -l)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)"
     ]
   }
 }
