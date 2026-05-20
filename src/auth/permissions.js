@@ -34,6 +34,8 @@ const MODULES = Object.freeze({
 
   RESUME_REPOSITORY: "repositorio_hojas_vida",
   HV_REPOSITORY: "repositorio_hojas_vida",
+
+  DASHBOARD_HR: "dashboard_hr",
 });
 
 const ACTIONS = Object.freeze({
@@ -250,6 +252,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.ALL,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_MANAGEMENT]: EMPLOYEE_MANAGEMENT_PERMISSIONS,
 
@@ -284,6 +287,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_MANAGEMENT]: EMPLOYEE_MANAGEMENT_PERMISSIONS,
 
@@ -336,6 +340,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
@@ -378,6 +383,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
@@ -417,6 +423,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     linkedScope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.COVERAGE]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE],
@@ -462,6 +469,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.ALL_COMPANIES,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW],
@@ -489,6 +497,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
+      [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },
 
       [MODULES.EMPLOYEE_FILES]: {
         allowedActions: [ACTIONS.VIEW, ACTIONS.FILTER],

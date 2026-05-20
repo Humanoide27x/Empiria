@@ -64,7 +64,12 @@
       "Bash(grep -r \"sisben\" src/db/ --include=\"*.js\" -l)",
       "Bash(kill %1)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Recurse -Depth 2)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\public\" -Recurse -Force)",
+      "PowerShell(head *)",
+      "Bash(grep -n \"return \\\\`\" /c/Users/danie/Desktop/Empiria/public/js/modules/coverage.js)",
+      "Bash(grep -E \"^\\\\..*\\\\{\" /c/Users/danie/Desktop/Empiria/public/styles.css)",
+      "Bash(xargs grep -l \"moduleViews\\\\|dashboard\")"
     ]
   }
 }

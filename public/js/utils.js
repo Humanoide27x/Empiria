@@ -149,6 +149,11 @@ export function getModuleMeta(moduleKey) {
       // LayoutGrid — 4 paneles = vista general
       icon: iconSvg(`<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>`),
     },
+    dashboard_hr: {
+      label: "Dashboard HR",
+      // Activity — pulso / indicadores de personal
+      icon: iconSvg(`<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>`),
+    },
     gestion_personal: {
       label: "Gestión del Personal",
       // Users — grupo de personas

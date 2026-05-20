@@ -583,13 +583,47 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         employeeTasks.push(pool.query(areaQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] areaQuery falló:", err.message); return { rows: [] }; }));
       }
 
-      const employeeResults = await Promise.all(employeeTasks);
+      // Optional document-compliance queries (columns may not exist in all deployments)
+      const hasSisben       = employeeColumns.has("sisben");
+      const hasResidenceCert = employeeColumns.has("residence_certificate");
+      const sisbenExpExpr   = employeeColumns.has("sisben_expiry")
+        ? "e.sisben_expiry"
+        : employeeColumns.has("sisben_exp_date") ? "e.sisben_exp_date" : "NULL::date";
+      const certExpExpr     = employeeColumns.has("residence_certificate_expiry")
+        ? "e.residence_certificate_expiry" : "NULL::date";
+
+      const [employeeResults, sisbenResult, certResult] = await Promise.all([
+        Promise.all(employeeTasks),
+        hasSisben
+          ? pool.query(`
+              SELECT
+                COUNT(*) FILTER (WHERE e.sisben = true  AND (${sisbenExpExpr} IS NULL OR ${sisbenExpExpr} >= CURRENT_DATE)) AS vigente,
+                COUNT(*) FILTER (WHERE (e.sisben IS NULL OR e.sisben = false))                                              AS sin_sisben,
+                COUNT(*) FILTER (WHERE e.sisben = true  AND ${sisbenExpExpr} IS NOT NULL AND ${sisbenExpExpr} < CURRENT_DATE) AS vencido
+              ${employeeFromSql}
+                AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+            `, employeeScope.values).catch(err => { console.error("[dashboard/summary] sisbenQuery falló:", err.message); return { rows: [{}] }; })
+          : Promise.resolve({ rows: [{}] }),
+        hasResidenceCert
+          ? pool.query(`
+              SELECT
+                COUNT(*) FILTER (WHERE e.residence_certificate = true  AND (${certExpExpr} IS NULL OR ${certExpExpr} >= CURRENT_DATE)) AS vigente,
+                COUNT(*) FILTER (WHERE (e.residence_certificate IS NULL OR e.residence_certificate = false))                           AS sin_certificado,
+                COUNT(*) FILTER (WHERE e.residence_certificate = true  AND ${certExpExpr} IS NOT NULL AND ${certExpExpr} < CURRENT_DATE) AS vencido
+              ${employeeFromSql}
+                AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+            `, employeeScope.values).catch(err => { console.error("[dashboard/summary] certQuery falló:", err.message); return { rows: [{}] }; })
+          : Promise.resolve({ rows: [{}] }),
+      ]);
+
       const employeeSummary = employeeResults[0].rows[0] || {};
-      const genderRows = employeeResults[1].rows || [];
+      const genderRows   = employeeResults[1].rows || [];
       const modalityRows = employeeResults[2].rows || [];
-      const ageRows = employeeResults[3].rows || [];
+      const ageRows      = employeeResults[3].rows || [];
       const birthdayRows = employeeResults[4].rows || [];
-      const areaRows = presence.has_positions ? employeeResults[5]?.rows || [] : [];
+      const areaRows     = presence.has_positions ? employeeResults[5]?.rows || [] : [];
+      const sisbenRow    = sisbenResult.rows[0] || {};
+      const certRow      = certResult.rows[0] || {};
 
       let coverageByMunicipality = [];
       let requiredTc = 0;
@@ -757,6 +791,16 @@ function handleDashboardWorkspaceSummary(req, res, url) {
             municipality: row.municipality_name || "Sin municipio",
           })),
           upcomingEvents,
+          sisbenStats: {
+            vigente:   Number(sisbenRow.vigente    || 0),
+            sinSisben: Number(sisbenRow.sin_sisben  || 0),
+            vencido:   Number(sisbenRow.vencido    || 0),
+          },
+          residenceCertStats: {
+            vigente:        Number(certRow.vigente         || 0),
+            sinCertificado: Number(certRow.sin_certificado || 0),
+            vencido:        Number(certRow.vencido         || 0),
+          },
         },
       });
     }

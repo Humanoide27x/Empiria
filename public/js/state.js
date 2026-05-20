@@ -115,6 +115,10 @@ export const moduleViews = {
     title: "Dashboard",
     submodules: [],
   },
+  dashboard_hr: {
+    title: "Dashboard HR Operacional",
+    submodules: [],
+  },
   gestion_personal: {
     title: "Gestión del Personal",
     submodules: [],
