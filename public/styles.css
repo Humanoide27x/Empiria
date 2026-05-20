@@ -2046,10 +2046,15 @@ tr:hover {
 .figma-form-actions,
 .personnel-figma-shell-dark .figma-form-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 6px;
   padding-top: 6px;
+}
+.personnel-form-actions .age-indicator {
+  margin-top: 0;
+  margin-right: auto;
 }
 
 .primary-soft-btn,

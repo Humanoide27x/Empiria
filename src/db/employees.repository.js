@@ -253,6 +253,8 @@ function mapEmployee(row) {
 
     residenceMunicipality: row.residence_municipality || "",
     municipio_residencia:  row.residence_municipality || "",
+    residenceZone:         row.residence_zone         || "",
+    zona_residencia:       row.residence_zone         || "",
 
     educationalMunicipality: row.educational_municipality_name || "",
 
@@ -279,11 +281,19 @@ function mapEmployee(row) {
     sisben: Boolean(row.sisben),
     sisbenCategory: row.sisben_category || "",
     sisben_categoria: row.sisben_category || "",
+    sisbenIssueDate: row.sisben_exp_date || "",
+    sisben_exp_date: row.sisben_exp_date || "",
+    sisbenExpirationDate: row.sisben_expiry || "",
     sisbenExpiry: row.sisben_expiry || "",
     sisben_expiry: row.sisben_expiry || "",
 
     residenceCertificate: Boolean(row.residence_certificate),
+    hasResidenceCertificate: Boolean(row.residence_certificate),
+    residenceCertificateIssueDate: row.residence_certificate_issue_date || "",
+    residence_certificate_issue_date: row.residence_certificate_issue_date || "",
+    residenceCertificateExpiration: row.residence_certificate_expiry || "",
     residenceCertificateExpiry: row.residence_certificate_expiry || "",
+    residence_certificate_expiry: row.residence_certificate_expiry || "",
 
     presentedInOffer: Boolean(row.presented_in_offer),
     presented_in_offer: Boolean(row.presented_in_offer),
@@ -559,6 +569,8 @@ async function updateEmployee(id, data) {
   }
 
   console.log(`[updateEmployee] id=${id} rawSite="${rawSiteName ? String(rawSiteName).slice(0,40) : '—'}" institutionId=${institutionId} resolvedSiteId=${siteId}`);
+  console.log(`[updateEmployee] sisben fields: sisben=${data.sisben} cat=${data.sisbenCategory} issue=${data.sisbenIssueDate} exp=${data.sisbenExpirationDate}`);
+  console.log(`[updateEmployee] residence cert: has=${data.hasResidenceCertificate} issue=${data.residenceCertificateIssueDate} exp=${data.residenceCertificateExpiration}`);
 
   const result = await pool.query(
     `UPDATE employees SET
@@ -585,6 +597,8 @@ async function updateEmployee(id, data) {
       food_handling_course_issue_date = $57, food_handling_course_expiry_date = $58,
       food_handling_exam_issue_date = $59, food_handling_exam_expiry_date = $60,
       start_date = $61, municipios_a_cargo = $62,
+      residence_zone = $63,
+      residence_certificate_issue_date = $64,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *`,
@@ -636,7 +650,7 @@ async function updateEmployee(id, data) {
       data.shirtSize || "",
       data.pantsSize || "",
       data.shoeSize  || "",
-      // New fields ($48–$61)
+      // New fields ($48–$63)
       data.residenceMunicipality || data.municipio_residencia || "",
       String(data.sisben) === "true",
       data.sisbenCategory || data.sisben_categoria || "",
@@ -652,6 +666,8 @@ async function updateEmployee(id, data) {
       safeDate(data.foodHandlingExamExpirationDate || data.food_handling_exam_expiry_date),
       safeDate(data.startDate || data.start_date),
       data.municipiosACargo || data.municipios_a_cargo || "",
+      data.residenceZone || data.zona_residencia || "",
+      safeDate(data.residenceCertificateIssueDate || data.residence_certificate_issue_date),
     ]
   );
 

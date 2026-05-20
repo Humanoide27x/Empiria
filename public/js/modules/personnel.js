@@ -707,6 +707,13 @@ function _refreshPersonnelSection() {
 
   sectionEl.innerHTML = html;
 
+  const ageSlot = document.getElementById("personnelAgeSlot");
+  if (ageSlot) {
+    ageSlot.innerHTML = activeTab === "identificacion"
+      ? buildAgeIndicator(dv("birthDay"), dv("birthMonth"), dv("birthYear"))
+      : "";
+  }
+
   // Update tab buttons in-place (no DOM replacement)
   document.querySelectorAll("[data-step-tab]").forEach(btn => {
     const key = btn.dataset.stepTab;
@@ -1004,8 +1011,6 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
           </select>
         </label>
       </div>
-
-      ${buildAgeIndicator(draftValue("birthDay"), draftValue("birthMonth"), draftValue("birthYear"))}
     </section>
   `;
 }
@@ -1470,15 +1475,18 @@ function _addMonths(dateStr, months) {
 }
 
 function buildTabSeguimiento(draftValue) {
-  const hasSisben      = String(draftValue("sisben", "")) === "true";
-  const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true";
+  const hasSisben = String(draftValue("sisben", "")) === "true"
+    || !!draftValue("sisbenCategory")
+    || !!draftValue("sisbenIssueDate");
+  const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true"
+    || !!draftValue("residenceCertificateIssueDate")
+    || !!draftValue("residenceCertificateExpiration");
 
   const SISBEN_CATEGORIES = ["A1","A2","A3","B1","B2","B3","B4","B5","B6","B7","C1","C2","C3","C4","C5","C6","C7","C8","C9","C10","C11","C12","C13","C14","C15","C16","C17","C18","D1","D2","D3","D4","D5","D6","D7","D8","D9","D10","D11","D12","D13","D14","D15","D16","D17","D18","D19","D20","D21"];
 
-  const currentCat = draftValue("sisbenCategory") || "";
+  const currentCat   = draftValue("sisbenCategory") || "";
   const currentIssue = draftValue("sisbenIssueDate") || "";
-  const autoExpiry = _addMonths(currentIssue, 3);
-  const currentExpiry = draftValue("sisbenExpirationDate") || autoExpiry;
+  const currentExpiry = draftValue("sisbenExpirationDate") || _addMonths(currentIssue, 4);
 
   const sisbenBlock = hasSisben ? `
     <div class="subsection-title">Datos del SISBEN</div>
@@ -1492,26 +1500,32 @@ function buildTabSeguimiento(draftValue) {
       </label>
       <label>
         <span>Fecha de expedición SISBEN</span>
-        <input name="sisbenIssueDate" type="date" value="${escapeAttr(currentIssue)}"
-          onchange="(function(el){var exp=document.querySelector('[name=sisbenExpirationDate]');if(exp&&!exp.value){var d=new Date(el.value+'T00:00:00');d.setMonth(d.getMonth()+3);exp.value=d.toISOString().slice(0,10);}})(this)" />
+        <input name="sisbenIssueDate" type="date" value="${escapeAttr(currentIssue)}" />
       </label>
       <label>
-        <span>Fecha de vencimiento SISBEN</span>
-        <input name="sisbenExpirationDate" type="date" value="${escapeAttr(currentExpiry)}" />
+        <span>Vencimiento SISBEN <small style="color:var(--text-faint);font-weight:400">(auto · 4 meses)</small></span>
+        <input name="sisbenExpirationDate" type="date" readonly
+          style="background:var(--input-bg,#f1f5f9);cursor:default"
+          value="${escapeAttr(currentExpiry)}" />
       </label>
     </div>
   ` : "";
+
+  const currentResidIssue  = draftValue("residenceCertificateIssueDate") || "";
+  const currentResidExpiry = draftValue("residenceCertificateExpiration") || _addMonths(currentResidIssue, 6);
 
   const residCertBlock = hasResidenceCert ? `
     <div class="subsection-title">Datos del certificado de residencia</div>
     <div class="form-grid form-grid-2">
       <label>
         <span>Fecha de expedición</span>
-        <input name="residenceCertificateIssueDate" type="date" value="${escapeAttr(draftValue("residenceCertificateIssueDate"))}" />
+        <input name="residenceCertificateIssueDate" type="date" value="${escapeAttr(currentResidIssue)}" />
       </label>
       <label>
-        <span>Fecha de vencimiento</span>
-        <input name="residenceCertificateExpiration" type="date" value="${escapeAttr(draftValue("residenceCertificateExpiration"))}" />
+        <span>Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto · 6 meses)</small></span>
+        <input name="residenceCertificateExpiration" type="date" readonly
+          style="background:var(--input-bg,#f1f5f9);cursor:default"
+          value="${escapeAttr(currentResidExpiry)}" />
       </label>
     </div>
   ` : "";
@@ -1575,8 +1589,9 @@ function buildTabEstudios(draftValue) {
               value="${escapeAttr(draftValue("foodHandlingCourseIssueDate"))}" />
           </label>
           <label>
-            <span>Curso · Fecha de vencimiento</span>
-            <input name="foodHandlingCourseExpirationDate" type="date"
+            <span>Curso · Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto)</small></span>
+            <input name="foodHandlingCourseExpirationDate" type="date" readonly
+              style="background:var(--input-bg,#f1f5f9);cursor:default"
               value="${escapeAttr(draftValue("foodHandlingCourseExpirationDate"))}" />
           </label>
           <label>
@@ -1585,8 +1600,9 @@ function buildTabEstudios(draftValue) {
               value="${escapeAttr(draftValue("foodHandlingExamIssueDate"))}" />
           </label>
           <label>
-            <span>Exámenes · Fecha de vencimiento</span>
-            <input name="foodHandlingExamExpirationDate" type="date"
+            <span>Exámenes · Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto)</small></span>
+            <input name="foodHandlingExamExpirationDate" type="date" readonly
+              style="background:var(--input-bg,#f1f5f9);cursor:default"
               value="${escapeAttr(draftValue("foodHandlingExamExpirationDate"))}" />
           </label>
         </div>
@@ -1945,6 +1961,46 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
       syncPersonnelDraftField(e.target);
 
+      // Auto-vencimiento SISBEN (+4 meses) y certificado de residencia (+6 meses)
+      if (e.target.name === "sisbenIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value + "T00:00:00");
+        exp.setMonth(exp.getMonth() + 4);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.sisbenExpirationDate = expStr;
+        const expInput = form.querySelector('[name="sisbenExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+      if (e.target.name === "residenceCertificateIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value + "T00:00:00");
+        exp.setMonth(exp.getMonth() + 6);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.residenceCertificateExpiration = expStr;
+        const expInput = form.querySelector('[name="residenceCertificateExpiration"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+
+      // Auto-vencimiento manipulación de alimentos (+1 año)
+      if (e.target.name === "foodHandlingCourseIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value);
+        exp.setFullYear(exp.getFullYear() + 1);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.foodHandlingCourseExpirationDate = expStr;
+        const expInput = form.querySelector('[name="foodHandlingCourseExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+      if (e.target.name === "foodHandlingExamIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value);
+        exp.setFullYear(exp.getFullYear() + 1);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.foodHandlingExamExpirationDate = expStr;
+        const expInput = form.querySelector('[name="foodHandlingExamExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+
       // Calculadora de días de experiencia
       if (e.target.id === "expFechaInicio" || e.target.id === "expFechaFin") {
         const inicio = document.getElementById("expFechaInicio")?.value;
@@ -2200,6 +2256,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <div id="personnelActiveSection">${activeSectionHtml}</div>
 
             <div class="personnel-form-actions">
+              <div id="personnelAgeSlot">${activeTab === "identificacion" ? buildAgeIndicator(draftValue("birthDay"), draftValue("birthMonth"), draftValue("birthYear")) : ""}</div>
               <button type="submit" class="primary-soft-btn">
                 ${isEditMode ? "Guardar cambios" : "Crear empleado"}
               </button>
@@ -2385,16 +2442,25 @@ function hydratePersonnelDraft(found) {
     compensationBox: found.caja_compensacion || found.compensationBox || found.compensation_box || "COFREM",
     arl:             found.arl             || "SURA",
 
-    sisben:              found.sisben_tiene != null ? String(found.sisben_tiene) : (found.sisben != null ? String(found.sisben) : ""),
-    sisbenCategory:      found.sisben_categoria || found.sisbenCategory || "",
-    sisbenIssueDate:     fmtDate(found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date),
+    sisbenCategory:       found.sisben_categoria || found.sisbenCategory || "",
+    sisbenIssueDate:      fmtDate(found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date),
     sisbenExpirationDate: fmtDate(found.sisbenExpirationDate || found.sisben_expiration_date || found.sisben_expiry),
+    sisben: (() => {
+      const raw = found.sisben_tiene != null ? String(found.sisben_tiene) : (found.sisben != null ? String(found.sisben) : "");
+      const cat = found.sisben_categoria || found.sisbenCategory || "";
+      const iss = found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date || "";
+      return raw === "true" || !!cat || !!iss ? "true" : raw;
+    })(),
 
-    hasResidenceCertificate: found.hasResidenceCertificate || found.has_residence_certificate || "",
     residenceCertificateIssueDate:
       fmtDate(found.residenceCertificateIssueDate || found.residence_certificate_issue_date),
     residenceCertificateExpiration:
       fmtDate(found.residenceCertificateExpiration || found.residence_certificate_expiration || found.residence_certificate_expiry),
+    hasResidenceCertificate: (() => {
+      const raw = found.hasResidenceCertificate || found.has_residence_certificate || "";
+      const iss = found.residenceCertificateIssueDate || found.residence_certificate_issue_date || "";
+      return raw === "true" || !!iss ? "true" : raw;
+    })(),
 
     foodHandlingCourseIssueDate:
       fmtDate(found.foodHandlingCourseIssueDate || found.food_handling_course_issue_date),

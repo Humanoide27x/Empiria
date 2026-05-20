@@ -135,7 +135,11 @@ function mapEmployee(row) {
 
     municipality: row.municipality_name || row.municipality_id || "",
     municipio: row.municipality_name || row.municipality_id || "",
-    municipio_residencia: row.municipality_name || row.municipality_id || "",
+
+    residenceMunicipality: row.residence_municipality || "",
+    municipio_residencia:  row.residence_municipality || "",
+    residenceZone:         row.residence_zone         || "",
+    zona_residencia:       row.residence_zone         || "",
 
     institutionId: row.institution_id || null,
     institution_id: row.institution_id || null,
