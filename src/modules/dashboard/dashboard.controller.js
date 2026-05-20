@@ -801,12 +801,22 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           employeeCoverageConditions.push(`LOWER(TRIM(COALESCE(m.name, ''))) = ANY($${coverageValues.length})`);
         }
 
+        // Priority param: pick the upload whose period_month matches the selected period;
+        // fall back to NULL-period uploads (old data), then any upload as last resort.
+        coverageValues.push(`${refYear}-${refMonthStr}`);
+        const periodParamIdx = coverageValues.length;
+
         const coverageQuery = `
           WITH latest_upload AS (
             SELECT u.id
             FROM coverage_uploads u
             WHERE ${uploadConditions.join(" AND ")}
-            ORDER BY u.created_at DESC, u.id DESC
+            ORDER BY
+              CASE WHEN u.period_month = $${periodParamIdx}                        THEN 0
+                   WHEN (u.period_month IS NULL OR TRIM(u.period_month) = '')       THEN 1
+                   ELSE 9
+              END ASC,
+              u.created_at DESC, u.id DESC
             LIMIT 1
           ),
           coverage AS (
