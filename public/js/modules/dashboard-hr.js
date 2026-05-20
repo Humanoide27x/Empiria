@@ -1317,7 +1317,7 @@ function buildStyles() {
 #${ROOT_ID} .hr-legend{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center;}
 #${ROOT_ID} .hr-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-text);}
 #${ROOT_ID} .hr-legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
-#${ROOT_ID} .hr-legend-label{flex:1;font-size:12px;}
+#${ROOT_ID} .hr-legend-label{font-size:12px;}
 #${ROOT_ID} .hr-legend-val{font-size:12px;font-weight:600;color:var(--c-text);white-space:nowrap;}
 
 /* ── Age bar chart ── */
