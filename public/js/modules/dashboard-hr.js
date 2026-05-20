@@ -408,32 +408,30 @@ function buildGauge(d) {
     <div class="hr-gauge-status" style="color:${sm.color}">
       <span class="hr-gauge-dot" style="background:${sm.color}"></span>${sm.label}
     </div>
-    <div class="hr-gauge-detail">
-      <span>TC <strong>${fmtN(d.tcCont)}</strong>/<strong>${fmtN(d.tcReq)}</strong></span>
-      <span class="hr-gauge-sep">·</span>
-      <span>MT <strong>${fmtN(d.mtCont)}</strong>/<strong>${fmtN(d.mtReq)}</strong></span>
-    </div>
   </div>`;
 }
 
 function buildCoverageModal(d) {
   const items = (d.coverageByMunicipality || [])
-    .filter(m => (m.requiredTotal > 0) || (m.contractedTotal > 0));
+    .filter(m => (m.requiredTotal > 0) || (m.contractedTotal > 0))
+    .filter(m => String(m.municipalityName || "").trim().toUpperCase() !== "VILLAVICENCIO")
+    .sort((a, b) => String(a.municipalityName || "").localeCompare(String(b.municipalityName || ""), "es"));
 
   const rows = items.map(m => {
-    const pct    = Number(m.coveragePercent || 0);
-    const st     = String(m.coverageStatus || "").toUpperCase();
-    const color  = st === "ESTABLE" ? "#2ECF9A" : st === "ALERTA" ? "#F7C948" : st === "SIN_OPERACION" ? "#94A3B8" : "#FF4D4F";
-    const label  = st === "ESTABLE" ? "Estable" : st === "ALERTA" ? "Alerta" : st === "SIN_OPERACION" ? "Sin op." : "Crítico";
-    const barW   = Math.min(pct, 100);
+    const pct   = Number(m.coveragePercent || 0);
+    const st    = String(m.coverageStatus || "").toUpperCase();
+    const color = st === "ESTABLE" ? "#2ECF9A" : st === "ALERTA" ? "#F7C948" : st === "SIN_OPERACION" ? "#94A3B8" : "#FF4D4F";
+    const label = st === "ESTABLE" ? "Estable" : st === "ALERTA" ? "Alerta" : st === "SIN_OPERACION" ? "Sin op." : "Crítico";
     return `
-    <div class="hr-cov-row">
-      <div class="hr-cov-name">${escapeHtml(m.municipalityName || "—")}</div>
-      <div class="hr-cov-bar-track"><div class="hr-cov-bar-fill" style="width:${barW}%;background:${color}"></div></div>
-      <div class="hr-cov-pct" style="color:${color}">${pct}%</div>
-      <div class="hr-cov-nums">TC ${fmtN(m.contractedTc)}/${fmtN(m.requiredTc)} · MT ${fmtN(m.contractedMt)}/${fmtN(m.requiredMt)}</div>
-      <span class="hr-cov-badge" style="color:${color};background:${color}18">${label}</span>
-    </div>`;
+    <tr>
+      <td class="hr-cov-tname">${escapeHtml(m.municipalityName || "—")}</td>
+      <td class="hr-cov-tnum">${fmtN(m.requiredTc)}</td>
+      <td class="hr-cov-tnum" style="color:${Number(m.contractedTc)<Number(m.requiredTc)?"#FF4D4F":"inherit"}">${fmtN(m.contractedTc)}</td>
+      <td class="hr-cov-tnum">${fmtN(m.requiredMt)}</td>
+      <td class="hr-cov-tnum" style="color:${Number(m.contractedMt)<Number(m.requiredMt)?"#FF4D4F":"inherit"}">${fmtN(m.contractedMt)}</td>
+      <td class="hr-cov-tpct" style="color:${color}">${pct}%</td>
+      <td><span class="hr-cov-badge" style="color:${color};background:${color}18">${label}</span></td>
+    </tr>`;
   }).join("");
 
   return `
@@ -442,16 +440,30 @@ function buildCoverageModal(d) {
       <div class="hr-cov-modal-hdr">
         <div>
           <h2 class="hr-cov-modal-ttl">Cobertura por Municipio</h2>
-          <p class="hr-cov-modal-sub">${items.length} municipio(s) con operación</p>
+          <p class="hr-cov-modal-sub">${items.length} municipio(s) con operación — ordenado A-Z</p>
         </div>
         <button type="button" class="hr-cov-modal-close" id="hrCovModalClose" aria-label="Cerrar">✕</button>
       </div>
       <div class="hr-cov-modal-body">
-        ${rows || '<p class="hr-empty" style="padding:20px 0">Sin datos de cobertura disponibles</p>'}
+        ${items.length ? `
+        <table class="hr-cov-table">
+          <thead>
+            <tr>
+              <th class="hr-cov-th-name">Municipio</th>
+              <th>TC Req.</th>
+              <th>TC Cont.</th>
+              <th>MT Req.</th>
+              <th>MT Cont.</th>
+              <th>%</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>` : '<p class="hr-empty" style="padding:20px 0">Sin datos de cobertura disponibles</p>'}
       </div>
     </div>
-  </div>`
-;}
+  </div>`;
+}
 
 function buildComplianceCard({ title, vigente, proximo, vencido, total, inactivos = 0, docLabel }) {
   const conDoc = vigente + proximo + vencido;
@@ -1205,19 +1217,22 @@ function buildStyles() {
   transition:background .15s,color .15s;
 }
 #${ROOT_ID} .hr-cov-modal-close:hover{background:var(--c-red);color:#fff;border-color:var(--c-red);}
-#${ROOT_ID} .hr-cov-modal-body{overflow-y:auto;padding:16px 24px 20px;display:flex;flex-direction:column;gap:10px;}
-#${ROOT_ID} .hr-cov-row{
-  display:grid;grid-template-columns:160px 1fr 44px 130px 72px;
-  align-items:center;gap:10px;padding:8px 10px;
-  border-radius:8px;background:#F8F9FB;font-size:12px;
+#${ROOT_ID} .hr-cov-modal-body{overflow-y:auto;padding:0 24px 20px;}
+#${ROOT_ID} .hr-cov-table{width:100%;border-collapse:collapse;font-size:12px;}
+#${ROOT_ID} .hr-cov-table thead th{
+  padding:10px 10px;text-align:center;font-weight:600;font-size:11px;
+  color:var(--c-muted);border-bottom:2px solid var(--c-border);
+  white-space:nowrap;position:sticky;top:0;background:#fff;z-index:1;
 }
-#${ROOT_ID} .hr-cov-row:hover{background:#F1F5F9;}
-#${ROOT_ID} .hr-cov-name{font-weight:600;color:var(--c-text);font-size:12px;white-space:normal;word-break:break-word;}
-#${ROOT_ID} .hr-cov-bar-track{height:7px;border-radius:99px;background:#E2E8F0;overflow:hidden;}
-#${ROOT_ID} .hr-cov-bar-fill{height:100%;border-radius:99px;transition:width .5s;}
-#${ROOT_ID} .hr-cov-pct{font-size:12px;font-weight:700;text-align:right;white-space:nowrap;}
-#${ROOT_ID} .hr-cov-nums{font-size:10.5px;color:var(--c-muted);white-space:nowrap;}
-#${ROOT_ID} .hr-cov-badge{font-size:10px;font-weight:600;border-radius:99px;padding:2px 7px;text-align:center;white-space:nowrap;}
+#${ROOT_ID} .hr-cov-th-name{text-align:left!important;}
+#${ROOT_ID} .hr-cov-table tbody tr{border-bottom:1px solid #F1F5F9;transition:background .12s;}
+#${ROOT_ID} .hr-cov-table tbody tr:last-child{border-bottom:none;}
+#${ROOT_ID} .hr-cov-table tbody tr:hover{background:#F8F9FB;}
+#${ROOT_ID} .hr-cov-table tbody td{padding:9px 10px;vertical-align:middle;text-align:center;}
+#${ROOT_ID} .hr-cov-tname{text-align:left!important;font-weight:600;color:var(--c-text);font-size:12px;}
+#${ROOT_ID} .hr-cov-tnum{font-variant-numeric:tabular-nums;font-size:12px;}
+#${ROOT_ID} .hr-cov-tpct{font-weight:700;font-size:12px;white-space:nowrap;}
+#${ROOT_ID} .hr-cov-badge{font-size:10px;font-weight:600;border-radius:99px;padding:2px 7px;text-align:center;white-space:nowrap;display:inline-block;}
 
 /* ── Compliance counters ── */
 #${ROOT_ID} .hr-c3-grid{
