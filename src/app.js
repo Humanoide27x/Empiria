@@ -91,6 +91,11 @@ app.use(express.static(PUBLIC_DIR, {
   maxAge:     IS_PROD ? "1d" : 0,
   etag:       true,
   lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (/\.(js|mjs)$/.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache");
+    }
+  },
 }));
 
 // ── Módulos Express nativos ───────────────────────────────────────────────────
