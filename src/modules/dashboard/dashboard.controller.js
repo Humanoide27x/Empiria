@@ -92,9 +92,11 @@ function buildEmployeeExpressions(employeeColumns) {
     ? `UPPER(TRIM(COALESCE(e.workday_type, '')))`
     : `''`;
 
-  const sexExpr = has("sex")
-    ? `UPPER(TRIM(COALESCE(e.sex, '')))`
-    : `''`;
+  const sexExpr = has("biological_sex")
+    ? `UPPER(TRIM(COALESCE(e.biological_sex, '')))`
+    : has("sex")
+      ? `UPPER(TRIM(COALESCE(e.sex, '')))`
+      : `''`;
 
   const modalityExpr = has("modality")
     ? `COALESCE(NULLIF(TRIM(e.modality), ''), 'Sin modalidad')`
@@ -454,6 +456,17 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ? parsedMunicipalityId
         : null;
 
+      const personnelType = (innerUrl.searchParams.get("type") || "").toLowerCase().trim();
+
+      const now          = new Date();
+      const refMonth     = Math.min(12, Math.max(1, Number(innerUrl.searchParams.get("month")) || (now.getMonth() + 1)));
+      const refYear      = Math.min(2100, Math.max(2000, Number(innerUrl.searchParams.get("year"))  || now.getFullYear()));
+      const refMonthStr  = String(refMonth).padStart(2, "0");
+      const refStart     = `${refYear}-${refMonthStr}-01`;
+      const refEnd       = `${refYear}-${refMonthStr}-${new Date(refYear, refMonth, 0).getDate()}`;
+      const currentDay   = now.getDate();
+      const isCurrentMonth = refMonth === (now.getMonth() + 1) && refYear === now.getFullYear();
+
       const [
         presence,
         employeeColumns,
@@ -468,6 +481,19 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         resource,
         selectedMunicipalityId,
       });
+
+      if (personnelType === "operario" && employeeColumns.has("real_position")) {
+        employeeScope.values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+        employeeScope.conditions.push(
+          `UPPER(TRIM(COALESCE(e.real_position, ''))) = $${employeeScope.values.length}`
+        );
+      } else if (personnelType === "equipo" && employeeColumns.has("real_position")) {
+        employeeScope.values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+        employeeScope.conditions.push(
+          `UPPER(TRIM(COALESCE(e.real_position, ''))) != $${employeeScope.values.length}`
+        );
+      }
+
       const employeeFromSql = `
         FROM employees e
         ${employeeScope.joins.join("\n")}
@@ -516,7 +542,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         SELECT
           CASE
             WHEN ${employeeExpr.birthYearExpr} IS NULL THEN 'Sin dato'
-            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} <= 25 THEN '18-25'
+            WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} <= 25 THEN '≤25'
             WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 26 AND 35 THEN '26-35'
             WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 36 AND 45 THEN '36-45'
             WHEN EXTRACT(YEAR FROM CURRENT_DATE)::int - ${employeeExpr.birthYearExpr} BETWEEN 46 AND 55 THEN '46-55'
@@ -539,6 +565,10 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ORDER BY sort_order ASC
       `;
 
+      const bdayDayFilter = isCurrentMonth
+        ? `AND ${employeeExpr.birthDayExpr} >= $${employeeScope.values.length + 2}`
+        : `AND ${employeeExpr.birthDayExpr} BETWEEN 1 AND 31`;
+
       const birthdaysQuery = `
         SELECT
           e.id,
@@ -549,10 +579,10 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           ${employeeExpr.birthMonthExpr} AS birth_month
         ${employeeFromSql}
           AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
-          AND ${employeeExpr.birthMonthExpr} = EXTRACT(MONTH FROM CURRENT_DATE)::int
-          AND ${employeeExpr.birthDayExpr} BETWEEN 1 AND 31
+          AND ${employeeExpr.birthMonthExpr} = $${employeeScope.values.length + 1}
+          ${bdayDayFilter}
         ORDER BY ${employeeExpr.birthDayExpr} ASC, ${employeeExpr.fullNameExpr} ASC
-        LIMIT 12
+        LIMIT 31
       `;
 
       const employeeTasks = [
@@ -560,7 +590,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         pool.query(genderQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] genderQuery falló:", err.message); return { rows: [] }; }),
         pool.query(modalityQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] modalityQuery falló:", err.message); return { rows: [] }; }),
         pool.query(ageQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] ageQuery falló:", err.message); return { rows: [] }; }),
-        pool.query(birthdaysQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] birthdaysQuery falló:", err.message); return { rows: [] }; }),
+        pool.query(birthdaysQuery, [...employeeScope.values, refMonth, ...(isCurrentMonth ? [currentDay] : [])]).catch(err => { console.error("[dashboard/summary] birthdaysQuery falló:", err.message); return { rows: [] }; }),
       ];
 
       if (presence.has_positions) {
@@ -592,27 +622,117 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const certExpExpr     = employeeColumns.has("residence_certificate_expiry")
         ? "e.residence_certificate_expiry" : "NULL::date";
 
-      const [employeeResults, sisbenResult, certResult] = await Promise.all([
+      // Cargo and education queries — only for equipo tab
+      const cargoQuery = personnelType === "equipo" && employeeColumns.has("real_position") ? `
+        SELECT
+          COALESCE(NULLIF(TRIM(e.real_position),''),'Sin cargo') AS label,
+          COUNT(*) AS value
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC, 1 ASC
+      ` : null;
+
+      const educQuery = personnelType === "equipo" && employeeColumns.has("education_level") ? `
+        SELECT
+          COALESCE(NULLIF(UPPER(TRIM(e.education_level)),''),'SIN DATO') AS label,
+          COUNT(*) AS value
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC, 1 ASC
+      ` : null;
+
+      // Experience distribution — operario tab only, sums `dias` from work_experience JSONB array
+      const experienceQuery = personnelType !== "equipo" ? `
+        SELECT
+          CASE
+            WHEN total_days = 0 THEN 'Sin dato'
+            WHEN total_days < 90  THEN '< 3 meses'
+            WHEN total_days <= 210 THEN '3 a 7 meses'
+            ELSE '> 1 año'
+          END AS label,
+          COUNT(*) AS value
+        FROM (
+          SELECT
+            COALESCE((
+              SELECT SUM((exp->>'dias')::numeric)
+              FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(e.work_experience) = 'array'
+                  THEN e.work_experience ELSE '[]'::jsonb END
+              ) AS exp
+              WHERE (exp->>'dias') IS NOT NULL
+                AND (exp->>'dias') ~ '^[0-9]'
+            ), 0)::int AS total_days
+          ${employeeFromSql}
+            AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+        ) sub
+        GROUP BY 1
+      ` : null;
+
+      // Food handling (course + exam) — operario tab only, no column guard
+      const foodHandlingQuery = personnelType !== "equipo" ? `
+        SELECT
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO'
+            AND (e.food_handling_course_expiry_date IS NOT NULL OR e.food_handling_exam_expiry_date IS NOT NULL)
+            AND LEAST(
+              COALESCE(e.food_handling_course_expiry_date, '9999-12-31'::date),
+              COALESCE(e.food_handling_exam_expiry_date,   '9999-12-31'::date)
+            ) > CURRENT_DATE + INTERVAL '30 days') AS vigente,
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO'
+            AND (e.food_handling_course_expiry_date IS NOT NULL OR e.food_handling_exam_expiry_date IS NOT NULL)
+            AND LEAST(
+              COALESCE(e.food_handling_course_expiry_date, '9999-12-31'::date),
+              COALESCE(e.food_handling_exam_expiry_date,   '9999-12-31'::date)
+            ) BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days') AS proximo,
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO'
+            AND (e.food_handling_course_expiry_date IS NOT NULL OR e.food_handling_exam_expiry_date IS NOT NULL)
+            AND LEAST(
+              COALESCE(e.food_handling_course_expiry_date, '9999-12-31'::date),
+              COALESCE(e.food_handling_exam_expiry_date,   '9999-12-31'::date)
+            ) < CURRENT_DATE) AS vencido,
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO'
+            AND e.food_handling_course_expiry_date IS NULL
+            AND e.food_handling_exam_expiry_date   IS NULL) AS sin_doc,
+          COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='INACTIVO') AS inactivos
+        ${employeeFromSql}
+      ` : null;
+
+      const [employeeResults, sisbenResult, certResult, cargoResult, educResult, expResult, foodResult] = await Promise.all([
         Promise.all(employeeTasks),
         hasSisben
           ? pool.query(`
               SELECT
-                COUNT(*) FILTER (WHERE e.sisben = true  AND (${sisbenExpExpr} IS NULL OR ${sisbenExpExpr} >= CURRENT_DATE)) AS vigente,
-                COUNT(*) FILTER (WHERE (e.sisben IS NULL OR e.sisben = false))                                              AS sin_sisben,
-                COUNT(*) FILTER (WHERE e.sisben = true  AND ${sisbenExpExpr} IS NOT NULL AND ${sisbenExpExpr} < CURRENT_DATE) AS vencido
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.sisben = true  AND (${sisbenExpExpr} IS NULL OR ${sisbenExpExpr} > $${employeeScope.values.length + 2}::date)) AS vigente,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.sisben = true  AND ${sisbenExpExpr} IS NOT NULL AND ${sisbenExpExpr} BETWEEN $${employeeScope.values.length + 1}::date AND $${employeeScope.values.length + 2}::date) AS proximo,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.sisben = true  AND ${sisbenExpExpr} IS NOT NULL AND ${sisbenExpExpr} < $${employeeScope.values.length + 1}::date) AS vencido,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND (e.sisben IS NULL OR e.sisben = false)) AS sin_sisben,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='INACTIVO') AS inactivos
               ${employeeFromSql}
-                AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
-            `, employeeScope.values).catch(err => { console.error("[dashboard/summary] sisbenQuery falló:", err.message); return { rows: [{}] }; })
+            `, [...employeeScope.values, refStart, refEnd]).catch(err => { console.error("[dashboard/summary] sisbenQuery falló:", err.message); return { rows: [{}] }; })
           : Promise.resolve({ rows: [{}] }),
         hasResidenceCert
           ? pool.query(`
               SELECT
-                COUNT(*) FILTER (WHERE e.residence_certificate = true  AND (${certExpExpr} IS NULL OR ${certExpExpr} >= CURRENT_DATE)) AS vigente,
-                COUNT(*) FILTER (WHERE (e.residence_certificate IS NULL OR e.residence_certificate = false))                           AS sin_certificado,
-                COUNT(*) FILTER (WHERE e.residence_certificate = true  AND ${certExpExpr} IS NOT NULL AND ${certExpExpr} < CURRENT_DATE) AS vencido
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.residence_certificate = true  AND (${certExpExpr} IS NULL OR ${certExpExpr} > $${employeeScope.values.length + 2}::date)) AS vigente,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.residence_certificate = true  AND ${certExpExpr} IS NOT NULL AND ${certExpExpr} BETWEEN $${employeeScope.values.length + 1}::date AND $${employeeScope.values.length + 2}::date) AS proximo,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND e.residence_certificate = true  AND ${certExpExpr} IS NOT NULL AND ${certExpExpr} < $${employeeScope.values.length + 1}::date) AS vencido,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='ACTIVO' AND (e.residence_certificate IS NULL OR e.residence_certificate = false)) AS sin_certificado,
+                COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(e.status,'')))='INACTIVO') AS inactivos
               ${employeeFromSql}
-                AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
-            `, employeeScope.values).catch(err => { console.error("[dashboard/summary] certQuery falló:", err.message); return { rows: [{}] }; })
+            `, [...employeeScope.values, refStart, refEnd]).catch(err => { console.error("[dashboard/summary] certQuery falló:", err.message); return { rows: [{}] }; })
+          : Promise.resolve({ rows: [{}] }),
+        cargoQuery
+          ? pool.query(cargoQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] cargoQuery falló:", err.message); return { rows: [] }; })
+          : Promise.resolve({ rows: [] }),
+        educQuery
+          ? pool.query(educQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] educQuery falló:", err.message); return { rows: [] }; })
+          : Promise.resolve({ rows: [] }),
+        experienceQuery
+          ? pool.query(experienceQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] experienceQuery falló:", err.message); return { rows: [] }; })
+          : Promise.resolve({ rows: [] }),
+        foodHandlingQuery
+          ? pool.query(foodHandlingQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] foodHandlingQuery falló:", err.message); return { rows: [{}] }; })
           : Promise.resolve({ rows: [{}] }),
       ]);
 
@@ -624,6 +744,10 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const areaRows     = presence.has_positions ? employeeResults[5]?.rows || [] : [];
       const sisbenRow    = sisbenResult.rows[0] || {};
       const certRow      = certResult.rows[0] || {};
+      const cargoRows    = cargoResult.rows || [];
+      const educRows     = educResult.rows  || [];
+      const expRows      = expResult.rows   || [];
+      const foodRow      = foodResult.rows[0] || {};
 
       let coverageByMunicipality = [];
       let requiredTc = 0;
@@ -793,13 +917,27 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           upcomingEvents,
           sisbenStats: {
             vigente:   Number(sisbenRow.vigente    || 0),
-            sinSisben: Number(sisbenRow.sin_sisben  || 0),
+            proximo:   Number(sisbenRow.proximo    || 0),
             vencido:   Number(sisbenRow.vencido    || 0),
+            sinSisben: Number(sisbenRow.sin_sisben  || 0),
+            inactivos: Number(sisbenRow.inactivos   || 0),
           },
           residenceCertStats: {
             vigente:        Number(certRow.vigente         || 0),
-            sinCertificado: Number(certRow.sin_certificado || 0),
+            proximo:        Number(certRow.proximo         || 0),
             vencido:        Number(certRow.vencido         || 0),
+            sinCertificado: Number(certRow.sin_certificado || 0),
+            inactivos:      Number(certRow.inactivos       || 0),
+          },
+          employeesByCargo: buildDistribution(cargoRows, ["#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75","#EF9F27"]),
+          employeesByEducation: buildDistribution(educRows, ["#64748B","#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#CBD5E1"]),
+          experienceDistribution: expRows.map(r => ({ label: r.label, value: Number(r.value || 0) })),
+          foodHandlingStats: {
+            vigente:   Number(foodRow.vigente   || 0),
+            proximo:   Number(foodRow.proximo   || 0),
+            vencido:   Number(foodRow.vencido   || 0),
+            sinDoc:    Number(foodRow.sin_doc   || 0),
+            inactivos: Number(foodRow.inactivos  || 0),
           },
         },
       });

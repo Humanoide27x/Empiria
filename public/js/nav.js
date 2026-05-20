@@ -8,6 +8,7 @@ export function renderModuleNav(modules = []) {
   if (!elements.moduleNav) return;
 
   const hiddenModules = new Set([
+    "dashboard",
     "hoja_vida_documentos",
     "contratos_vinculacion",
     "capacitaciones_asistencia",
@@ -16,7 +17,6 @@ export function renderModuleNav(modules = []) {
   ]);
 
   const MODULE_ORDER = [
-    "dashboard",
     "dashboard_hr",
     "gestion_personal",
     "calculadora_personal",
@@ -50,8 +50,7 @@ export function renderModuleNav(modules = []) {
     const moduleKey = item.module;
     const meta = getModuleMeta(moduleKey);
     const navLabelOverrides = {
-      dashboard: "Dashboard",
-      dashboard_hr: "Dashboard HR",
+      dashboard_hr: "Dashboard",
       gestion_personal: "Personal",
       cobertura_calculadora: "Cobertura PAE",
       nomina_novedades: "Nómina",
@@ -69,7 +68,6 @@ export function renderModuleNav(modules = []) {
       "gestion_personal",
       "nomina_novedades",
       "calculadora_personal",
-      "dashboard",
       "dashboard_hr",
       "cobertura_calculadora",
       "administracion_configuraciones",
@@ -248,11 +246,6 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
     return await renderPersonnelTableModule();
   }
 
-  if (moduleKey === "dashboard") {
-    const { loadDashboardModule } = await import('./modules/dashboard.js');
-    return await loadDashboardModule();
-  }
-
   if (moduleKey === "dashboard_hr") {
     const { loadDashboardHrModule } = await import('./modules/dashboard-hr.js');
     return await loadDashboardHrModule();
@@ -369,7 +362,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
 }
 
 export async function openModule(moduleKey) {
-  if (moduleKey !== "dashboard" && moduleKey !== "dashboard_hr") dashboardCleaner.fn();
+  if (moduleKey !== "dashboard_hr") dashboardCleaner.fn();
   state.activeModule = moduleKey;
   state.expandedModule = moduleKey;
   syncTopbarModuleTitle(moduleKey, state.activeSubmodule);

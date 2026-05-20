@@ -111,12 +111,8 @@ export const elements = {
 // ── Module view configuration ─────────────────────────────────────────────────
 
 export const moduleViews = {
-  dashboard: {
-    title: "Dashboard",
-    submodules: [],
-  },
   dashboard_hr: {
-    title: "Dashboard HR Operacional",
+    title: "Dashboard",
     submodules: [],
   },
   gestion_personal: {

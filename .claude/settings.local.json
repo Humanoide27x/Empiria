@@ -69,7 +69,11 @@
       "PowerShell(head *)",
       "Bash(grep -n \"return \\\\`\" /c/Users/danie/Desktop/Empiria/public/js/modules/coverage.js)",
       "Bash(grep -E \"^\\\\..*\\\\{\" /c/Users/danie/Desktop/Empiria/public/styles.css)",
-      "Bash(xargs grep -l \"moduleViews\\\\|dashboard\")"
+      "Bash(xargs grep -l \"moduleViews\\\\|dashboard\")",
+      "Bash(tasklist)",
+      "Bash(kill 15484)",
+      "Bash(kill 19804)",
+      "Bash(year=2026 2>&1)"
     ]
   }
 }
