@@ -985,6 +985,190 @@ h3 {
   min-width: 0;
 }
 
+.id-lock-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fef9ec;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.id-lock-banner svg {
+  flex-shrink: 0;
+  color: #d97706;
+}
+
+input[readonly] {
+  background: #e9ecef;
+  color: #6c757d;
+  cursor: not-allowed;
+  border-color: #ced4da;
+}
+
+select:disabled {
+  background: #e9ecef;
+  color: #6c757d;
+  cursor: not-allowed;
+  border-color: #ced4da;
+  opacity: 1;
+}
+
+/* Municipality picker (Gestor de Zona) */
+.mun-picker-wrap {
+  margin-top: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.mun-picker-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.mun-picker-label svg { color: #2563eb; flex-shrink: 0; }
+.mun-picker-count {
+  margin-left: auto;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 20px;
+}
+.mun-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  padding: 14px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.mun-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  user-select: none;
+}
+.mun-chip input[type="checkbox"] { display: none; }
+.mun-chip:hover { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
+.mun-chip-active {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+.mun-chip-active::before {
+  content: "✓";
+  font-size: 11px;
+  color: #2563eb;
+  font-weight: 800;
+}
+
+/* Age indicator banner */
+.age-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+.age-indicator svg { flex-shrink: 0; }
+.age-green  { background: #f0fdf4; border: 1px solid #86efac; color: #166534; }
+.age-yellow { background: #fefce8; border: 1px solid #fde68a; color: #854d0e; }
+.age-red    { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+
+/* Personnel confirm overlay */
+.personnel-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeInOverlay 0.15s ease;
+}
+@keyframes fadeInOverlay { from { opacity: 0; } to { opacity: 1; } }
+.personnel-confirm-box {
+  background: #fff;
+  border-radius: 18px;
+  padding: 36px 32px 28px;
+  max-width: 420px;
+  width: 92%;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.22);
+  text-align: center;
+  animation: slideUpBox 0.18s ease;
+}
+@keyframes slideUpBox { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+.personnel-confirm-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #fef3c7;
+  color: #d97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 18px;
+}
+.personnel-confirm-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.personnel-confirm-msg {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 28px;
+  line-height: 1.6;
+}
+.personnel-confirm-msg strong { color: #dc2626; }
+.personnel-confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.personnel-confirm-actions button {
+  padding: 11px 40px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  letter-spacing: 0.04em;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.personnel-confirm-actions button:hover { opacity: 0.88; transform: translateY(-1px); }
+.personnel-confirm-actions button:active { transform: translateY(0); }
+.btn-confirm-yes { background: #2563eb; color: #fff; }
+.btn-confirm-no  { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
 .form-grid.two-cols,
 .admin-grid,
 .personnel-form,
@@ -1862,10 +2046,15 @@ tr:hover {
 .figma-form-actions,
 .personnel-figma-shell-dark .figma-form-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 6px;
   padding-top: 6px;
+}
+.personnel-form-actions .age-indicator {
+  margin-top: 0;
+  margin-right: auto;
 }
 
 .primary-soft-btn,

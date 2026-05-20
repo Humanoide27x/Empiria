@@ -2,6 +2,7 @@ const { requireAuth } = require("../auth/auth.helpers");
 const { sendJson, sendMethodNotAllowed } = require("../../http/response");
 const { getTenantIdForRequest } = require("../../tenancy/tenant");
 const service = require("./contracts.service");
+const repository = require("./contracts.repository");
 
 async function handleGetContracts(req, res, url) {
   if (req.method !== "GET") {
@@ -35,6 +36,19 @@ async function handleGetContracts(req, res, url) {
   }
 }
 
+async function handleGetContractPositions(req, res, contractId) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  try {
+    const positions = await repository.getContractPositions(contractId);
+    sendJson(res, 200, { ok: true, positions });
+  } catch (err) {
+    sendJson(res, 500, { ok: false, message: err.message });
+  }
+}
+
 module.exports = {
   handleGetContracts,
+  handleGetContractPositions,
 };

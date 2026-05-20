@@ -1653,10 +1653,17 @@ function openUserModal({ contractId, id = null, name = "", username = "", role =
             placeholder="${isEdit ? "Nueva contraseña (opcional)" : "Contraseña de acceso"}">
         </label>
         <label class="cfg-field">
-          <span>Cargo / Rol <em>*</em></span>
+          <span>Rol del sistema <em>*</em></span>
           <select id="ccpUModalRole">
-            <option value="">— Selecciona un cargo —</option>
-            ${_ccpRoles.map(r => `<option value="${escapeAttr(r.key)}" ${role === r.key ? "selected" : ""}>${escapeHtml(r.label)}</option>`).join("")}
+            <option value="">— Selecciona un rol —</option>
+            <option value="administrador"      ${role === "administrador"      ? "selected" : ""}>Administrador</option>
+            <option value="talento_humano"     ${role === "talento_humano"     ? "selected" : ""}>Talento Humano</option>
+            <option value="operacion"          ${role === "operacion"          ? "selected" : ""}>Operación</option>
+            <option value="calidad"            ${role === "calidad"            ? "selected" : ""}>Calidad</option>
+            <option value="auditor"            ${role === "auditor"            ? "selected" : ""}>Auditor / Interventoría</option>
+            <option value="empleado"           ${role === "empleado"           ? "selected" : ""}>Empleado</option>
+            <option value="gestores_auxiliares"${role === "gestores_auxiliares"? "selected" : ""}>Gestores / Auxiliares</option>
+            <option value="interventoria"      ${role === "interventoria"      ? "selected" : ""}>Interventoría</option>
           </select>
         </label>
       </div>

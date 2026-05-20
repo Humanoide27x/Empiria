@@ -46,6 +46,17 @@ async function getAllContracts(tenantId, companyId = null) {
   return result.rows.map(mapContractRow);
 }
 
+async function getContractPositions(contractId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(positions, '[]'::jsonb) AS positions
+     FROM contract_settings WHERE contract_id = $1`,
+    [contractId]
+  );
+  const raw = rows[0]?.positions;
+  return Array.isArray(raw) ? raw : [];
+}
+
 module.exports = {
   getAllContracts,
+  getContractPositions,
 };

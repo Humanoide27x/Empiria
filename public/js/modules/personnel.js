@@ -687,7 +687,7 @@ function _refreshPersonnelSection() {
   const selectedModality     = firstDv("educationalModality", "modalidad");
 
   let html = "";
-  if      (activeTab === "identificacion")  html = buildTabIdentificacion(dv, expeditionDepartment, birthDepartment);
+  if      (activeTab === "identificacion")  html = buildTabIdentificacion(dv, expeditionDepartment, birthDepartment, state.personnelViewMode === "edit");
   else if (activeTab === "vinculacion")     html = buildTabVinculacion(dv, vinculationCompanyId, gestorNames);
   else if (activeTab === "licitacion")      html = buildTabLicitacion(dv, selected);
   else if (activeTab === "datos_personales") html = buildTabDatosPersonales(dv, residenceMunicipality);
@@ -706,6 +706,13 @@ function _refreshPersonnelSection() {
   else if (activeTab === "observaciones")   html = buildTabObservaciones(dv);
 
   sectionEl.innerHTML = html;
+
+  const ageSlot = document.getElementById("personnelAgeSlot");
+  if (ageSlot) {
+    ageSlot.innerHTML = activeTab === "identificacion"
+      ? buildAgeIndicator(dv("birthDay"), dv("birthMonth"), dv("birthYear"))
+      : "";
+  }
 
   // Update tab buttons in-place (no DOM replacement)
   document.querySelectorAll("[data-step-tab]").forEach(btn => {
@@ -737,14 +744,14 @@ function _refreshPersonnelSection() {
 function buildTabButtons(activeTab, institutionalEnabled) {
   const tabs = [
     { key: "identificacion",   label: "Identificación",   icon: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M13 10h4M13 14h4M5 14c0-1.1.9-2 2-2h4a2 2 0 0 1 2 2"/></svg>` },
-    { key: "vinculacion",      label: "Vinculación",      icon: `<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>` },
-    { key: "licitacion",       label: "Licitación",       icon: `<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>` },
     { key: "datos_personales", label: "Datos",            icon: `<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>` },
-    { key: "institucional",    label: "Institucional",    icon: `<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`, disabled: !institutionalEnabled },
-    { key: "contratacion",     label: "Contratación",     icon: `<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>` },
-    { key: "seguimiento",      label: "Seguimiento",      icon: `<svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
     { key: "estudios",         label: "Estudios",         icon: `<svg viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>` },
     { key: "experiencia",      label: "Experiencia",      icon: `<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><path d="M12 12h.01"/></svg>` },
+    { key: "seguimiento",      label: "Seguimiento",      icon: `<svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
+    { key: "licitacion",       label: "Licitación",       icon: `<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>` },
+    { key: "vinculacion",      label: "Vinculación",      icon: `<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>` },
+    { key: "contratacion",     label: "Contratación",     icon: `<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>` },
+    { key: "institucional",    label: "Institucional",    icon: `<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`, disabled: !institutionalEnabled },
     { key: "observaciones",    label: "Notas",            icon: `<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>` },
   ];
 
@@ -789,49 +796,125 @@ function findCatalogKey(object, value) {
   );
 }
 
+// ── Age helpers ───────────────────────────────────────────────────────────────
+
+function calcAge(day, month, year) {
+  const y = parseInt(year, 10);
+  const m = parseInt(month, 10);
+  const d = parseInt(day, 10);
+  if (!y || y < 1900 || y > new Date().getFullYear()) return null;
+  const birth = new Date(y, (m || 1) - 1, d || 1);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const hasPassedBirthday =
+    today.getMonth() > birth.getMonth() ||
+    (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+  if (!hasPassedBirthday) age--;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+function buildAgeIndicator(day, month, year) {
+  const age = calcAge(day, month, year);
+  if (age === null || age < 18) return "";
+  const iconCheck = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>`;
+  const iconWarn  = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12.5"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/></svg>`;
+  if (age >= 57)
+    return `<div class="age-indicator age-red">${iconWarn} ${age} años</div>`;
+  if (age >= 46)
+    return `<div class="age-indicator age-yellow">${iconWarn} ${age} años</div>`;
+  return `<div class="age-indicator age-green">${iconCheck} ${age} años</div>`;
+}
+
+// ── Confirm dialog ────────────────────────────────────────────────────────────
+
+function showPersonnelConfirmDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "personnel-confirm-overlay";
+    overlay.innerHTML = `
+      <div class="personnel-confirm-box">
+        <div class="personnel-confirm-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12.5"/>
+            <circle cx="12" cy="16.5" r="0.7" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="personnel-confirm-title">Verificar datos ingresados</div>
+        <div class="personnel-confirm-msg">
+          Una vez guardados los datos <strong>no se podrán modificar</strong>.<br>¿Desea continuar?
+        </div>
+        <div class="personnel-confirm-actions">
+          <button class="btn-confirm-no">NO</button>
+          <button class="btn-confirm-yes">SÍ</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = (result) => { overlay.remove(); resolve(result); };
+    overlay.querySelector(".btn-confirm-yes").addEventListener("click", () => close(true));
+    overlay.querySelector(".btn-confirm-no").addEventListener("click",  () => close(false));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(false); });
+  });
+}
+
 // ── Tab: identificacion ───────────────────────────────────────────────────────
 
-function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartment) {
+function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartment, isEditMode = false) {
   const expeditionMunicipalities = getDepartmentMunicipalities(expeditionDepartment);
   const birthMunicipalities      = getDepartmentMunicipalities(birthDepartment);
+  const isAdmin = (state.currentUser?.role || "").toLowerCase() === "administrador";
+  // Non-admins: everything locked in edit mode. Admins: freely editable.
+  const locked  = isEditMode && !isAdmin;
+  const lock    = locked ? "disabled" : "";
+  const ro      = locked ? "readonly"  : "";
 
   return `
     <section class="personnel-section">
+
+      ${isEditMode && !isAdmin ? `
+        <div class="id-lock-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          Los datos de identificación están bloqueados. Para modificarlos contacte al administrador.
+        </div>
+      ` : ""}
 
       <div class="form-grid form-grid-4">
         <label>
           <span>Primer Nombre *</span>
           <input name="firstName" data-only-letters type="text"
-            value="${escapeAttr(draftValue("firstName"))}" required />
+            value="${escapeAttr(draftValue("firstName"))}" ${ro} required />
         </label>
         <label>
           <span>Segundo Nombre</span>
           <input name="secondName" data-only-letters type="text"
-            value="${escapeAttr(draftValue("secondName"))}" />
+            value="${escapeAttr(draftValue("secondName"))}" ${ro} />
         </label>
         <label>
           <span>Primer Apellido *</span>
           <input name="firstLastName" data-only-letters type="text"
-            value="${escapeAttr(draftValue("firstLastName"))}" required />
+            value="${escapeAttr(draftValue("firstLastName"))}" ${ro} required />
         </label>
         <label>
           <span>Segundo Apellido</span>
           <input name="secondLastName" data-only-letters type="text"
-            value="${escapeAttr(draftValue("secondLastName"))}" />
+            value="${escapeAttr(draftValue("secondLastName"))}" ${ro} />
         </label>
       </div>
 
       <div class="form-grid form-grid-2">
         <label>
           <span>Tipo de Documento *</span>
-          <select name="documentType" required>
+          <select name="documentType" ${lock} ${!isEditMode ? "required" : ""}>
             ${renderOptions(["CC", "PA", "PPT", "CE", "NIT"], draftValue("documentType"), "Selecciona")}
           </select>
         </label>
         <label>
           <span>Número de Documento *</span>
           <input name="documentNumber" data-only-numbers type="text"
-            value="${escapeAttr(draftValue("documentNumber"))}" required />
+            value="${escapeAttr(draftValue("documentNumber"))}" ${ro} ${!isEditMode ? "required" : ""} />
         </label>
       </div>
 
@@ -840,29 +923,29 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
           <span>Día exp.</span>
           <input name="expeditionDay" data-only-numbers type="text" maxlength="2"
             placeholder="DD"
-            value="${escapeAttr(draftValue("expeditionDay"))}" required />
+            value="${escapeAttr(draftValue("expeditionDay"))}" ${ro} />
         </label>
         <label>
           <span>Mes exp.</span>
           <input name="expeditionMonth" data-only-numbers type="text" maxlength="2"
             placeholder="MM"
-            value="${escapeAttr(draftValue("expeditionMonth"))}" required />
+            value="${escapeAttr(draftValue("expeditionMonth"))}" ${ro} />
         </label>
         <label>
           <span>Año exp.</span>
           <input name="expeditionYear" data-only-numbers type="text" maxlength="4"
             placeholder="AAAA"
-            value="${escapeAttr(draftValue("expeditionYear"))}" required />
+            value="${escapeAttr(draftValue("expeditionYear"))}" ${ro} />
         </label>
         <label>
           <span>Departamento expedición *</span>
-          <select name="expeditionDepartment" required>
+          <select name="expeditionDepartment" ${lock}>
             ${renderOptions(COLOMBIA_DEPARTMENTS, expeditionDepartment, "Selecciona")}
           </select>
         </label>
         <label>
           <span>Municipio expedición *</span>
-          <select name="expeditionMunicipality" required>
+          <select name="expeditionMunicipality" ${lock}>
             ${renderOptions(
               expeditionMunicipalities,
               draftValue("expeditionMunicipality"),
@@ -877,34 +960,34 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
           <span>Día nac.</span>
           <input name="birthDay" data-only-numbers type="text" maxlength="2"
             placeholder="DD"
-            value="${escapeAttr(draftValue("birthDay"))}" required />
+            value="${escapeAttr(draftValue("birthDay"))}" ${ro} />
         </label>
         <label>
           <span>Mes nac.</span>
           <input name="birthMonth" data-only-numbers type="text" maxlength="2"
             placeholder="MM"
-            value="${escapeAttr(draftValue("birthMonth"))}" required />
+            value="${escapeAttr(draftValue("birthMonth"))}" ${ro} />
         </label>
         <label>
           <span>Año nac.</span>
           <input name="birthYear" data-only-numbers type="text" maxlength="4"
             placeholder="AAAA"
-            value="${escapeAttr(draftValue("birthYear"))}" required />
+            value="${escapeAttr(draftValue("birthYear"))}" ${ro} />
         </label>
         <label>
           <span>País nacimiento *</span>
           <input name="birthCountry" data-only-letters type="text"
-            value="${escapeAttr(draftValue("birthCountry", "Colombia"))}" required />
+            value="${escapeAttr(draftValue("birthCountry", "Colombia"))}" ${ro} />
         </label>
         <label>
           <span>Departamento nacimiento *</span>
-          <select name="birthDepartment" required>
+          <select name="birthDepartment" ${lock}>
             ${renderOptions(COLOMBIA_DEPARTMENTS, birthDepartment, "Selecciona")}
           </select>
         </label>
         <label>
           <span>Municipio nacimiento *</span>
-          <select name="birthMunicipality" required>
+          <select name="birthMunicipality" ${lock}>
             ${renderOptions(
               birthMunicipalities,
               draftValue("birthMunicipality"),
@@ -917,13 +1000,13 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
       <div class="form-grid form-grid-2">
         <label>
           <span>Grupo Sanguíneo *</span>
-          <select name="bloodType" required>
+          <select name="bloodType" ${lock}>
             ${renderOptions(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"], draftValue("bloodType"), "Selecciona")}
           </select>
         </label>
         <label>
           <span>Sexo *</span>
-          <select name="biologicalSex" required>
+          <select name="biologicalSex" ${lock}>
             ${renderOptions(["F", "M"], draftValue("biologicalSex"), "Selecciona")}
           </select>
         </label>
@@ -1001,7 +1084,12 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
 }
 
 function buildTabLicitacion(draftValue, selected) {
-  const presentado = String(draftValue("presentedInOffer"));
+  const presentado  = String(draftValue("presentedInOffer"));
+  const cargoReal   = String(draftValue("cargo_real") || "").toUpperCase();
+  const isGestor    = cargoReal === "GESTOR DE ZONA" || cargoReal === "AUXILIAR DE GESTOR DE ZONA";
+  const selectedMuns = new Set(
+    String(draftValue("municipiosACargo", "")).split("|").filter(Boolean)
+  );
 
   // Use positions from contract config if available, else fall back to static lists
   const licitacionOpts = (_contractPositions?.licitacion?.length)
@@ -1016,6 +1104,29 @@ function buildTabLicitacion(draftValue, selected) {
   const terminationDate = draftValue("terminationDate", "");
   const computedStatus  = (hasTermination && terminationDate) ? "INACTIVO" : "ACTIVO";
   const statusCls       = computedStatus === "ACTIVO" ? "pnl-status-auto-active" : "pnl-status-auto-inactive";
+
+  const munPickerHtml = isGestor ? `
+    <div class="mun-picker-wrap">
+      <div class="mun-picker-label">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+        </svg>
+        ¿Qué municipios tiene asignado?
+        <span class="mun-picker-count" id="munPickerCount">
+          ${selectedMuns.size ? `${selectedMuns.size} seleccionado${selectedMuns.size > 1 ? "s" : ""}` : "Ninguno"}
+        </span>
+      </div>
+      <div class="mun-picker-grid">
+        ${META_MUNICIPALITIES.map(m => `
+          <label class="mun-chip ${selectedMuns.has(m.name) ? "mun-chip-active" : ""}">
+            <input type="checkbox" name="municipioACargo" value="${escapeAttr(m.name)}"
+              ${selectedMuns.has(m.name) ? "checked" : ""}>
+            ${escapeHtml(m.name)}
+          </label>
+        `).join("")}
+      </div>
+    </div>
+  ` : "";
 
   return `
     <section class="personnel-section">
@@ -1055,6 +1166,8 @@ function buildTabLicitacion(draftValue, selected) {
           </div>
         </label>
       </div>
+
+      ${munPickerHtml}
     </section>
   `;
 }
@@ -1362,15 +1475,18 @@ function _addMonths(dateStr, months) {
 }
 
 function buildTabSeguimiento(draftValue) {
-  const hasSisben      = String(draftValue("sisben", "")) === "true";
-  const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true";
+  const hasSisben = String(draftValue("sisben", "")) === "true"
+    || !!draftValue("sisbenCategory")
+    || !!draftValue("sisbenIssueDate");
+  const hasResidenceCert = String(draftValue("hasResidenceCertificate", "")) === "true"
+    || !!draftValue("residenceCertificateIssueDate")
+    || !!draftValue("residenceCertificateExpiration");
 
   const SISBEN_CATEGORIES = ["A1","A2","A3","B1","B2","B3","B4","B5","B6","B7","C1","C2","C3","C4","C5","C6","C7","C8","C9","C10","C11","C12","C13","C14","C15","C16","C17","C18","D1","D2","D3","D4","D5","D6","D7","D8","D9","D10","D11","D12","D13","D14","D15","D16","D17","D18","D19","D20","D21"];
 
-  const currentCat = draftValue("sisbenCategory") || "";
+  const currentCat   = draftValue("sisbenCategory") || "";
   const currentIssue = draftValue("sisbenIssueDate") || "";
-  const autoExpiry = _addMonths(currentIssue, 3);
-  const currentExpiry = draftValue("sisbenExpirationDate") || autoExpiry;
+  const currentExpiry = draftValue("sisbenExpirationDate") || _addMonths(currentIssue, 4);
 
   const sisbenBlock = hasSisben ? `
     <div class="subsection-title">Datos del SISBEN</div>
@@ -1384,26 +1500,32 @@ function buildTabSeguimiento(draftValue) {
       </label>
       <label>
         <span>Fecha de expedición SISBEN</span>
-        <input name="sisbenIssueDate" type="date" value="${escapeAttr(currentIssue)}"
-          onchange="(function(el){var exp=document.querySelector('[name=sisbenExpirationDate]');if(exp&&!exp.value){var d=new Date(el.value+'T00:00:00');d.setMonth(d.getMonth()+3);exp.value=d.toISOString().slice(0,10);}})(this)" />
+        <input name="sisbenIssueDate" type="date" value="${escapeAttr(currentIssue)}" />
       </label>
       <label>
-        <span>Fecha de vencimiento SISBEN</span>
-        <input name="sisbenExpirationDate" type="date" value="${escapeAttr(currentExpiry)}" />
+        <span>Vencimiento SISBEN <small style="color:var(--text-faint);font-weight:400">(auto · 4 meses)</small></span>
+        <input name="sisbenExpirationDate" type="date" readonly
+          style="background:var(--input-bg,#f1f5f9);cursor:default"
+          value="${escapeAttr(currentExpiry)}" />
       </label>
     </div>
   ` : "";
+
+  const currentResidIssue  = draftValue("residenceCertificateIssueDate") || "";
+  const currentResidExpiry = draftValue("residenceCertificateExpiration") || _addMonths(currentResidIssue, 6);
 
   const residCertBlock = hasResidenceCert ? `
     <div class="subsection-title">Datos del certificado de residencia</div>
     <div class="form-grid form-grid-2">
       <label>
         <span>Fecha de expedición</span>
-        <input name="residenceCertificateIssueDate" type="date" value="${escapeAttr(draftValue("residenceCertificateIssueDate"))}" />
+        <input name="residenceCertificateIssueDate" type="date" value="${escapeAttr(currentResidIssue)}" />
       </label>
       <label>
-        <span>Fecha de vencimiento</span>
-        <input name="residenceCertificateExpiration" type="date" value="${escapeAttr(draftValue("residenceCertificateExpiration"))}" />
+        <span>Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto · 6 meses)</small></span>
+        <input name="residenceCertificateExpiration" type="date" readonly
+          style="background:var(--input-bg,#f1f5f9);cursor:default"
+          value="${escapeAttr(currentResidExpiry)}" />
       </label>
     </div>
   ` : "";
@@ -1467,8 +1589,9 @@ function buildTabEstudios(draftValue) {
               value="${escapeAttr(draftValue("foodHandlingCourseIssueDate"))}" />
           </label>
           <label>
-            <span>Curso · Fecha de vencimiento</span>
-            <input name="foodHandlingCourseExpirationDate" type="date"
+            <span>Curso · Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto)</small></span>
+            <input name="foodHandlingCourseExpirationDate" type="date" readonly
+              style="background:var(--input-bg,#f1f5f9);cursor:default"
               value="${escapeAttr(draftValue("foodHandlingCourseExpirationDate"))}" />
           </label>
           <label>
@@ -1477,8 +1600,9 @@ function buildTabEstudios(draftValue) {
               value="${escapeAttr(draftValue("foodHandlingExamIssueDate"))}" />
           </label>
           <label>
-            <span>Exámenes · Fecha de vencimiento</span>
-            <input name="foodHandlingExamExpirationDate" type="date"
+            <span>Exámenes · Vencimiento <small style="color:var(--text-faint);font-weight:400">(auto)</small></span>
+            <input name="foodHandlingExamExpirationDate" type="date" readonly
+              style="background:var(--input-bg,#f1f5f9);cursor:default"
               value="${escapeAttr(draftValue("foodHandlingExamExpirationDate"))}" />
           </label>
         </div>
@@ -1759,6 +1883,19 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "es"));
 
+  // Map each municipality name → gestor full name for auto-fill in Vinculación tab
+  const gestorByMunicipality = {};
+  allPersonnel
+    .filter((p) => String(p.cargo_real || "").toUpperCase() === "GESTOR DE ZONA")
+    .forEach((p) => {
+      const muns = String(p.municipiosACargo || "").split("|").filter(Boolean);
+      const name = getPersonnelFullName(p);
+      if (name) muns.forEach((mun) => { gestorByMunicipality[mun] = name; });
+    });
+
+  _cachedPayload.gestorNames         = gestorNames;
+  _cachedPayload.gestorByMunicipality = gestorByMunicipality;
+
   const managerRole = ["GESTOR DE ZONA", "AUXILIAR DE GESTOR DE ZONA"].includes(currentCargoReal);
 
   // ── Part 7: event wiring (deferred) ──────────────────────────────────────
@@ -1795,6 +1932,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
       "municipalityId", "educationalMunicipality", "institution", "site",
       "cargo_real", "biologicalSex", "sisben", "hasResidenceCertificate", "presentedInOffer",
       "hasTermination", "terminationDate",
+      "birthDay", "birthMonth", "birthYear",
     ];
 
     form.addEventListener("input", (e) => {
@@ -1805,7 +1943,63 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
     form.addEventListener("change", (e) => {
       if (!e.target.matches("input, select, textarea")) return;
+
+      // Municipios asignados al gestor — collect all checked boxes into draft
+      if (e.target.name === "municipioACargo") {
+        const checked = Array.from(form.querySelectorAll('input[name="municipioACargo"]:checked'))
+          .map(cb => cb.value);
+        state.personnelDraft.municipiosACargo = checked.join("|");
+        const countEl = document.getElementById("munPickerCount");
+        if (countEl) countEl.textContent = checked.length
+          ? `${checked.length} seleccionado${checked.length > 1 ? "s" : ""}`
+          : "Ninguno";
+        // Toggle active class on chip
+        const chip = e.target.closest(".mun-chip");
+        if (chip) chip.classList.toggle("mun-chip-active", e.target.checked);
+        return;
+      }
+
       syncPersonnelDraftField(e.target);
+
+      // Auto-vencimiento SISBEN (+4 meses) y certificado de residencia (+6 meses)
+      if (e.target.name === "sisbenIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value + "T00:00:00");
+        exp.setMonth(exp.getMonth() + 4);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.sisbenExpirationDate = expStr;
+        const expInput = form.querySelector('[name="sisbenExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+      if (e.target.name === "residenceCertificateIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value + "T00:00:00");
+        exp.setMonth(exp.getMonth() + 6);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.residenceCertificateExpiration = expStr;
+        const expInput = form.querySelector('[name="residenceCertificateExpiration"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+
+      // Auto-vencimiento manipulación de alimentos (+1 año)
+      if (e.target.name === "foodHandlingCourseIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value);
+        exp.setFullYear(exp.getFullYear() + 1);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.foodHandlingCourseExpirationDate = expStr;
+        const expInput = form.querySelector('[name="foodHandlingCourseExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
+      if (e.target.name === "foodHandlingExamIssueDate" && e.target.value) {
+        const exp = new Date(e.target.value);
+        exp.setFullYear(exp.getFullYear() + 1);
+        const expStr = exp.toISOString().slice(0, 10);
+        state.personnelDraft.foodHandlingExamExpirationDate = expStr;
+        const expInput = form.querySelector('[name="foodHandlingExamExpirationDate"]');
+        if (expInput) expInput.value = expStr;
+        return;
+      }
 
       // Calculadora de días de experiencia
       if (e.target.id === "expFechaInicio" || e.target.id === "expFechaFin") {
@@ -1834,12 +2028,17 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
         if (e.target.name === "presentedInOffer" && e.target.value !== "true")
           state.personnelDraft.offerPosition = "";
         if (e.target.name === "municipalityId") {
-          const munId = Number(e.target.value);
+          const munId  = Number(e.target.value);
           const munObj = META_MUNICIPALITIES.find((m) => m.id === munId);
           state.personnelDraft.educationalMunicipality = munObj ? munObj.name : "";
           state.personnelDraft.institution             = "";
           state.personnelDraft.site                    = "";
           state.personnelDraft.educationalModality     = "";
+          // Auto-fill gestor based on municipality assignment
+          if (munObj) {
+            const gestor = (_cachedPayload?.gestorByMunicipality || {})[munObj.name];
+            if (gestor) state.personnelDraft.gestorZona = gestor;
+          }
         }
         if (e.target.name === "educationalMunicipality") {
           const munObj = META_MUNICIPALITIES.find((m) => m.name === e.target.value);
@@ -1976,7 +2175,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
   let activeSectionHtml = "";
 
   if (activeTab === "identificacion") {
-    activeSectionHtml = buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartment);
+    activeSectionHtml = buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartment, isEditMode);
   }
 
   if (activeTab === "vinculacion") {
@@ -2057,6 +2256,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <div id="personnelActiveSection">${activeSectionHtml}</div>
 
             <div class="personnel-form-actions">
+              <div id="personnelAgeSlot">${activeTab === "identificacion" ? buildAgeIndicator(draftValue("birthDay"), draftValue("birthMonth"), draftValue("birthYear")) : ""}</div>
               <button type="submit" class="primary-soft-btn">
                 ${isEditMode ? "Guardar cambios" : "Crear empleado"}
               </button>
@@ -2242,16 +2442,25 @@ function hydratePersonnelDraft(found) {
     compensationBox: found.caja_compensacion || found.compensationBox || found.compensation_box || "COFREM",
     arl:             found.arl             || "SURA",
 
-    sisben:              found.sisben_tiene != null ? String(found.sisben_tiene) : (found.sisben != null ? String(found.sisben) : ""),
-    sisbenCategory:      found.sisben_categoria || found.sisbenCategory || "",
-    sisbenIssueDate:     fmtDate(found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date),
+    sisbenCategory:       found.sisben_categoria || found.sisbenCategory || "",
+    sisbenIssueDate:      fmtDate(found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date),
     sisbenExpirationDate: fmtDate(found.sisbenExpirationDate || found.sisben_expiration_date || found.sisben_expiry),
+    sisben: (() => {
+      const raw = found.sisben_tiene != null ? String(found.sisben_tiene) : (found.sisben != null ? String(found.sisben) : "");
+      const cat = found.sisben_categoria || found.sisbenCategory || "";
+      const iss = found.sisbenIssueDate  || found.sisben_issue_date || found.sisben_exp_date || "";
+      return raw === "true" || !!cat || !!iss ? "true" : raw;
+    })(),
 
-    hasResidenceCertificate: found.hasResidenceCertificate || found.has_residence_certificate || "",
     residenceCertificateIssueDate:
       fmtDate(found.residenceCertificateIssueDate || found.residence_certificate_issue_date),
     residenceCertificateExpiration:
       fmtDate(found.residenceCertificateExpiration || found.residence_certificate_expiration || found.residence_certificate_expiry),
+    hasResidenceCertificate: (() => {
+      const raw = found.hasResidenceCertificate || found.has_residence_certificate || "";
+      const iss = found.residenceCertificateIssueDate || found.residence_certificate_issue_date || "";
+      return raw === "true" || !!iss ? "true" : raw;
+    })(),
 
     foodHandlingCourseIssueDate:
       fmtDate(found.foodHandlingCourseIssueDate || found.food_handling_course_issue_date),
@@ -2267,7 +2476,8 @@ function hydratePersonnelDraft(found) {
     observations:  Array.isArray(found.observations)  ? found.observations  : [],
     internalNotes: found.observaciones_internas || found.internalNotes || "",
 
-    gestorZona: found.gestorZona || found.gestor_zona || "",
+    gestorZona:       found.gestorZona       || found.gestor_zona       || "",
+    municipiosACargo: found.municipiosACargo  || found.municipios_a_cargo || "",
   };
 }
 
@@ -2799,6 +3009,11 @@ export async function renderPersonnelTableModule() {
 export async function handlePersonnelFormSubmit(event) {
   event.preventDefault();
 
+  if (state.personnelViewMode === "edit") {
+    const confirmed = await showPersonnelConfirmDialog();
+    if (!confirmed) return;
+  }
+
   const d = state.personnelDraft;
 
   if (!String(d.firstName || "").trim() || !String(d.firstLastName || "").trim()) {
@@ -2912,7 +3127,8 @@ export async function handlePersonnelFormSubmit(event) {
     internalNotes: d.internalNotes || "",
 
     // Gestión
-    gestorZona: d.gestorZona || "",
+    gestorZona:       d.gestorZona       || "",
+    municipiosACargo: d.municipiosACargo || "",
   };
 
   const isEdit = state.personnelViewMode === "edit" && state.personnelEditingId;

@@ -695,6 +695,16 @@ export async function loadDashboardModule() {
 
   const inlineStyles = `
     <style id="dashboardWorkspacePremiumInline">
+      /* ── PARENT SCROLL UNLOCK ──────────────────────────────────── */
+      /* styles.css forces overflow:hidden on all ancestors; we flip the
+         nearest wrapper to auto so the dashboard scrolls as one page   */
+      .submodule-content:has(#${ROOT_ID}),
+      .workspace-panel:has(#${ROOT_ID}),
+      .workspace:has(#${ROOT_ID}) {
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+      }
+
       #${ROOT_ID} {
         --dw-bg: #f7faff;
         --dw-card: #ffffff;
@@ -752,6 +762,13 @@ export async function loadDashboardModule() {
         align-content: start !important;
       }
 
+      /* Override styles.css fr-based rows that collapse to 0 without
+         an explicit parent height — use auto so each card sizes itself */
+      #${ROOT_ID} .dashboard-column-stack--left,
+      #${ROOT_ID} .dashboard-column-stack--right {
+        grid-template-rows: auto auto !important;
+      }
+
       #${ROOT_ID} .dashboard-kpi-card,
       #${ROOT_ID} .dashboard-card {
         background: var(--dw-card) !important;
@@ -759,6 +776,15 @@ export async function loadDashboardModule() {
         border-radius: 22px !important;
         box-shadow: var(--dw-shadow) !important;
         overflow: hidden !important;
+      }
+
+      /* Cancel the height:100% rule that styles.css applies to cards
+         inside grids — cards should size to their own content          */
+      #${ROOT_ID} .dashboard-main-grid > .dashboard-card,
+      #${ROOT_ID} .dashboard-column-stack > .dashboard-card,
+      #${ROOT_ID} .dashboard-kpi-grid--bottom > .dashboard-card {
+        height: auto !important;
+        max-height: none !important;
       }
 
       #${ROOT_ID} .dashboard-kpi-card {
@@ -851,6 +877,20 @@ export async function loadDashboardModule() {
         grid-template-columns: 140px minmax(0, 1fr) !important;
         gap: 14px !important;
         align-items: center !important;
+      }
+
+      /* List card bodies scroll if content is too tall;
+         layout card bodies (map, donut, gauge) are uncapped             */
+      #${ROOT_ID} .dashboard-card-body {
+        overflow-y: auto !important;
+        max-height: 320px !important;
+      }
+
+      #${ROOT_ID} .dashboard-card-body--map,
+      #${ROOT_ID} .dashboard-card-body--state,
+      #${ROOT_ID} .dashboard-card-body--distribution {
+        max-height: none !important;
+        overflow: visible !important;
       }
 
       #${ROOT_ID} .dashboard-card-body--map {
