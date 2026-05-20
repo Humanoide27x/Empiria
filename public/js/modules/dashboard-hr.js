@@ -227,7 +227,8 @@ function buildMultiDonut({ idPrefix, items, title, centerSub }) {
     const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
     return `<div class="hr-legend-item">
       <span class="hr-legend-dot" style="background:${item.color}"></span>
-      <span>${escapeHtml(item.label)} · ${pct}%</span>
+      <span class="hr-legend-label">${escapeHtml(item.label)}</span>
+      <span class="hr-legend-val">${fmtN(item.value)} · ${pct}%</span>
     </div>`;
   }).join("");
 
@@ -1282,9 +1283,9 @@ function buildStyles() {
 #${ROOT_ID} .hr-tag--info{color:#0B7CFF;background:#EFF6FF;}
 
 /* ── Donut ── */
-#${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;}
-#${ROOT_ID} .hr-donut-svg{width:104px;height:104px;}
-#${ROOT_ID} .hr-donut-pct{font-size:14px;font-weight:700;fill:var(--c-text);}
+#${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:row;align-items:center;gap:20px;}
+#${ROOT_ID} .hr-donut-svg{width:150px;height:150px;flex-shrink:0;}
+#${ROOT_ID} .hr-donut-pct{font-size:16px;font-weight:700;fill:var(--c-text);}
 #${ROOT_ID} .hr-donut-sub{font-size:13px;fill:var(--c-muted);}
 
 /* ── Gender card ── */
@@ -1313,9 +1314,11 @@ function buildStyles() {
 }
 #${ROOT_ID} .hr-gender-pct--f{background:#EDE9FE;color:#7C3AED;}
 #${ROOT_ID} .hr-gender-pct--m{background:#DBEAFE;color:#1D4ED8;}
-#${ROOT_ID} .hr-legend{display:flex;gap:6px 12px;flex-wrap:wrap;justify-content:center;}
-#${ROOT_ID} .hr-legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--c-text);}
-#${ROOT_ID} .hr-legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+#${ROOT_ID} .hr-legend{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center;}
+#${ROOT_ID} .hr-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-text);}
+#${ROOT_ID} .hr-legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+#${ROOT_ID} .hr-legend-label{flex:1;font-size:12px;}
+#${ROOT_ID} .hr-legend-val{font-size:12px;font-weight:600;color:var(--c-text);white-space:nowrap;}
 
 /* ── Age bar chart ── */
 #${ROOT_ID} .hr-age-chart{
