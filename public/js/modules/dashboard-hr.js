@@ -31,9 +31,8 @@ const AREA_COLORS = {
 const FALLBACK_COLORS = ["#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F", "#378ADD", "#D85A30"];
 const AGE_COLORS      = ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F"];
 
-let _timer            = null;
-let _carouselTimer    = null;
-let _munId            = "";
+let _timer  = null;
+let _munId  = "";
 let _activeType       = "operario";
 let _lastData         = null;
 let _selectedMonth    = new Date().getMonth() + 1;
@@ -41,9 +40,8 @@ let _selectedYear     = new Date().getFullYear();
 let _availablePeriods = []; // YYYY-MM strings, newest first
 
 function _clearDashboardHrTimers() {
-  if (_timer)         { clearInterval(_timer);         _timer         = null; }
-  if (_carouselTimer) { clearInterval(_carouselTimer); _carouselTimer = null; }
-  _munId            = "";
+  if (_timer) { clearInterval(_timer); _timer = null; }
+  _munId    = "";
   _lastData         = null;
   _activeType       = "operario";
   _selectedMonth    = new Date().getMonth() + 1;
@@ -1036,14 +1034,6 @@ function wireEvents() {
   }
   root?.querySelector(".hr-bday-prev")?.addEventListener("click", () => carouselStep(-1));
   root?.querySelector(".hr-bday-next")?.addEventListener("click", () => carouselStep(1));
-
-  if (_carouselTimer) { clearInterval(_carouselTimer); _carouselTimer = null; }
-  if (trackWrap) {
-    _carouselTimer = setInterval(() => {
-      if (!document.contains(trackWrap)) { clearInterval(_carouselTimer); _carouselTimer = null; return; }
-      carouselStep(1);
-    }, 4500);
-  }
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
