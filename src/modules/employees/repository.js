@@ -168,6 +168,37 @@ function mapEmployee(row) {
       row.residence_certificate_expiry ||
       row.residence_certificate_expiration ||
       "",
+
+    biologicalSex:   row.biological_sex || "",
+    sexo_biologico:  row.biological_sex || "",
+    sex:             row.biological_sex || "",
+
+    bloodType:       row.blood_type || "",
+    grupo_sanguineo: row.blood_type || "",
+
+    expeditionDay:          row.expedition_day   != null ? String(row.expedition_day)   : "",
+    expeditionMonth:        row.expedition_month != null ? String(row.expedition_month) : "",
+    expeditionYear:         row.expedition_year  != null ? String(row.expedition_year)  : "",
+    expeditionDepartment:   row.expedition_department   || "",
+    expeditionMunicipality: row.expedition_municipality || "",
+    fecha_expedicion_dia:   row.expedition_day   != null ? String(row.expedition_day)   : "",
+    fecha_expedicion_mes:   row.expedition_month != null ? String(row.expedition_month) : "",
+    fecha_expedicion_anio:  row.expedition_year  != null ? String(row.expedition_year)  : "",
+    departamento_expedicion: row.expedition_department   || "",
+    municipio_expedicion:    row.expedition_municipality || "",
+
+    birthDay:          row.birth_day   != null ? String(row.birth_day)   : "",
+    birthMonth:        row.birth_month != null ? String(row.birth_month) : "",
+    birthYear:         row.birth_year  != null ? String(row.birth_year)  : "",
+    birthCountry:      row.birth_country     || "Colombia",
+    birthDepartment:   row.birth_department  || "",
+    birthMunicipality: row.birth_municipality || "",
+    fecha_nacimiento_dia:   row.birth_day   != null ? String(row.birth_day)   : "",
+    fecha_nacimiento_mes:   row.birth_month != null ? String(row.birth_month) : "",
+    fecha_nacimiento_anio:  row.birth_year  != null ? String(row.birth_year)  : "",
+    pais_nacimiento:         row.birth_country     || "Colombia",
+    departamento_nacimiento: row.birth_department  || "",
+    municipio_nacimiento:    row.birth_municipality || "",
   };
 }
 

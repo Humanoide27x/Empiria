@@ -247,9 +247,14 @@ async function createContractUser(contractId, { name, username, password, role }
   const hash = crypto.createHash("sha256").update(String(password)).digest("hex");
 
   const roleRow = await pool.query(
-    "SELECT id FROM roles WHERE LOWER(code) = LOWER($1) LIMIT 1", [role]
+    "SELECT id, code FROM roles WHERE LOWER(code) = LOWER($1) OR LOWER(name) = LOWER($1) LIMIT 1",
+    [String(role).trim()]
   );
-  const roleId = roleRow.rows[0]?.id || null;
+  if (!roleRow.rows[0]) {
+    throw new Error(`Rol no reconocido: "${role}". Selecciona un rol del sistema válido.`);
+  }
+  const roleId   = roleRow.rows[0].id;
+  const roleCode = roleRow.rows[0].code.toLowerCase();
 
   const ctRow = await pool.query(
     "SELECT company_id FROM contracts WHERE id = $1", [contractId]
@@ -265,7 +270,7 @@ async function createContractUser(contractId, { name, username, password, role }
     hash,
     String(name).trim(),
     roleId,
-    String(role).toLowerCase(),
+    roleCode,
     companyId,
     contractId,
   ]);
@@ -286,12 +291,12 @@ async function updateContractUser(userId, { name, username, password, role, acti
   }
   if (role !== undefined) {
     const roleRow = await pool.query(
-      "SELECT id FROM roles WHERE LOWER(code) = LOWER($1) LIMIT 1", [role]
+      "SELECT id, code FROM roles WHERE LOWER(code) = LOWER($1) OR LOWER(name) = LOWER($1) LIMIT 1",
+      [String(role).trim()]
     );
-    if (roleRow.rows[0]) {
-      fields.push(`role_id   = $${i++}`); values.push(roleRow.rows[0].id);
-      fields.push(`role_code = $${i++}`); values.push(String(role).toLowerCase());
-    }
+    if (!roleRow.rows[0]) throw new Error(`Rol no reconocido: "${role}". Selecciona un rol del sistema válido.`);
+    fields.push(`role_id   = $${i++}`); values.push(roleRow.rows[0].id);
+    fields.push(`role_code = $${i++}`); values.push(roleRow.rows[0].code.toLowerCase());
   }
   if (active !== undefined) { fields.push(`active = $${i++}`); values.push(Boolean(active)); }
 

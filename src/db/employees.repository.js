@@ -1,6 +1,11 @@
 const pool = require("./pool");
 const XLSX = require("xlsx");
 
+// Auto-migration: add municipios_a_cargo column if it doesn't exist yet
+pool.query(
+  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS municipios_a_cargo TEXT DEFAULT ''`
+).catch(err => console.warn("[migration] municipios_a_cargo:", err.message));
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toNumberOrNull(value) {
@@ -227,6 +232,9 @@ function mapEmployee(row) {
     gestorZona: row.gestor_zona || "",
     gestor_zona: row.gestor_zona || "",
 
+    municipiosACargo: row.municipios_a_cargo || "",
+    municipios_a_cargo: row.municipios_a_cargo || "",
+
     tenantId: row.tenant_id || null,
     tenant_id: row.tenant_id || null,
 
@@ -448,12 +456,12 @@ async function createEmployee(data) {
       institution_id, site_id, modality,
       eps, pension_fund, compensation_box, arl,
       arl_vinculation_date, coverage_start_date,
-      status, workday_type, gestor_zona
+      status, workday_type, gestor_zona, municipios_a_cargo
     ) VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
       $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-      $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
+      $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
     ) RETURNING *`,
     [
       toNumberOrNull(data.tenantId || data.tenant_id) || 1,
@@ -498,6 +506,7 @@ async function createEmployee(data) {
       data.status || data.estado || "ACTIVO",
       data.workdayType || data.workday_type || "TC",
       data.gestorZona || data.gestor_zona || "",
+      data.municipiosACargo || data.municipios_a_cargo || "",
     ]
   );
 
@@ -575,7 +584,7 @@ async function updateEmployee(id, data) {
       presented_in_offer = $55, offered_position = $56,
       food_handling_course_issue_date = $57, food_handling_course_expiry_date = $58,
       food_handling_exam_issue_date = $59, food_handling_exam_expiry_date = $60,
-      start_date = $61,
+      start_date = $61, municipios_a_cargo = $62,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *`,
@@ -642,6 +651,7 @@ async function updateEmployee(id, data) {
       safeDate(data.foodHandlingExamIssueDate || data.food_handling_exam_issue_date),
       safeDate(data.foodHandlingExamExpirationDate || data.food_handling_exam_expiry_date),
       safeDate(data.startDate || data.start_date),
+      data.municipiosACargo || data.municipios_a_cargo || "",
     ]
   );
 
