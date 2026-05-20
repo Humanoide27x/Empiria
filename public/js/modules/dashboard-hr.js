@@ -1281,7 +1281,7 @@ function buildStyles() {
 #${ROOT_ID} .hr-tag--info{color:#0B7CFF;background:#EFF6FF;}
 
 /* ── Donut ── */
-#${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:20px;}
+#${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:20px;padding-left:28px;}
 #${ROOT_ID} .hr-donut-svg{width:150px;height:150px;flex-shrink:0;}
 #${ROOT_ID} .hr-donut-pct{font-size:16px;font-weight:700;fill:var(--c-text);}
 #${ROOT_ID} .hr-donut-sub{font-size:13px;fill:var(--c-muted);}
