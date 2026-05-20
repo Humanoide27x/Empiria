@@ -31,22 +31,24 @@ const AREA_COLORS = {
 const FALLBACK_COLORS = ["#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F", "#378ADD", "#D85A30"];
 const AGE_COLORS      = ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F"];
 
-let _timer          = null;
-let _carouselTimer  = null;
-let _munId          = "";
-let _activeType     = "operario";
-let _lastData       = null;
-let _selectedMonth  = new Date().getMonth() + 1;
-let _selectedYear   = new Date().getFullYear();
+let _timer            = null;
+let _carouselTimer    = null;
+let _munId            = "";
+let _activeType       = "operario";
+let _lastData         = null;
+let _selectedMonth    = new Date().getMonth() + 1;
+let _selectedYear     = new Date().getFullYear();
+let _availablePeriods = []; // YYYY-MM strings, newest first
 
 function _clearDashboardHrTimers() {
   if (_timer)         { clearInterval(_timer);         _timer         = null; }
   if (_carouselTimer) { clearInterval(_carouselTimer); _carouselTimer = null; }
-  _munId         = "";
-  _lastData      = null;
-  _activeType    = "operario";
-  _selectedMonth = new Date().getMonth() + 1;
-  _selectedYear  = new Date().getFullYear();
+  _munId            = "";
+  _lastData         = null;
+  _activeType       = "operario";
+  _selectedMonth    = new Date().getMonth() + 1;
+  _selectedYear     = new Date().getFullYear();
+  _availablePeriods = [];
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -99,6 +101,21 @@ async function fetchAll(munId) {
     apiFetch(`/dashboard/kpis${qs}`),
   ]);
   return { summary: sumRes, kpis: kpiRes };
+}
+
+async function fetchPeriods() {
+  try {
+    const res = await apiFetch("/dashboard/periods");
+    if (Array.isArray(res?.data) && res.data.length) {
+      _availablePeriods = res.data; // YYYY-MM, newest first
+    } else {
+      const now = new Date();
+      _availablePeriods = [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
+    }
+  } catch {
+    const now = new Date();
+    _availablePeriods = [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
+  }
 }
 
 function normalize({ summary, kpis }) {
@@ -330,9 +347,14 @@ function buildKpiRow(d) {
         <button type="button" id="hrBtnRefresh" class="hr-period-btn" title="Actualizar datos">${ICON_REFRESH}</button>
       </div>
       <select id="hrMonthSelect" class="hr-sel">
-        ${Array.from({length: 12}, (_, i) => i + 1).map(m =>
-          `<option value="${m}"${m === _selectedMonth ? " selected" : ""}>${MONTHS_FULL[m]} ${_selectedYear}</option>`
-        ).join("")}
+        ${(() => {
+          const current = `${_selectedYear}-${String(_selectedMonth).padStart(2, "0")}`;
+          const list = _availablePeriods.length ? _availablePeriods : [current];
+          return list.map(p => {
+            const [y, m] = p.split("-").map(Number);
+            return `<option value="${p}"${p === current ? " selected" : ""}>${MONTHS_FULL[m] || p} ${y}</option>`;
+          }).join("");
+        })()}
       </select>
       <small>Mes de referencia activo</small>
     </article>
@@ -685,9 +707,14 @@ function buildEquipoKpiRow(d) {
         <button type="button" id="hrBtnRefresh" class="hr-period-btn" title="Actualizar datos">${ICON_REFRESH}</button>
       </div>
       <select id="hrMonthSelect" class="hr-sel">
-        ${Array.from({length: 12}, (_, i) => i + 1).map(m =>
-          `<option value="${m}"${m === _selectedMonth ? " selected" : ""}>${MONTHS_FULL[m]} ${_selectedYear}</option>`
-        ).join("")}
+        ${(() => {
+          const current = `${_selectedYear}-${String(_selectedMonth).padStart(2, "0")}`;
+          const list = _availablePeriods.length ? _availablePeriods : [current];
+          return list.map(p => {
+            const [y, m] = p.split("-").map(Number);
+            return `<option value="${p}"${p === current ? " selected" : ""}>${MONTHS_FULL[m] || p} ${y}</option>`;
+          }).join("");
+        })()}
       </select>
       <small>Mes de referencia activo</small>
     </article>
@@ -898,7 +925,8 @@ function wireEvents() {
 
   if (monthSel) {
     monthSel.addEventListener("change", async (ev) => {
-      _selectedMonth = Number(ev.target.value);
+      const [y, m] = (ev.target.value || "").split("-").map(Number);
+      if (y && m) { _selectedYear = y; _selectedMonth = m; }
       if (root) root.innerHTML = buildLoadingHtml();
       await renderHrWorkspace();
     });
@@ -1401,6 +1429,13 @@ export async function loadDashboardHrModule() {
 
   setTimeout(async () => {
     try {
+      // Fetch available periods and pick smart default (most recent = index 0)
+      await fetchPeriods();
+      const currentPeriod = `${_selectedYear}-${String(_selectedMonth).padStart(2, "0")}`;
+      if (_availablePeriods.length && !_availablePeriods.includes(currentPeriod)) {
+        const [y, m] = _availablePeriods[0].split("-").map(Number);
+        if (y && m) { _selectedYear = y; _selectedMonth = m; }
+      }
       await renderHrWorkspace();
       _timer = setInterval(() => renderHrWorkspace().catch(() => {}), REFRESH_MS);
     } catch (err) {

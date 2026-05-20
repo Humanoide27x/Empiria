@@ -1651,6 +1651,64 @@ function handleDashboardBirthdays(req, res, url) {
   })(req, res, url);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /dashboard/periods
+// Returns available periods: union of employee start/coverage dates + coverage
+// upload period_month values.  Includes future months if a projection was uploaded.
+// ─────────────────────────────────────────────────────────────────────────────
+function handleDashboardPeriods(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+
+  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, innerUrl, user, resource) => {
+    // Employee scope (company + contract)
+    const empVals  = [];
+    const empConds = [];
+    if (user?.companyId)      { empVals.push(Number(user.companyId));      empConds.push(`e.company_id    = $${empVals.length}`); }
+    if (resource?.contractId) { empVals.push(Number(resource.contractId)); empConds.push(`e.contract_id   = $${empVals.length}`); }
+    const empWhere = empConds.length ? `AND ${empConds.join(" AND ")}` : "";
+
+    // Coverage upload scope
+    const covVals  = [];
+    const covConds = ["period_month IS NOT NULL", "TRIM(period_month) != ''", "period_month ~ '^[0-9]{4}-[0-9]{2}$'"];
+    if (user?.companyId)      { covVals.push(Number(user.companyId));      covConds.push(`company_id  = $${covVals.length}`); }
+    if (resource?.contractId) { covVals.push(Number(resource.contractId)); covConds.push(`contract_id = $${covVals.length}`); }
+
+    const [empRes, covRes] = await Promise.all([
+      pool.query(`
+        SELECT DISTINCT period FROM (
+          SELECT TO_CHAR(e.start_date, 'YYYY-MM') AS period
+          FROM employees e
+          WHERE e.start_date IS NOT NULL ${empWhere}
+          UNION
+          SELECT TO_CHAR(e.coverage_start_date, 'YYYY-MM') AS period
+          FROM employees e
+          WHERE e.coverage_start_date IS NOT NULL ${empWhere}
+        ) sub
+        WHERE period IS NOT NULL AND period != ''
+      `, empVals).catch(() => ({ rows: [] })),
+
+      pool.query(`
+        SELECT DISTINCT period_month AS period
+        FROM coverage_uploads
+        WHERE ${covConds.join(" AND ")}
+      `, covVals).catch(() => ({ rows: [] })),
+    ]);
+
+    const periodSet = new Set();
+    for (const r of empRes.rows) if (r.period) periodSet.add(r.period);
+    for (const r of covRes.rows) if (r.period) periodSet.add(r.period);
+
+    // Always guarantee current month is present as fallback
+    const now = new Date();
+    periodSet.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+
+    // Newest first
+    const periods = Array.from(periodSet).sort((a, b) => b.localeCompare(a)).slice(0, 36);
+
+    sendJson(innerRes, 200, { ok: true, data: periods });
+  })(req, res, url);
+}
+
 module.exports = {
   handleDashboardSummary,
   handleDashboardWorkspaceSummary,
@@ -1662,4 +1720,5 @@ module.exports = {
   handleDashboardBirthdays,
   handleDashboardEvents,
   handleDashboardEventDelete,
+  handleDashboardPeriods,
 };

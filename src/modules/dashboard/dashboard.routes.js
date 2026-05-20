@@ -9,6 +9,7 @@ const {
   handleDashboardBirthdays,
   handleDashboardEvents,
   handleDashboardEventDelete,
+  handleDashboardPeriods,
 } = require("./dashboard.controller");
 
 async function handleDashboardRoutes(req, res, url) {
@@ -47,6 +48,10 @@ async function handleDashboardRoutes(req, res, url) {
   }
   if (req.method === "GET" && p === "/dashboard/birthdays") {
     handleDashboardBirthdays(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/periods") {
+    handleDashboardPeriods(req, res, url);
     return true;
   }
   if ((req.method === "GET" || req.method === "POST") && p === "/dashboard/events") {
