@@ -866,7 +866,33 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         const coverageResult = await pool.query(coverageQuery, coverageValues).catch(() => null);
 
         if (coverageResult?.rows?.length) {
-          coverageByMunicipality = buildMunicipalityDistribution(coverageResult.rows);
+          // Merge rows whose municipality names differ only in accents/casing
+          // (e.g. "PUERTO GAITAN" from uploads vs "Puerto Gaitán" from municipalities table)
+          const normKey = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+          const seenMun = new Map();
+          const mergedRows = [];
+          for (const row of coverageResult.rows) {
+            const key = normKey(row.municipality_name);
+            if (seenMun.has(key)) {
+              const idx = seenMun.get(key);
+              const ex  = mergedRows[idx];
+              mergedRows[idx] = {
+                // prefer the name/id from the municipalities table (non-null id = canonical)
+                municipality_id:   ex.municipality_id ?? row.municipality_id,
+                municipality_name: ex.municipality_id != null ? ex.municipality_name
+                                 : row.municipality_id != null ? row.municipality_name
+                                 : ex.municipality_name,
+                required_tc:   (Number(ex.required_tc)   || 0) + (Number(row.required_tc)   || 0),
+                required_mt:   (Number(ex.required_mt)   || 0) + (Number(row.required_mt)   || 0),
+                contracted_tc: (Number(ex.contracted_tc) || 0) + (Number(row.contracted_tc) || 0),
+                contracted_mt: (Number(ex.contracted_mt) || 0) + (Number(row.contracted_mt) || 0),
+              };
+            } else {
+              seenMun.set(key, mergedRows.length);
+              mergedRows.push({ ...row });
+            }
+          }
+          coverageByMunicipality = buildMunicipalityDistribution(mergedRows);
           requiredTc = coverageByMunicipality.reduce((sum, item) => sum + item.requiredTc, 0);
           requiredMt = coverageByMunicipality.reduce((sum, item) => sum + item.requiredMt, 0);
         }

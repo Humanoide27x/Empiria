@@ -412,9 +412,37 @@ function buildGauge(d) {
 }
 
 function buildCoverageModal(d) {
-  const items = (d.coverageByMunicipality || [])
-    .filter(m => (m.requiredTotal > 0) || (m.contractedTotal > 0))
-    .filter(m => String(m.municipalityName || "").trim().toUpperCase() !== "VILLAVICENCIO")
+  const normMun = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+
+  // Deduplicate by accent-normalized name, then filter and sort
+  const dedupMap = new Map();
+  for (const m of (d.coverageByMunicipality || [])) {
+    const key = normMun(m.municipalityName);
+    if (key === "VILLAVICENCIO") continue;
+    if (!((m.requiredTotal > 0) || (m.contractedTotal > 0))) continue;
+    if (dedupMap.has(key)) {
+      const ex = dedupMap.get(key);
+      dedupMap.set(key, {
+        ...ex,
+        requiredTc:      (ex.requiredTc      || 0) + (m.requiredTc      || 0),
+        contractedTc:    (ex.contractedTc    || 0) + (m.contractedTc    || 0),
+        requiredMt:      (ex.requiredMt      || 0) + (m.requiredMt      || 0),
+        contractedMt:    (ex.contractedMt    || 0) + (m.contractedMt    || 0),
+        requiredTotal:   (ex.requiredTotal   || 0) + (m.requiredTotal   || 0),
+        contractedTotal: (ex.contractedTotal || 0) + (m.contractedTotal || 0),
+      });
+    } else {
+      dedupMap.set(key, { ...m });
+    }
+  }
+  const items = Array.from(dedupMap.values())
+    .map(m => {
+      const req = m.requiredTotal || 0;
+      const cont = m.contractedTotal || 0;
+      const pct = req > 0 ? Math.round((cont / req) * 100) : 0;
+      const st = !req ? "SIN_OPERACION" : pct >= 85 ? "ESTABLE" : pct >= 60 ? "ALERTA" : "CRITICO";
+      return { ...m, coveragePercent: pct, coverageStatus: st };
+    })
     .sort((a, b) => String(a.municipalityName || "").localeCompare(String(b.municipalityName || ""), "es"));
 
   const rows = items.map(m => {
