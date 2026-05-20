@@ -38,6 +38,7 @@ let _lastData         = null;
 let _selectedMonth    = new Date().getMonth() + 1;
 let _selectedYear     = new Date().getFullYear();
 let _availablePeriods = []; // YYYY-MM strings, newest first
+let _sisbenItems      = []; // items for sisben donut face
 
 function _clearDashboardHrTimers() {
   if (_timer) { clearInterval(_timer); _timer = null; }
@@ -521,6 +522,73 @@ function buildComplianceCard({ title, vigente, proximo, vencido, total, inactivo
   </div>`;
 }
 
+function buildSisbenCarousel(sisben, total) {
+  const conDoc = sisben.vigente + sisben.proximo + sisben.vencido;
+
+  _sisbenItems = [
+    { label: "Vigente",        value: sisben.vigente,        color: "#2ECF9A" },
+    { label: "Próx. a vencer", value: sisben.proximo,        color: "#F7C948" },
+    { label: "Vencido",        value: sisben.vencido,        color: "#FF4D4F" },
+    { label: "Sin SISBEN",     value: sisben.sinSisben || 0, color: "#94A3B8" },
+  ].filter(i => i.value > 0);
+
+  const counter = (label, value, color) => `
+    <div class="hr-c3-item">
+      <span class="hr-c3-num" style="color:${color}">${fmtN(value)}</span>
+      <span class="hr-c3-lbl">${label}</span>
+    </div>`;
+
+  const faceA = `
+  <div id="hrSisbenFaceA" class="hr-sisben-face">
+    <p class="hr-card-ttl">SISBEN <span class="hr-flip-hint">↻</span></p>
+    <div class="hr-c3-grid">
+      ${counter("Vigentes",       sisben.vigente, "#2ECF9A")}
+      <div class="hr-c3-sep"></div>
+      ${counter("Próx. a vencer", sisben.proximo, "#F7C948")}
+      <div class="hr-c3-sep"></div>
+      ${counter("Vencidos",       sisben.vencido, "#FF4D4F")}
+    </div>
+    <div class="hr-c3-footer">
+      <span>SISBEN: <strong>${fmtN(conDoc)}</strong> de <strong>${fmtN(total)}</strong> activos</span>
+      ${sisben.inactivos > 0 ? `<span class="hr-c3-inactivos">&nbsp;&nbsp;·&nbsp;&nbsp;<strong>${fmtN(sisben.inactivos)}</strong> inactivos</span>` : ""}
+    </div>
+  </div>`;
+
+  const active   = _sisbenItems;
+  const totalDn  = active.reduce((s, i) => s + i.value, 0);
+  const trackCir = `<circle cx="55" cy="55" r="${DONUT_R}" fill="none" stroke="#E2E8F0" stroke-width="16"/>`;
+  const arcs     = active.map((item, i) => `
+    <circle id="hrSisbenDn${i}" cx="55" cy="55" r="${DONUT_R}"
+      fill="none" stroke="${item.color}" stroke-width="16" stroke-linecap="butt"
+      transform="rotate(-90, 55, 55)"
+      stroke-dasharray="0 ${DONUT_CIRC}"
+      style="transition:stroke-dasharray .65s cubic-bezier(.4,0,.2,1);"/>`).join("");
+
+  const legend = active.map(item => {
+    const pct = totalDn > 0 ? Math.round((item.value / totalDn) * 100) : 0;
+    return `<div class="hr-legend-item">
+      <span class="hr-legend-dot" style="background:${item.color}"></span>
+      <span class="hr-legend-label">${escapeHtml(item.label)}</span>
+      <span class="hr-legend-val">${fmtN(item.value)} · ${pct}%</span>
+    </div>`;
+  }).join("");
+
+  const faceB = `
+  <div id="hrSisbenFaceB" class="hr-sisben-face" style="display:none">
+    <p class="hr-card-ttl">SISBEN <span class="hr-flip-hint">↻</span></p>
+    <div class="hr-donut-wrap">
+      <svg class="hr-donut-svg" viewBox="0 0 110 110">${trackCir}${arcs}</svg>
+      <div class="hr-legend">${legend}</div>
+    </div>
+  </div>`;
+
+  return `
+  <div class="hr-card hr-sisben-card" id="hrSisbenCard">
+    ${faceA}
+    ${faceB}
+  </div>`;
+}
+
 function buildGender(d) {
   const R = DONUT_R, CIRC = DONUT_CIRC;
   const mFill = d.gT > 0 ? (d.mN / d.gT) * CIRC : 0;
@@ -878,9 +946,7 @@ function buildWorkspace(d) {
     <div class="hr-row-4">
       ${buildExperiencia(d)}
       ${buildCursosManipulacion(d)}
-      ${buildComplianceCard({ title: "SISBEN",
-          vigente: sisben.vigente, proximo: sisben.proximo, vencido: sisben.vencido,
-          total: d.activos, inactivos: sisben.inactivos, docLabel: "SISBEN" })}
+      ${buildSisbenCarousel(sisben, d.activos)}
       ${buildComplianceCard({ title: "Certificados de Residencia",
           vigente: cert.vigente,   proximo: cert.proximo,   vencido: cert.vencido,
           total: d.activos, inactivos: cert.inactivos, docLabel: "Certificados" })}
@@ -1033,6 +1099,24 @@ function wireEvents() {
   }
   root?.querySelector(".hr-bday-prev")?.addEventListener("click", () => carouselStep(-1));
   root?.querySelector(".hr-bday-next")?.addEventListener("click", () => carouselStep(1));
+
+  // SISBEN card flip
+  const sisbenCard = document.getElementById("hrSisbenCard");
+  if (sisbenCard) {
+    sisbenCard.addEventListener("click", () => {
+      const faceA = document.getElementById("hrSisbenFaceA");
+      const faceB = document.getElementById("hrSisbenFaceB");
+      if (!faceA || !faceB) return;
+      const showingA = faceB.style.display === "none";
+      faceA.style.display = showingA ? "none" : "";
+      faceB.style.display = showingA ? ""     : "none";
+      if (showingA) {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          animateDonut("hrSisbenDn", _sisbenItems);
+        }));
+      }
+    });
+  }
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -1279,6 +1363,13 @@ function buildStyles() {
 #${ROOT_ID} .hr-tag{font-size:11px;font-weight:500;color:#64748B;background:#F1F5F9;border-radius:99px;padding:2px 8px;}
 #${ROOT_ID} .hr-tag--warn{color:#FF4D4F;background:#FFF1F0;}
 #${ROOT_ID} .hr-tag--info{color:#0B7CFF;background:#EFF6FF;}
+
+/* ── SISBEN carousel card ── */
+#${ROOT_ID} .hr-sisben-card{cursor:pointer;user-select:none;}
+#${ROOT_ID} .hr-sisben-card:hover{box-shadow:0 0 0 2px #CBD5E1;}
+#${ROOT_ID} .hr-flip-hint{font-size:10px;color:var(--c-muted);margin-left:4px;opacity:.65;}
+#${ROOT_ID} .hr-sisben-face .hr-donut-wrap{padding-left:0;justify-content:flex-start;gap:16px;}
+#${ROOT_ID} .hr-sisben-face .hr-donut-svg{width:120px;height:120px;}
 
 /* ── Donut ── */
 #${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:20px;padding-left:44px;}
