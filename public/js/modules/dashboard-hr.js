@@ -244,7 +244,6 @@ function buildMultiDonut({ idPrefix, items, title, centerSub }) {
     <div class="hr-donut-wrap">
       <svg class="hr-donut-svg" viewBox="0 0 110 110">
         ${trackCircle}${arcs}
-        <text x="55" y="58" text-anchor="middle" class="hr-donut-sub">${escapeHtml(centerSub)}</text>
       </svg>
       <div class="hr-legend">${legend}</div>
     </div>
