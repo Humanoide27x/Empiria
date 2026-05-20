@@ -73,7 +73,8 @@
       "Bash(tasklist)",
       "Bash(kill 15484)",
       "Bash(kill 19804)",
-      "Bash(year=2026 2>&1)"
+      "Bash(year=2026 2>&1)",
+      "Bash(git push *)"
     ]
   }
 }
