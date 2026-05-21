@@ -109,7 +109,7 @@ export async function loadCalculatorModule() {
   }
 
   try {
-    const contractId = state.currentUser?.contractId;
+    const contractId = state.currentUser?.contractId || state.cfgContractConfigId;
     if (contractId) {
       const r = await apiFetch(`/config/contracts/${contractId}/salary-config`);
       _salaryConfigData = r.data || {};
