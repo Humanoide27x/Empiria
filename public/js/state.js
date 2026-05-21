@@ -169,4 +169,8 @@ export const moduleViews = {
     title: "Repositorio de Hojas de Vida",
     submodules: [],
   },
+  gestion_dotacion: {
+    title: "Dotación",
+    submodules: [],
+  },
 };

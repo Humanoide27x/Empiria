@@ -24,6 +24,7 @@ export function renderModuleNav(modules = []) {
     "nomina_novedades",
     "registro_novedades",
     "seguridad_salud_trabajo",
+    "gestion_dotacion",
     "repositorio_hojas_vida",
     "administracion_configuraciones",
   ];
@@ -71,6 +72,7 @@ export function renderModuleNav(modules = []) {
       "dashboard_hr",
       "cobertura_calculadora",
       "administracion_configuraciones",
+      "gestion_dotacion",
     ]);
     const submodules = noSubmoduleKeys.has(moduleKey) ? [] : (view?.submodules || []);
 
@@ -112,6 +114,7 @@ export function renderModuleNav(modules = []) {
         "dashboard_hr",
         "cobertura_calculadora",
         "administracion_configuraciones",
+        "gestion_dotacion",
       ]);
       const hasSubmodules = !noSubKeys.has(moduleKey) && Boolean(moduleViews[moduleKey]?.submodules?.length);
       const isSameExpanded = state.expandedModule === moduleKey;
@@ -295,6 +298,11 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   if (moduleKey === "repositorio_hojas_vida") {
     const { loadRepositorioHvModule } = await import('./modules/repositorio-hv.js');
     return await loadRepositorioHvModule();
+  }
+
+  if (moduleKey === "gestion_dotacion") {
+    const { loadDotacionModule } = await import('./modules/dotacion.js');
+    return await loadDotacionModule(moduleConfig);
   }
 
   if (!submoduleKey) {

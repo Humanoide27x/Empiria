@@ -5641,7 +5641,6 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     "createdAt": "2026-05-20T21:47:13.781Z"
-
   },
   {
     "id": 472,
@@ -5654,7 +5653,6 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     "createdAt": "2026-05-21T00:58:48.903Z"
-
   },
   {
     "id": 473,
@@ -5667,7 +5665,6 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     "createdAt": "2026-05-21T01:06:18.520Z"
-
   },
   {
     "id": 474,
@@ -5776,6 +5773,173 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     "createdAt": "2026-05-21T13:35:11.896Z"
-
+  },
+  {
+    "id": 483,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T16:57:58.174Z"
+  },
+  {
+    "id": 484,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T17:14:24.964Z"
+  },
+  {
+    "id": 485,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T18:08:33.126Z"
+  },
+  {
+    "id": 486,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T18:28:49.164Z"
+  },
+  {
+    "id": 487,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::ffff:127.0.0.1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T18:49:44.354Z"
+  },
+  {
+    "id": 488,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T18:49:46.140Z"
+  },
+  {
+    "id": 489,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:02:50.222Z"
+  },
+  {
+    "id": 490,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:05:56.037Z"
+  },
+  {
+    "id": 491,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:16:38.324Z"
+  },
+  {
+    "id": 492,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:18:40.943Z"
+  },
+  {
+    "id": 493,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:22:02.525Z"
+  },
+  {
+    "id": 494,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:35:57.071Z"
+  },
+  {
+    "id": 495,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:47:26.423Z"
+  },
+  {
+    "id": 496,
+    "username": "daniel.torrado",
+    "userId": 10,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-21T19:50:32.987Z"
   }
 ]

@@ -36,6 +36,8 @@ const MODULES = Object.freeze({
   HV_REPOSITORY: "repositorio_hojas_vida",
 
   DASHBOARD_HR: "dashboard_hr",
+
+  DOTACION: "gestion_dotacion",
 });
 
 const ACTIONS = Object.freeze({
@@ -247,6 +249,34 @@ const RESUME_REPOSITORY_PERMISSIONS = Object.freeze({
   ]),
 });
 
+const DOTACION_PERMISSIONS_FULL = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE, ACTIONS.DELETE],
+  features: Object.freeze([
+    "ver_dotacion",
+    "gestionar_catalogo",
+    "gestionar_stock",
+    "asignar_dotacion",
+    "editar_asignacion",
+    "eliminar_asignacion",
+  ]),
+});
+
+const DOTACION_PERMISSIONS_HR = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE],
+  features: Object.freeze([
+    "ver_dotacion",
+    "gestionar_catalogo",
+    "gestionar_stock",
+    "asignar_dotacion",
+    "editar_asignacion",
+  ]),
+});
+
+const DOTACION_PERMISSIONS_VIEW = Object.freeze({
+  allowedActions: [ACTIONS.VIEW],
+  features: Object.freeze(["ver_dotacion"]),
+});
+
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMINISTRATOR]: {
     scope: SCOPE_RULES.ALL,
@@ -280,6 +310,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.SST]: SST_PERMISSIONS,
       [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
+      [MODULES.DOTACION]: DOTACION_PERMISSIONS_FULL,
     },
   },
 
@@ -333,6 +364,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.SST]: SST_PERMISSIONS,
       [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
+      [MODULES.DOTACION]: DOTACION_PERMISSIONS_HR,
     },
   },
 

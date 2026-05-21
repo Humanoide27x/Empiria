@@ -77,7 +77,19 @@
       "Bash(git push *)",
       "Bash(git fetch *)",
       "Bash(git stash *)",
-      "Bash(git pull *)"
+      "Bash(git pull *)",
+      "Bash(git commit *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "Bash(dir \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\src\\\\modules\" /B)",
+      "Bash(dir \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\src\\\\db\" /B)",
+      "Bash(dir C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\src\\\\db *)",
+      "Bash(dir C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\src\\\\db\\\\migrations *)",
+      "Bash(Get-Process node *)",
+      "Bash(Select-Object Id, CPU, WorkingSet, StartTime)",
+      "Bash(Format-Table)",
+      "Bash(kill 13692)",
+      "Bash(pkill -f \"node src/app.js\")"
     ]
   }
 }

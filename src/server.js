@@ -22,6 +22,7 @@ const { handleCalculatorRoutes } = require("./modules/calculator/calculator.rout
 const { handleModuleConfigRoutes } = require("./modules/config/module_config.routes");
 const { handleClientsRoutes }      = require("./modules/config/clients/clients.routes");
 const { handleNominaRoutes }       = require("./modules/nomina/nomina.routes");
+const { handleDotacionRoutes }     = require("./modules/dotacion/dotacion.routes");
 
 const { requireAuth } = require("./modules/auth/auth.helpers");
 const { handleSaveDraft } = require("./modules/employees/drafts.controller");
@@ -337,6 +338,9 @@ async function requestHandler(req, res) {
 
   const clientsHandled = await handleClientsRoutes(req, res, url);
   if (clientsHandled) return;
+
+  const dotacionHandled = await handleDotacionRoutes(req, res, url);
+  if (dotacionHandled) return;
 
   const employeesHandled = await handleEmployeesRoutes(req, res, url);
   if (employeesHandled) return;
