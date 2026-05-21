@@ -152,7 +152,11 @@ export async function loadCoverageModule() {
     const mtDifference = contractedMt - requiredMt;
 
     let coverageStatus = "EXACTO";
-    if (tcDifference < 0 || mtDifference < 0) {
+    const totalContracted = contractedTc + contractedMt;
+    const totalRequired   = requiredTc   + requiredMt;
+    if (totalContracted === totalRequired && (tcDifference !== 0 || mtDifference !== 0)) {
+      coverageStatus = "MAL_CONTRATADO";
+    } else if (tcDifference < 0 || mtDifference < 0) {
       coverageStatus = "FALTANTE";
     } else if (tcDifference > 0 || mtDifference > 0) {
       coverageStatus = "SOBRANTE";
@@ -251,9 +255,10 @@ export async function loadCoverageModule() {
 
   const getCoverageStatusClass = (value) => {
     const s = normalize(value);
-    if (s === "EXACTO")   return "coverage-exacto";
-    if (s === "FALTANTE") return "coverage-faltante";
-    if (s === "SOBRANTE") return "coverage-sobrante";
+    if (s === "EXACTO")          return "coverage-exacto";
+    if (s === "FALTANTE")        return "coverage-faltante";
+    if (s === "SOBRANTE")        return "coverage-sobrante";
+    if (s === "MAL_CONTRATADO")  return "coverage-mal-contratado";
     return "coverage-none";
   };
 
@@ -266,9 +271,10 @@ export async function loadCoverageModule() {
 
   const getCoverageStatusLabel = (value) => {
     const s = normalize(value);
-    if (s === "FALTANTE") return "FALTANTE";
-    if (s === "SOBRANTE") return "SOBRANTE";
-    if (s === "EXACTO")   return "EXACTO";
+    if (s === "FALTANTE")       return "FALTANTE";
+    if (s === "SOBRANTE")       return "SOBRANTE";
+    if (s === "EXACTO")         return "EXACTO";
+    if (s === "MAL_CONTRATADO") return "MAL CONTRATADO";
     return "SIN ESTADO";
   };
 
@@ -552,6 +558,7 @@ export async function loadCoverageModule() {
               <option value="FALTANTE"${normalize(coverageStatus) === "FALTANTE" ? " selected" : ""}>Faltante</option>
               <option value="EXACTO"${normalize(coverageStatus) === "EXACTO" ? " selected" : ""}>Exacto</option>
               <option value="SOBRANTE"${normalize(coverageStatus) === "SOBRANTE" ? " selected" : ""}>Sobrante</option>
+              <option value="MAL_CONTRATADO"${normalize(coverageStatus) === "MAL_CONTRATADO" ? " selected" : ""}>Mal contratado</option>
             </select>
             <select id="coverageFilterChange">
               <option value="">Cambio vs anterior</option>

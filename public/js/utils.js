@@ -290,11 +290,7 @@ export function getPersonnelMunicipality(item = {}) {
 // ── Personnel form helpers ────────────────────────────────────────────────────
 
 export function isInstitutionalTabEnabled(cargoReal) {
-  return [
-    "OPERARIO MANIPULADOR DE ALIMENTOS",
-    "GESTOR DE ZONA",
-    "AUXILIAR DE GESTOR DE ZONA",
-  ].includes(String(cargoReal || "").toUpperCase());
+  return String(cargoReal || "").toUpperCase() === "OPERARIO MANIPULADOR DE ALIMENTOS";
 }
 
 export function syncPersonnelDraftField(target) {

@@ -315,9 +315,15 @@ function mapEmployee(row) {
     foodHandlingExamExpirationDate:
       row.food_handling_exam_expiry_date || null,
 
-    shirtSize: row.shirt_size || "",
-    pantsSize: row.pants_size || "",
-    shoeSize:  row.shoe_size  || "",
+    shirtSize:    row.shirt_size    || "",
+    pantsSize:    row.pants_size    || "",
+    shoeSize:     row.shoe_size     || "",
+    contractType: row.contract_type || "",
+
+    accountType:        row.account_type        || "",
+    bankName:           row.bank_name           || "",
+    accountNumber:      row.account_number      || "",
+    auxiliarGestorZona: row.auxiliar_gestor_zona || "",
 
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -466,12 +472,14 @@ async function createEmployee(data) {
       institution_id, site_id, modality,
       eps, pension_fund, compensation_box, arl,
       arl_vinculation_date, coverage_start_date,
-      status, workday_type, gestor_zona, municipios_a_cargo
+      status, workday_type, gestor_zona, municipios_a_cargo,
+      shirt_size, pants_size, shoe_size, contract_type
     ) VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
       $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-      $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
+      $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,
+      $44,$45,$46,$47
     ) RETURNING *`,
     [
       toNumberOrNull(data.tenantId || data.tenant_id) || 1,
@@ -517,6 +525,10 @@ async function createEmployee(data) {
       data.workdayType || data.workday_type || "TC",
       data.gestorZona || data.gestor_zona || "",
       data.municipiosACargo || data.municipios_a_cargo || "",
+      data.shirtSize    || "",
+      data.pantsSize    || "",
+      data.shoeSize     || "",
+      data.contractType || data.contract_type || "",
     ]
   );
 
@@ -599,6 +611,11 @@ async function updateEmployee(id, data) {
       start_date = $61, municipios_a_cargo = $62,
       residence_zone = $63,
       residence_certificate_issue_date = $64,
+      account_type        = $65,
+      bank_name           = $66,
+      account_number      = $67,
+      auxiliar_gestor_zona = $68,
+      contract_type       = $69,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *`,
@@ -668,6 +685,11 @@ async function updateEmployee(id, data) {
       data.municipiosACargo || data.municipios_a_cargo || "",
       data.residenceZone || data.zona_residencia || "",
       safeDate(data.residenceCertificateIssueDate || data.residence_certificate_issue_date),
+      data.accountType        || "",
+      data.bankName           || "",
+      data.accountNumber      || "",
+      data.auxiliarGestorZona || "",
+      data.contractType       || data.contract_type || "",
     ]
   );
 

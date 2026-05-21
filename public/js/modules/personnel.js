@@ -9,7 +9,7 @@ import {
 } from '../utils.js';
 import {
   META_MUNICIPALITIES, COLOMBIA_DEPARTMENTS, LICITACION_CARGOS,
-  CARGOS_REALES, ESTADOS_PERSONAL,
+  CARGOS_REALES, ESTADOS_PERSONAL, BANKS,
 } from '../constants.js';
 import { showError, showSuccess, showWarning } from '../toast.js';
 import { openModule } from '../nav.js';
@@ -164,8 +164,14 @@ function getPersonnelSalary(item) {
   }).format(numeric);
 }
 
+const CONTRACT_TYPE_LABELS = {
+  obra_labor:           "Obra o labor",
+  termino_fijo:         "Término fijo",
+  prestacion_servicios: "Prestación de servicios",
+};
 function getPersonnelContractType(item) {
-  return item.contractType || item.tipo_contrato || "Sin definir";
+  const raw = item.contractType || item.tipo_contrato || "";
+  return CONTRACT_TYPE_LABELS[raw] || raw || "Sin definir";
 }
 
 function getPersonnelWorkTime(item) {
@@ -652,7 +658,8 @@ function _refreshPersonnelSection() {
   const birthDepartment      = dv("birthDepartment");
   const residenceMunicipality = dv("residenceMunicipality");
   const vinculationCompanyId  = dv("companyId", state.currentUser?.companyId ?? "");
-  const gestorNames = _cachedPayload?.gestorNames || [];
+  const gestorNames          = _cachedPayload?.gestorNames         || [];
+  const auxiliarGestorNames  = _cachedPayload?.auxiliarGestorNames  || [];
 
   const educationalCatalog =
     (_cachedPayload?.educationalCatalog && Object.keys(_cachedPayload.educationalCatalog).length > 0)
@@ -688,7 +695,7 @@ function _refreshPersonnelSection() {
 
   let html = "";
   if      (activeTab === "identificacion")  html = buildTabIdentificacion(dv, expeditionDepartment, birthDepartment, state.personnelViewMode === "edit");
-  else if (activeTab === "vinculacion")     html = buildTabVinculacion(dv, vinculationCompanyId, gestorNames);
+  else if (activeTab === "vinculacion")     html = buildTabVinculacion(dv, vinculationCompanyId, gestorNames, auxiliarGestorNames);
   else if (activeTab === "licitacion")      html = buildTabLicitacion(dv, selected);
   else if (activeTab === "datos_personales") html = buildTabDatosPersonales(dv, residenceMunicipality);
   else if (activeTab === "institucional")   html = buildTabInstitucional(
@@ -1017,7 +1024,7 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
 
 // ── Part 5: tabs vinculacion, licitacion, datos_personales ───────────────────
 
-function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
+function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames, auxiliarGestorNames = []) {
   const currentGestor = draftValue("gestorZona");
   const gestorOptions = gestorNames.map((g) => `
     <option value="${escapeAttr(g)}" ${currentGestor === g ? "selected" : ""}>${escapeHtml(g)}</option>
@@ -1026,6 +1033,17 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
   // Si el gestor guardado no está en la lista activa, lo preservamos como opción fantasma
   const phantomOption = currentGestor && !gestorNames.includes(currentGestor)
     ? `<option value="${escapeAttr(currentGestor)}" selected>${escapeHtml(currentGestor)}</option>`
+    : "";
+
+  const currentAuxiliar   = draftValue("auxiliarGestorZona");
+  const hasAuxiliarValue  = draftValue("hasAuxiliarGestor");
+  const showAuxiliarBlock = hasAuxiliarValue === "true";
+
+  const auxiliarOptions = auxiliarGestorNames.map((a) =>
+    `<option value="${escapeAttr(a)}" ${currentAuxiliar === a ? "selected" : ""}>${escapeHtml(a)}</option>`
+  ).join("");
+  const auxiliarPhantom = currentAuxiliar && !auxiliarGestorNames.includes(currentAuxiliar)
+    ? `<option value="${escapeAttr(currentAuxiliar)}" selected>${escapeHtml(currentAuxiliar)}</option>`
     : "";
 
   // Para usuarios de contrato la empresa/contrato viene fija de su sesión
@@ -1079,6 +1097,49 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames) {
           </select>
         </label>
       </div>
+
+      <div class="form-grid form-grid-2">
+        <label>
+          <span>¿Tiene Auxiliar de Gestor de Zona asignado?</span>
+          <select name="hasAuxiliarGestor">
+            <option value="">Selecciona</option>
+            <option value="true"  ${hasAuxiliarValue === "true"  ? "selected" : ""}>Sí</option>
+            <option value="false" ${hasAuxiliarValue === "false" ? "selected" : ""}>No</option>
+          </select>
+        </label>
+        <label class="${showAuxiliarBlock ? "" : "hidden"}" id="auxiliarGestorZonaWrap">
+          <span>Auxiliar de Gestor de Zona</span>
+          <select name="auxiliarGestorZona">
+            <option value="">— Sin asignar —</option>
+            ${auxiliarOptions}
+            ${auxiliarPhantom}
+          </select>
+        </label>
+      </div>
+
+      <div class="form-grid form-grid-3">
+        <label>
+          <span>Tipo de cuenta</span>
+          <select name="accountType">
+            <option value="">Selecciona</option>
+            <option value="Ahorros"  ${draftValue("accountType") === "Ahorros"  ? "selected" : ""}>Ahorros</option>
+            <option value="Corriente" ${draftValue("accountType") === "Corriente" ? "selected" : ""}>Corriente</option>
+          </select>
+        </label>
+        <label>
+          <span>Banco</span>
+          <select name="bankName">
+            <option value="">Selecciona banco</option>
+            ${BANKS.map(b => `<option value="${escapeAttr(b.name)}"${draftValue("bankName") === b.name ? " selected" : ""}>${b.code} — ${escapeHtml(b.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Número de cuenta</span>
+          <input name="accountNumber" type="text" data-only-numbers
+            placeholder="Número de cuenta"
+            value="${escapeAttr(draftValue("accountNumber"))}" />
+        </label>
+      </div>
     </section>
   `;
 }
@@ -1095,9 +1156,10 @@ function buildTabLicitacion(draftValue, selected) {
   const licitacionOpts = (_contractPositions?.licitacion?.length)
     ? _contractPositions.licitacion
     : LICITACION_CARGOS;
-  const realesOpts = (_contractPositions?.real?.length)
+  const realesBase = (_contractPositions?.real?.length)
     ? _contractPositions.real
     : CARGOS_REALES;
+  const realesOpts = realesBase;
 
   // Status: auto-computed from terminationDate — no editable dropdown
   const hasTermination  = String(draftValue("hasTermination", "")) === "true";
@@ -1166,6 +1228,19 @@ function buildTabLicitacion(draftValue, selected) {
           </div>
         </label>
       </div>
+
+      ${presentado === "true" ? `
+        <div class="licit-cargo-visual">
+          <div class="licit-cargo-badge licit-cargo-badge--offer">
+            <small>Cargo licitación</small>
+            <strong>${escapeHtml(draftValue("offerPosition") || "—")}</strong>
+          </div>
+          <div class="licit-cargo-badge licit-cargo-badge--real">
+            <small>Cargo operacional</small>
+            <strong>${escapeHtml(draftValue("cargo_real") || cargoReal || "—")}</strong>
+          </div>
+        </div>
+      ` : ""}
 
       ${munPickerHtml}
     </section>
@@ -1250,10 +1325,8 @@ function buildTabInstitucional(
     return `
       <section class="personnel-section">
         <div class="personnel-note-box">
-          Esta pestaña solo se habilita si el cargo real es:
-          <strong>OPERARIO MANIPULADOR DE ALIMENTOS</strong>,
-          <strong>GESTOR DE ZONA</strong> o
-          <strong>AUXILIAR DE GESTOR DE ZONA</strong>.
+          Esta pestaña solo se habilita para el cargo operacional:
+          <strong>OPERARIO MANIPULADOR DE ALIMENTOS</strong>.
         </div>
       </section>
     `;
@@ -1277,6 +1350,13 @@ function buildTabInstitucional(
     `;
   }
 
+  const catalogMuns = new Set(
+    Object.keys(_cachedPayload?.educationalCatalog || {}).map(k => normalizeCatalogTextFn(k))
+  );
+  const institutionalMunicipalities = META_MUNICIPALITIES.filter(
+    (m) => catalogMuns.has(normalizeCatalogTextFn(m.name))
+  );
+
   return `
     <section class="personnel-section">
       <div class="form-grid form-grid-2">
@@ -1284,7 +1364,7 @@ function buildTabInstitucional(
           <span>Municipio *</span>
           <select name="educationalMunicipality" required>
             <option value="">Selecciona municipio</option>
-            ${META_MUNICIPALITIES.map((m) => `
+            ${institutionalMunicipalities.map((m) => `
               <option value="${escapeAttr(m.name)}"
                 ${normalizeCatalogTextFn(municipalityNameResolved) === normalizeCatalogTextFn(m.name) ? "selected" : ""}>
                 ${escapeHtml(m.name)}
@@ -1329,10 +1409,16 @@ function buildTabInstitucional(
 
 function buildTabContratacion(draftValue, cargoReal) {
   const EPS_LIST = [
-    "ALIANSALUD EPS","ASMET SALUD EPS","CAJACOPI EPS","CAPITAL SALUD EPS",
-    "COMPENSAR EPS","COOSALUD EPS","EMSSANAR EPS","FAMISANAR EPS",
-    "MUTUAL SER EPS","NUEVA EPS","SALUD TOTAL EPS","SANITAS EPS",
-    "SAVIA SALUD EPS","SURA EPS",
+    "ASMET",
+    "PROTEGER EPS",
+    "CAPITAL SALUD",
+    "COOSALUD",
+    "FAMISANAR",
+    "NUEVA EPS",
+    "SALUD TOTAL",
+    "SANITAS",
+    "MALLAMAS",
+    "PIJAOS",
   ];
   const AFP_LIST = ["COLPENSIONES","PORVENIR","PROTECCIÓN","SKANDIA","COLFONDOS"];
 
@@ -1397,7 +1483,11 @@ function buildTabContratacion(draftValue, cargoReal) {
           <span>Tipo de Contrato *</span>
           <select name="contractType" required>
             ${renderOptions(
-              ["obra_labor","termino_fijo","prestacion_servicios"],
+              [
+                { value: "obra_labor",           label: "Obra o labor" },
+                { value: "termino_fijo",          label: "Término fijo" },
+                { value: "prestacion_servicios",  label: "Prestación de servicios" },
+              ],
               draftValue("contractType"),
               "Selecciona"
             )}
@@ -1882,6 +1972,11 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     .map((p) => getPersonnelFullName(p))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "es"));
+  const auxiliarGestorNames = allPersonnel
+    .filter((p) => String(p.cargo_real || "").toUpperCase() === "AUXILIAR DE GESTOR DE ZONA")
+    .map((p) => getPersonnelFullName(p))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "es"));
 
   // Map each municipality name → gestor full name for auto-fill in Vinculación tab
   const gestorByMunicipality = {};
@@ -1893,7 +1988,8 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
       if (name) muns.forEach((mun) => { gestorByMunicipality[mun] = name; });
     });
 
-  _cachedPayload.gestorNames         = gestorNames;
+  _cachedPayload.gestorNames          = gestorNames;
+  _cachedPayload.auxiliarGestorNames  = auxiliarGestorNames;
   _cachedPayload.gestorByMunicipality = gestorByMunicipality;
 
   const managerRole = ["GESTOR DE ZONA", "AUXILIAR DE GESTOR DE ZONA"].includes(currentCargoReal);
@@ -1931,7 +2027,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
       "expeditionDepartment", "birthDepartment", "companyId",
       "municipalityId", "educationalMunicipality", "institution", "site",
       "cargo_real", "biologicalSex", "sisben", "hasResidenceCertificate", "presentedInOffer",
-      "hasTermination", "terminationDate",
+      "hasTermination", "terminationDate", "hasAuxiliarGestor",
       "birthDay", "birthMonth", "birthYear",
     ];
 
@@ -2053,6 +2149,8 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
         }
         if (e.target.name === "site")
           state.personnelDraft.educationalModality = "";
+        if (e.target.name === "hasAuxiliarGestor" && e.target.value !== "true")
+          state.personnelDraft.auxiliarGestorZona = "";
         if (e.target.name === "hasTermination" && !e.target.checked)
           state.personnelDraft.terminationDate = "";
         if (e.target.name === "cargo_real" && !isInstitutionalTabEnabled(e.target.value)) {
@@ -2179,7 +2277,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
   }
 
   if (activeTab === "vinculacion") {
-    activeSectionHtml = buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames);
+    activeSectionHtml = buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames, auxiliarGestorNames);
   }
 
   if (activeTab === "licitacion") {
@@ -2428,8 +2526,16 @@ function hydratePersonnelDraft(found) {
     site:              found.site        || found.siteName        || found.site_name        || found.sede_educativa        || "",
     educationalModality: found.educationalModality || found.modality || found.modalidad || "",
 
-    contractType: found.tipo_contrato || found.contractType || "",
-    workTimeType: found.workTimeType  || found.work_time_type || found.workdayType || found.workday_type || found.tipo_tiempo || "",
+    accountType:   found.accountType   || found.account_type   || "",
+    bankName:      found.bankName      || found.bank_name      || "",
+    accountNumber: found.accountNumber || found.account_number || "",
+
+    contractType: found.contractType  || found.contract_type  || found.tipo_contrato || "",
+    workTimeType: found.workTimeType  || found.work_time_type || found.workdayType   || found.workday_type || found.tipo_tiempo || "",
+
+    shirtSize: found.shirtSize || found.shirt_size || "",
+    pantsSize: found.pantsSize || found.pants_size || "",
+    shoeSize:  found.shoeSize  || found.shoe_size  || "",
 
     startDate:           fmtDate(found.fecha_inicio_real  || found.startDate  || found.start_date),
     coverageStartDate:   fmtDate(found.coverageStartDate  || found.coverage_start_date || found.fecha_inicio_cobertura),
@@ -2476,8 +2582,10 @@ function hydratePersonnelDraft(found) {
     observations:  Array.isArray(found.observations)  ? found.observations  : [],
     internalNotes: found.observaciones_internas || found.internalNotes || "",
 
-    gestorZona:       found.gestorZona       || found.gestor_zona       || "",
-    municipiosACargo: found.municipiosACargo  || found.municipios_a_cargo || "",
+    gestorZona:          found.gestorZona          || found.gestor_zona          || "",
+    auxiliarGestorZona:  found.auxiliarGestorZona   || found.auxiliar_gestor_zona  || "",
+    hasAuxiliarGestor:   (found.auxiliarGestorZona  || found.auxiliar_gestor_zona) ? "true" : "",
+    municipiosACargo:    found.municipiosACargo      || found.municipios_a_cargo    || "",
   };
 }
 
@@ -3062,6 +3170,9 @@ export async function handlePersonnelFormSubmit(event) {
     // Vinculación
     companyId:    d.companyId    || "",
     contractId:   d.contractId   || "",
+    accountType:   d.accountType   || "",
+    bankName:      d.bankName      || "",
+    accountNumber: d.accountNumber || "",
     municipalityId:
       document.querySelector('#personnelForm [name="municipalityId"]')?.value ||
       d.municipalityId || "",
@@ -3127,8 +3238,9 @@ export async function handlePersonnelFormSubmit(event) {
     internalNotes: d.internalNotes || "",
 
     // Gestión
-    gestorZona:       d.gestorZona       || "",
-    municipiosACargo: d.municipiosACargo || "",
+    gestorZona:         d.gestorZona         || "",
+    auxiliarGestorZona: d.auxiliarGestorZona || "",
+    municipiosACargo:   d.municipiosACargo   || "",
   };
 
   const isEdit = state.personnelViewMode === "edit" && state.personnelEditingId;

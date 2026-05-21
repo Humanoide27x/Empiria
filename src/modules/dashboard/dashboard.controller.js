@@ -622,15 +622,34 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const certExpExpr     = employeeColumns.has("residence_certificate_expiry")
         ? "e.residence_certificate_expiry" : "NULL::date";
 
-      // Cargo and education queries — only for equipo tab
-      const cargoQuery = personnelType === "equipo" && employeeColumns.has("real_position") ? `
-        SELECT
-          COALESCE(NULLIF(TRIM(e.real_position),''),'Sin cargo') AS label,
-          COUNT(*) AS value
+      // Cargo queries for equipo tab — split by licitación vs operativo
+      const isEquipo        = personnelType === "equipo";
+      const hasPresentedCol = employeeColumns.has("presented_in_offer");
+      const hasOfferedCol   = employeeColumns.has("offered_position");
+      const hasOfferCol     = employeeColumns.has("offer_position");
+
+      let offeredPosExpr = `COALESCE(NULLIF(TRIM(e.real_position),''),'Sin cargo')`;
+      if (hasOfferedCol && hasOfferCol) {
+        offeredPosExpr = `COALESCE(NULLIF(TRIM(e.offered_position),''),NULLIF(TRIM(e.offer_position),''),NULLIF(TRIM(e.real_position),''),'Sin cargo')`;
+      } else if (hasOfferedCol) {
+        offeredPosExpr = `COALESCE(NULLIF(TRIM(e.offered_position),''),NULLIF(TRIM(e.real_position),''),'Sin cargo')`;
+      }
+
+      const cargoLicitacionQuery = isEquipo && hasPresentedCol ? `
+        SELECT ${offeredPosExpr} AS label, COUNT(*) AS value
         ${employeeFromSql}
           AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
-        GROUP BY 1
-        ORDER BY COUNT(*) DESC, 1 ASC
+          AND e.presented_in_offer = true
+        GROUP BY 1 ORDER BY COUNT(*) DESC, 1 ASC
+      ` : null;
+
+      const cargoOperativoQuery = isEquipo && employeeColumns.has("real_position") ? `
+        SELECT COALESCE(NULLIF(TRIM(e.real_position),''),'Sin cargo') AS label, COUNT(*) AS value
+        ${employeeFromSql}
+          AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
+          AND UPPER(TRIM(COALESCE(e.real_position,''))) <> 'OPERARIO MANIPULADOR DE ALIMENTOS'
+          ${hasPresentedCol ? "AND e.presented_in_offer IS NOT TRUE" : ""}
+        GROUP BY 1 ORDER BY COUNT(*) DESC, 1 ASC
       ` : null;
 
       const educQuery = personnelType === "equipo" && employeeColumns.has("education_level") ? `
@@ -698,7 +717,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ${employeeFromSql}
       ` : null;
 
-      const [employeeResults, sisbenResult, certResult, cargoResult, educResult, expResult, foodResult] = await Promise.all([
+      const [employeeResults, sisbenResult, sisbenCatResult, certResult, cargoLicitResult, cargoOpResult, educResult, expResult, foodResult] = await Promise.all([
         Promise.all(employeeTasks),
         hasSisben
           ? pool.query(`
@@ -711,6 +730,21 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               ${employeeFromSql}
             `, [...employeeScope.values, refStart, refEnd]).catch(err => { console.error("[dashboard/summary] sisbenQuery falló:", err.message); return { rows: [{}] }; })
           : Promise.resolve({ rows: [{}] }),
+        hasSisben
+          ? pool.query(`
+              SELECT
+                CASE
+                  WHEN TRIM(COALESCE(e.sisben_category, '')) = '' THEN 'Sin cat.'
+                  ELSE UPPER(LEFT(TRIM(e.sisben_category), 1))
+                END AS letra,
+                COUNT(*) AS value
+              ${employeeFromSql}
+                AND UPPER(TRIM(COALESCE(e.status,''))) = 'ACTIVO'
+                AND e.sisben = true
+              GROUP BY 1
+              ORDER BY 1
+            `, employeeScope.values).catch(err => { console.error("[dashboard/summary] sisbenCatQuery falló:", err.message); return { rows: [] }; })
+          : Promise.resolve({ rows: [] }),
         hasResidenceCert
           ? pool.query(`
               SELECT
@@ -722,8 +756,11 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               ${employeeFromSql}
             `, [...employeeScope.values, refStart, refEnd]).catch(err => { console.error("[dashboard/summary] certQuery falló:", err.message); return { rows: [{}] }; })
           : Promise.resolve({ rows: [{}] }),
-        cargoQuery
-          ? pool.query(cargoQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] cargoQuery falló:", err.message); return { rows: [] }; })
+        cargoLicitacionQuery
+          ? pool.query(cargoLicitacionQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] cargoLicitacionQuery falló:", err.message); return { rows: [] }; })
+          : Promise.resolve({ rows: [] }),
+        cargoOperativoQuery
+          ? pool.query(cargoOperativoQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] cargoOperativoQuery falló:", err.message); return { rows: [] }; })
           : Promise.resolve({ rows: [] }),
         educQuery
           ? pool.query(educQuery, employeeScope.values).catch(err => { console.error("[dashboard/summary] educQuery falló:", err.message); return { rows: [] }; })
@@ -743,9 +780,11 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const birthdayRows = employeeResults[4].rows || [];
       const areaRows     = presence.has_positions ? employeeResults[5]?.rows || [] : [];
       const sisbenRow    = sisbenResult.rows[0] || {};
+      const sisbenCatRows = sisbenCatResult.rows || [];
       const certRow      = certResult.rows[0] || {};
-      const cargoRows    = cargoResult.rows || [];
-      const educRows     = educResult.rows  || [];
+      const cargoLicitRows = cargoLicitResult.rows || [];
+      const cargoOpRows    = cargoOpResult.rows    || [];
+      const educRows       = educResult.rows        || [];
       const expRows      = expResult.rows   || [];
       const foodRow      = foodResult.rows[0] || {};
 
@@ -952,11 +991,12 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           })),
           upcomingEvents,
           sisbenStats: {
-            vigente:   Number(sisbenRow.vigente    || 0),
-            proximo:   Number(sisbenRow.proximo    || 0),
-            vencido:   Number(sisbenRow.vencido    || 0),
-            sinSisben: Number(sisbenRow.sin_sisben  || 0),
-            inactivos: Number(sisbenRow.inactivos   || 0),
+            vigente:    Number(sisbenRow.vigente    || 0),
+            proximo:    Number(sisbenRow.proximo    || 0),
+            vencido:    Number(sisbenRow.vencido    || 0),
+            sinSisben:  Number(sisbenRow.sin_sisben  || 0),
+            inactivos:  Number(sisbenRow.inactivos   || 0),
+            categorias: sisbenCatRows.map(r => ({ letra: r.letra, value: Number(r.value || 0) })),
           },
           residenceCertStats: {
             vigente:        Number(certRow.vigente         || 0),
@@ -965,7 +1005,8 @@ function handleDashboardWorkspaceSummary(req, res, url) {
             sinCertificado: Number(certRow.sin_certificado || 0),
             inactivos:      Number(certRow.inactivos       || 0),
           },
-          employeesByCargo: buildDistribution(cargoRows, ["#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75","#EF9F27"]),
+          employeesByCargoLicitacion: buildDistribution(cargoLicitRows, ["#8B5CF6","#A78BFA","#7C3AED","#6D28D9","#5B21B6","#C4B5FD","#4C1D95","#DDD6FE","#9333EA","#6366F1"]),
+          employeesByCargoOperativo:  buildDistribution(cargoOpRows,   ["#0B7CFF","#2ECF9A","#F7C948","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75","#EF9F27","#CBD5E1"]),
           employeesByEducation: buildDistribution(educRows, ["#64748B","#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#CBD5E1"]),
           experienceDistribution: expRows.map(r => ({ label: r.label, value: Number(r.value || 0) })),
           foodHandlingStats: {
@@ -1026,10 +1067,11 @@ function handleDashboardKpis(req, res, url) {
       return;
     }
 
-    const contractId    = innerUrl.searchParams.get("contract_id")    ? Number(innerUrl.searchParams.get("contract_id"))    : null;
+    const contractId     = innerUrl.searchParams.get("contract_id")    ? Number(innerUrl.searchParams.get("contract_id"))    : null;
     const municipalityId = innerUrl.searchParams.get("municipality_id") ? Number(innerUrl.searchParams.get("municipality_id")) : null;
+    const personnelType  = (innerUrl.searchParams.get("type") || "").toLowerCase().trim();
 
-    const ckey = _cacheKey(user.companyId, contractId, municipalityId);
+    const ckey = _cacheKey(`${user.companyId}|${personnelType}`, contractId, municipalityId);
     const hit  = _cacheGet(ckey);
     if (hit) { sendJson(innerRes, 200, { ...hit, cached: true }); return; }
 
@@ -1056,17 +1098,23 @@ function handleDashboardKpis(req, res, url) {
       )`;
     }
 
-    // ── Municipalities list for filters ──
-    let munListSql, munListVals;
-    if (user.companyId) {
-      munListSql  = `SELECT DISTINCT m.id, m.name FROM municipalities m
-                     JOIN employees e ON e.municipality_id = m.id AND e.company_id = $1
-                     ORDER BY m.name`;
-      munListVals = [user.companyId];
-    } else {
-      munListSql  = `SELECT id, name FROM municipalities ORDER BY name`;
-      munListVals = [];
+    // ── Municipalities list for filters — scoped by type ──
+    const munParts = [], munVals = [];
+    if (user.companyId) { munVals.push(user.companyId); munParts.push(`e.company_id = $${munVals.length}`); }
+    if (contractId)     { munVals.push(contractId);     munParts.push(`e.contract_id = $${munVals.length}`); }
+    if (personnelType === "operario") {
+      munVals.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+      munParts.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) = $${munVals.length}`);
+    } else if (personnelType === "equipo") {
+      munVals.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+      munParts.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) != $${munVals.length}`);
     }
+    const munWhere = munParts.length ? "WHERE " + munParts.join(" AND ") : "";
+    const munListSql  = `SELECT DISTINCT m.id, m.name FROM municipalities m
+                         JOIN employees e ON e.municipality_id = m.id
+                         ${munWhere}
+                         ORDER BY m.name`;
+    const munListVals = munVals;
 
     const [empR, covR, novR, munListR] = await Promise.all([
       pool.query(`

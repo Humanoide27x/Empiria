@@ -5979,6 +5979,11 @@ body {
   color: #166534;
 }
 
+.coverage-badge.coverage-mal-contratado {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
 /* BADGE RIESGO */
 .coverage-risk-badge {
   padding: 4px 10px;
@@ -6199,6 +6204,11 @@ body {
 .coverage-badge.coverage-sobrante {
   background: #dcfce7 !important;
   color: #166534 !important;
+}
+
+.coverage-badge.coverage-mal-contratado {
+  background: #ffedd5 !important;
+  color: #c2410c !important;
 }
 
 .coverage-risk-badge.risk-alto {
@@ -8114,6 +8124,9 @@ body {
 }
 
 /* ─── Cargo column — wider ─── */
+.cargo-cell {
+  vertical-align: middle;
+}
 .cargo-cell .role-chip {
   white-space: normal !important;
   max-width: 200px !important;
@@ -8121,6 +8134,59 @@ body {
   overflow: visible !important;
   text-align: left;
   padding: 3px 8px;
+}
+.cargo-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.role-chip.role-real-pos {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-size: 10px !important;
+  padding: 2px 7px !important;
+  opacity: .85;
+}
+
+/* ─── Licitación tab — resumen visual cargo doble ─── */
+.licit-cargo-visual {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.licit-cargo-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  flex: 1;
+  min-width: 160px;
+}
+.licit-cargo-badge small {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  opacity: .75;
+}
+.licit-cargo-badge strong {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.licit-cargo-badge--offer {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+}
+.licit-cargo-badge--real {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
 }
 
 /* ─── Tooltip visibility fix ─── */

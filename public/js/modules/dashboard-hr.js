@@ -73,15 +73,35 @@ function fmtEventDate(dateStr, timeStr) {
   return `${Number(day)} ${MONTHS_ES[Number(month)] || ""}${t}`;
 }
 
+const OPERATIVO_CARGOS = [
+  "AREA DE FACTURACION",
+  "AREA DE CALIDAD",
+  "AREA DE TALENTO HUMANO",
+  "BODEGA RI",
+  "BODEGA RP",
+  "AUXILIAR DE RUTA RI",
+  "AUXILIAR DE RUTA RP",
+  "GESTOR DE ZONA",
+  "AUXILIAR DE GESTOR DE ZONA",
+  "AREA DE SERVICIOS GENERALES",
+  "OPERARIO MANIPULADOR DE ALIMENTOS",
+];
+
+function isOperativoCargo(label) {
+  const up = String(label || "").toUpperCase().trim();
+  return OPERATIVO_CARGOS.some(c => up === c.toUpperCase() || up.startsWith(c.toUpperCase()));
+}
+
 function isLicitacionCargo(label) {
   const up = String(label || "").toUpperCase();
+  if (isOperativoCargo(label)) return false;
   return (
-    up.includes("GESTOR DE ZONA") ||
-    up.includes("AUXILIAR GESTOR") ||
+    up.includes("COORDINADOR DE SUMINISTRO") ||
+    up.includes("COORDINADOR DE ZONA") ||
     up.includes("SUPERVISOR DE CALIDAD") ||
-    up.includes("BODEGA") ||
+    up.includes("AUXILIAR ADMINISTRATIVO") ||
     up.includes("TRANSPORTAD") ||
-    (up.includes("COORDINADOR") && up.includes("SUMINISTRO"))
+    up.includes("MANIPULADOR DE ALIMENTOS")
   );
 }
 
@@ -155,14 +175,18 @@ function normalize({ summary, kpis }) {
     : k.pct_coverage != null ? Number(k.pct_coverage) : 0;
   const covColorMod = covPct >= 85 ? "--green" : covPct >= 60 ? "--yellow" : "--red";
 
-  const cargoItems = (s.employeesByCargo || []).map((c, i) => ({
-    label: c.label,
-    value: Number(c.value || 0),
-    color: c.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-    isLicitacion: isLicitacionCargo(c.label),
+  const LICIT_COLORS = ["#8B5CF6","#A78BFA","#7C3AED","#6D28D9","#5B21B6","#C4B5FD","#4C1D95","#9333EA"];
+  const OP_COLORS    = ["#0B7CFF","#2ECF9A","#F7C948","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75"];
+  const cargoLicitacionItems = (s.employeesByCargoLicitacion || []).map((c, i) => ({
+    label: c.label, value: Number(c.value || 0),
+    color: c.color || LICIT_COLORS[i % LICIT_COLORS.length],
   }));
-  const licitacionCount = cargoItems.filter(c => c.isLicitacion).reduce((acc, c) => acc + c.value, 0);
-  const adminCount = cargoItems.filter(c => !c.isLicitacion).reduce((acc, c) => acc + c.value, 0);
+  const cargoOperativoItems = (s.employeesByCargoOperativo || []).map((c, i) => ({
+    label: c.label, value: Number(c.value || 0),
+    color: c.color || OP_COLORS[i % OP_COLORS.length],
+  }));
+  const licitacionCount = cargoLicitacionItems.reduce((acc, c) => acc + c.value, 0);
+  const operativoCount  = cargoOperativoItems.reduce((acc, c) => acc + c.value, 0);
 
   const EDUC_COLORS_MAP = {
     "BACHILLER": "#64748B", "TECNICO": "#0B7CFF", "TECNÓLOGO": "#2ECF9A",
@@ -201,7 +225,7 @@ function normalize({ summary, kpis }) {
     residenceCertStats: s.residenceCertStats || { vigente: 0, proximo: 0, vencido: 0, sinCertificado: 0, inactivos: 0 },
     municipiosList: Array.isArray(k.municipalities_list) ? k.municipalities_list : [],
     coverageByMunicipality: Array.isArray(s.coverageByMunicipality) ? s.coverageByMunicipality : [],
-    cargoItems, licitacionCount, adminCount, educItems,
+    cargoLicitacionItems, cargoOperativoItems, licitacionCount, operativoCount, educItems,
     experienceItems, foodHandlingStats,
   };
 }
@@ -573,13 +597,30 @@ function buildSisbenCarousel(sisben, total) {
     </div>`;
   }).join("");
 
+  const CAT_COLORS = { A: "#FF4D4F", B: "#F7C948", C: "#0B7CFF", D: "#2ECF9A", E: "#8B5CF6", "Sin cat.": "#94A3B8" };
+  const cats = (sisben.categorias || []).filter(c => c.letra && c.value > 0);
+  const totalCats = cats.reduce((s, c) => s + c.value, 0);
+  const catBars = cats.length
+    ? cats.map(c => {
+        const pct = totalCats > 0 ? Math.round((c.value / totalCats) * 100) : 0;
+        const color = CAT_COLORS[c.letra] || "#8B5CF6";
+        return `
+        <div class="hr-siscat-row">
+          <span class="hr-siscat-letra" style="background:${color}">${escapeHtml(c.letra)}</span>
+          <div class="hr-siscat-bar-wrap">
+            <div class="hr-siscat-bar" style="width:${pct}%;background:${color}"></div>
+          </div>
+          <span class="hr-siscat-val">${fmtN(c.value)}</span>
+          <span class="hr-siscat-pct">${pct}%</span>
+        </div>`;
+      }).join("")
+    : `<p class="hr-empty">Sin categorías registradas</p>`;
+
   const faceB = `
   <div id="hrSisbenFaceB" class="hr-sisben-face" style="display:none">
-    <p class="hr-card-ttl">SISBEN <span class="hr-flip-hint">↻</span></p>
-    <div class="hr-donut-wrap">
-      <svg class="hr-donut-svg" viewBox="0 0 110 110">${trackCir}${arcs}</svg>
-      <div class="hr-legend">${legend}</div>
-    </div>
+    <p class="hr-card-ttl">SISBEN por categoría <span class="hr-flip-hint">↻</span></p>
+    <div class="hr-siscat-list">${catBars}</div>
+    <div class="hr-c3-footer"><span>Con categoría: <strong>${fmtN(totalCats)}</strong> de <strong>${fmtN(total)}</strong> activos</span></div>
   </div>`;
 
   return `
@@ -686,7 +727,7 @@ function buildExperiencia(d) {
       <div class="hr-c3-sep"></div>
       ${counter("&gt; 1 año",     gt1?.value || 0, "#2ECF9A")}
     </div>
-    <div class="hr-c3-footer"><span>Total activos: <strong>${fmtN(total)}</strong></span></div>
+    <div class="hr-c3-footer"><span>Total activos: <strong>${fmtN(total)}</strong> de <strong>${fmtN(d.activos)}</strong> activos</span></div>
   </div>`;
 }
 
@@ -804,8 +845,8 @@ function buildEquipoKpiRow(d) {
   return `
   <section class="hr-kpi-grid" style="grid-template-columns:repeat(4,1fr)">
     ${buildKpiCard(fmtN(d.activos), "Equipo activo", "Total activos (sin operarios)", "#0B7CFF", ICON_PEOPLE)}
-    ${buildKpiCard(fmtN(d.licitacionCount), "Cargo Licitación", "Coordinadores, gestores, bodega", "#8B5CF6", ICON_PEOPLE)}
-    ${buildKpiCard(fmtN(d.adminCount), "Cargo Operativo/Adm.", "Auxiliares, coordinadores internos", "#2ECF9A", ICON_PEOPLE)}
+    ${buildKpiCard(fmtN(d.licitacionCount), "Cargo Licitación", "Gestores, supervisores, bodega licitación", "#8B5CF6", ICON_PEOPLE)}
+    ${buildKpiCard(fmtN(d.operativoCount),  "Cargo Operativo",  "Bodega RI/RP, rutas, áreas operativas",    "#0B7CFF", ICON_PEOPLE)}
     <article class="hr-kpi-card" style="--kpi-accent:#0B7CFF">
       <div class="dkpi-row">
         <span>Período</span>
@@ -827,46 +868,53 @@ function buildEquipoKpiRow(d) {
 }
 
 function buildEquipoCargos(d) {
-  if (!d.cargoItems || !d.cargoItems.length) {
+  const licitItems     = d.cargoLicitacionItems || [];
+  const operativoItems = d.cargoOperativoItems  || [];
+  const allItems       = [...licitItems, ...operativoItems];
+  if (!allItems.length) {
     return `<div class="hr-card"><p class="hr-card-ttl">Distribución por cargo</p><p class="hr-empty">Sin datos de cargos</p></div>`;
   }
-  const licitItems = d.cargoItems.filter(c => c.isLicitacion);
-  const adminItems = d.cargoItems.filter(c => !c.isLicitacion);
-  const total  = d.cargoItems.reduce((s, c) => s + c.value, 0);
-  const maxVal = Math.max(...d.cargoItems.map(c => c.value), 1);
+  const maxVal         = Math.max(...allItems.map(c => c.value), 1);
+  const total          = allItems.reduce((s, c) => s + c.value, 0);
 
-  const renderSection = (items, label, color) => {
-    if (!items.length) return "";
-    const count = items.reduce((s, c) => s + c.value, 0);
-    const rows = items.map(c => {
-      const w   = Math.max(4, Math.round((c.value / maxVal) * 100));
-      const pct = total > 0 ? Math.round((c.value / total) * 100) : 0;
-      return `<div class="hr-bar-row">
-        <div class="hr-bar-head">
-          <span>${escapeHtml(c.label)}</span>
-          <strong>${fmtN(c.value)} · ${pct}%</strong>
-        </div>
-        <div class="hr-bar-track">
-          <div class="hr-bar-fill" style="background:${c.color}" data-w="${w}"></div>
-        </div>
-      </div>`;
-    }).join("");
-    return `
-      <div class="hr-cargo-section">
-        <div class="hr-cargo-section-hdr" style="color:${color}">
-          <span class="hr-cargo-section-dot" style="background:${color}"></span>
-          ${escapeHtml(label)}<span class="hr-cargo-section-cnt">&nbsp;·&nbsp;${fmtN(count)} personas</span>
-        </div>
-        <div class="hr-bar-list">${rows}</div>
-      </div>`;
+  const renderVBars = (items) => {
+    if (!items.length) return `<p class="hr-empty">Sin datos</p>`;
+    return `<div class="hr-vbar-chart">
+      ${items.map(c => {
+        const h   = Math.max(4, Math.round((c.value / maxVal) * 100));
+        const pct = total > 0 ? Math.round((c.value / total) * 100) : 0;
+        return `
+        <div class="hr-vbar-col">
+          <span class="hr-vbar-val">${fmtN(c.value)}</span>
+          <div class="hr-vbar-wrap">
+            <div class="hr-vbar-bar" style="background:${c.color}" data-vh="${h}"></div>
+          </div>
+          <span class="hr-vbar-lbl" title="${escapeHtml(c.label)}">${escapeHtml(c.label)}</span>
+          <span class="hr-vbar-pct">${pct}%</span>
+        </div>`;
+      }).join("")}
+    </div>`;
   };
 
+  const licitCount = licitItems.reduce((s, c) => s + c.value, 0);
+  const opCount    = operativoItems.reduce((s, c) => s + c.value, 0);
+
   return `
-  <div class="hr-card">
+  <div class="hr-card" id="hrCargosCard">
     <p class="hr-card-ttl">Distribución por cargo</p>
-    <div class="hr-cargo-sections">
-      ${renderSection(licitItems, "Licitación", "#8B5CF6")}
-      ${renderSection(adminItems, "Operativo / Administrativo", "#2ECF9A")}
+    <div class="hr-cargo-tab-btns">
+      <button class="hr-cargo-tab-btn active" data-cargo-tab="licit">
+        Licitación <span class="hr-cargo-tab-cnt">${fmtN(licitCount)}</span>
+      </button>
+      <button class="hr-cargo-tab-btn" data-cargo-tab="operativo">
+        Operativo <span class="hr-cargo-tab-cnt">${fmtN(opCount)}</span>
+      </button>
+    </div>
+    <div class="hr-cargo-tab-pane" id="hrCargoPane-licit">
+      ${renderVBars(licitItems)}
+    </div>
+    <div class="hr-cargo-tab-pane" id="hrCargoPane-operativo" style="display:none">
+      ${renderVBars(operativoItems)}
     </div>
   </div>`;
 }
@@ -977,9 +1025,13 @@ function triggerTransitions(d) {
       el.style.height = el.dataset.h + "%";
     });
 
-    // Animated horizontal bars via data-w (equipo cargo/escolaridad)
+    // Animated horizontal bars via data-w (equipo escolaridad)
     document.querySelectorAll(`#${ROOT_ID} .hr-bar-fill[data-w]`).forEach(el => {
       el.style.width = el.dataset.w + "%";
+    });
+    // Animated vertical bars via data-vh (equipo cargos)
+    document.querySelectorAll(`#${ROOT_ID} .hr-vbar-bar[data-vh]`).forEach(el => {
+      el.style.height = el.dataset.vh + "%";
     });
 
     if (_activeType === "operario") {
@@ -1063,6 +1115,24 @@ function wireEvents() {
   closeBtn?.addEventListener("click", closeCovModal);
   covModal?.addEventListener("click", e => { if (e.target === covModal) closeCovModal(); });
   root?.addEventListener("keydown", e => { if (e.key === "Escape") closeCovModal(); });
+
+  // Cargo tabs (Licitación / Operativo)
+  document.querySelectorAll(`#${ROOT_ID} .hr-cargo-tab-btn`).forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.cargoTab;
+      document.querySelectorAll(`#${ROOT_ID} .hr-cargo-tab-btn`).forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelectorAll(`#${ROOT_ID} .hr-cargo-tab-pane`).forEach(p => {
+        p.style.display = p.id === `hrCargoPane-${target}` ? "" : "none";
+      });
+      // Trigger vertical bar animation for newly visible tab
+      requestAnimationFrame(() => {
+        document.querySelectorAll(`#hrCargoPane-${target} .hr-vbar-bar[data-vh]`).forEach(el => {
+          el.style.height = el.dataset.vh + "%";
+        });
+      });
+    });
+  });
 
   // Content tab switching (Cumpleaños / Agenda)
   document.querySelectorAll(`#${ROOT_ID} .hr-tab-btn`).forEach(btn => {
@@ -1370,6 +1440,13 @@ function buildStyles() {
 #${ROOT_ID} .hr-flip-hint{font-size:10px;color:var(--c-muted);margin-left:4px;opacity:.65;}
 #${ROOT_ID} .hr-sisben-face .hr-donut-wrap{padding-left:0;justify-content:flex-start;gap:16px;}
 #${ROOT_ID} .hr-sisben-face .hr-donut-svg{width:120px;height:120px;}
+#${ROOT_ID} .hr-siscat-list{display:flex;flex-direction:column;gap:6px;margin:8px 0 4px;}
+#${ROOT_ID} .hr-siscat-row{display:grid;grid-template-columns:auto 1fr 36px 34px;align-items:center;gap:6px;}
+#${ROOT_ID} .hr-siscat-letra{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 4px;border-radius:5px;font-weight:700;font-size:11px;color:#fff;white-space:nowrap;}
+#${ROOT_ID} .hr-siscat-bar-wrap{background:#E2E8F0;border-radius:4px;height:8px;overflow:hidden;}
+#${ROOT_ID} .hr-siscat-bar{height:100%;border-radius:4px;transition:width .5s ease;}
+#${ROOT_ID} .hr-siscat-val{font-size:12px;font-weight:600;color:var(--c-text);text-align:right;}
+#${ROOT_ID} .hr-siscat-pct{font-size:11px;color:var(--c-muted);text-align:right;}
 
 /* ── Donut ── */
 #${ROOT_ID} .hr-donut-wrap{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:20px;padding-left:44px;}
@@ -1528,6 +1605,20 @@ function buildStyles() {
 @keyframes hrSkel{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
 /* ── Equipo cargo sections ── */
+#${ROOT_ID} .hr-cargo-tab-btns{display:flex;gap:6px;margin-bottom:12px;}
+#${ROOT_ID} .hr-cargo-tab-btn{flex:1;padding:6px 8px;border:1.5px solid #E2E8F0;border-radius:8px;background:transparent;cursor:pointer;font-size:12px;font-weight:600;color:var(--c-muted);display:flex;align-items:center;justify-content:center;gap:6px;transition:all .18s;}
+#${ROOT_ID} .hr-cargo-tab-btn:hover{border-color:#CBD5E1;color:var(--c-text);}
+#${ROOT_ID} .hr-cargo-tab-btn.active{background:#071B4D;border-color:#071B4D;color:#fff;}
+#${ROOT_ID} .hr-cargo-tab-cnt{background:rgba(255,255,255,.18);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;}
+#${ROOT_ID} .hr-cargo-tab-btn:not(.active) .hr-cargo-tab-cnt{background:#F1F5F9;color:var(--c-text);}
+#${ROOT_ID} .hr-vbar-chart{display:flex;align-items:flex-end;gap:8px;height:220px;}
+#${ROOT_ID} .hr-vbar-col{display:flex;flex-direction:column;align-items:center;flex:1;height:100%;gap:3px;}
+#${ROOT_ID} .hr-vbar-val{font-size:10px;font-weight:700;color:var(--c-text);line-height:1;min-height:13px;text-align:center;}
+#${ROOT_ID} .hr-vbar-wrap{flex:1;width:100%;display:flex;align-items:flex-end;}
+#${ROOT_ID} .hr-vbar-bar{width:100%;height:0%;border-radius:5px 5px 2px 2px;transition:height .6s cubic-bezier(.4,0,.2,1);min-height:3px;}
+#${ROOT_ID} .hr-vbar-lbl{font-size:9.5px;font-weight:600;color:var(--c-text);text-align:center;line-height:1.3;word-break:break-word;width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+#${ROOT_ID} .hr-vbar-pct{font-size:10px;color:var(--c-muted);font-weight:600;min-height:13px;}
+#${ROOT_ID} .hr-vbar-bar[data-vh]{height:0%;}
 #${ROOT_ID} .hr-cargo-sections{display:flex;flex-direction:column;gap:16px;}
 #${ROOT_ID} .hr-cargo-section{display:flex;flex-direction:column;gap:7px;}
 #${ROOT_ID} .hr-cargo-section-hdr{

@@ -263,24 +263,25 @@ function getMunicipalityName(value) {
 }
 
 const LICITACION_CARGOS = [
-  "OPERARIO DE BODEGA",
-  "AUXILIARES Y TRANSPORTADORES",
-  "OPERARIO MANIPULADOR DE ALIMENTOS",
   "COORDINADOR DE SUMINISTRO",
   "SUPERVISOR DE CALIDAD",
+  "COORDINADOR DE ZONA",
   "AUXILIAR ADMINISTRATIVO",
+  "OPERARIO DE BODEGA, AUXILIARES Y TRANSPORTADORES",
+  "OPERARIO MANIPULADOR DE ALIMENTOS",
 ];
 
 const CARGOS_REALES = [
   "AREA DE FACTURACION",
-  "AREA DE TALENTO HUMANO",
   "AREA DE CALIDAD",
-  "OPERARIO DE BODEGA RI",
-  "OPERARIO DE BODEGA RP",
-  "AUXILIARES DE RUTA RI",
-  "AUXILIARES DE RUTA RP",
+  "AREA DE TALENTO HUMANO",
+  "BODEGA RI",
+  "BODEGA RP",
+  "AUXILIAR DE RUTA RI",
+  "AUXILIAR DE RUTA RP",
   "GESTOR DE ZONA",
   "AUXILIAR DE GESTOR DE ZONA",
+  "AREA DE SERVICIOS GENERALES",
   "OPERARIO MANIPULADOR DE ALIMENTOS",
 ];
 
@@ -2614,7 +2615,15 @@ async function loadPersonnelModule(moduleConfig, submoduleKey) {
           <label>
             <span>Tipo de Contrato *</span>
             <select name="contractType" required>
-              ${renderOptions(["obra_labor", "termino_fijo", "prestacion_servicios"], draftValue("contractType"), "Selecciona")}
+              ${renderOptions(
+                [
+                  { value: "obra_labor",           label: "Obra o labor" },
+                  { value: "termino_fijo",          label: "Término fijo" },
+                  { value: "prestacion_servicios",  label: "Prestación de servicios" },
+                ],
+                draftValue("contractType"),
+                "Selecciona"
+              )}
             </select>
           </label>
 

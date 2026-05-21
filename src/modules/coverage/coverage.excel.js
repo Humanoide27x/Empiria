@@ -614,9 +614,16 @@ function buildEmployeeCoverageMap(employees = []) {
 }
 
 function getCoverageStatus({ requiredTc, requiredMt, contractedTc, contractedMt }) {
-  const tcDiff = Number(contractedTc || 0) - Number(requiredTc || 0);
-  const mtDiff = Number(contractedMt || 0) - Number(requiredMt || 0);
+  const rTc = Number(requiredTc   || 0);
+  const rMt = Number(requiredMt   || 0);
+  const cTc = Number(contractedTc || 0);
+  const cMt = Number(contractedMt || 0);
 
+  const tcDiff = cTc - rTc;
+  const mtDiff = cMt - rMt;
+
+  // Totales iguales pero distribución TC/MT incorrecta
+  if ((cTc + cMt) === (rTc + rMt) && (tcDiff !== 0 || mtDiff !== 0)) return "MAL_CONTRATADO";
   if (tcDiff < 0 || mtDiff < 0) return "FALTANTE";
   if (tcDiff > 0 || mtDiff > 0) return "SOBRANTE";
   return "CUMPLE";
@@ -708,12 +715,19 @@ async function getCoverageRowsByUpload(uploadId) {
     let changeStatus = "SIN_COMPARACION";
 
     if (previous) {
-      if (cuposDelta > 0 || requiredTcDelta > 0 || requiredMtDelta > 0) {
+      if (cuposDelta > 0) {
         changeStatus = "SUBIO";
-      } else if (cuposDelta < 0 || requiredTcDelta < 0 || requiredMtDelta < 0) {
+      } else if (cuposDelta < 0) {
         changeStatus = "BAJO";
       } else {
-        changeStatus = "SIN_CAMBIO";
+        // Cupos sin cambio: evaluar personal requerido como indicador secundario
+        if (requiredTcDelta > 0 || requiredMtDelta > 0) {
+          changeStatus = "SUBIO";
+        } else if (requiredTcDelta < 0 || requiredMtDelta < 0) {
+          changeStatus = "BAJO";
+        } else {
+          changeStatus = "SIN_CAMBIO";
+        }
       }
     }
 
