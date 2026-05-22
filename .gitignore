@@ -1,34 +1,61 @@
-node_modules
+# ── Dependencias ─────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Variables de entorno (NUNCA committear secretos) ──────────────────────────
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+.env.development.local
 
-# Dumps y backups de DB
-empiria_db.sql
+# ── Backups y dumps de base de datos ─────────────────────────────────────────
+*.sql
 *.sql.gz
 *.dump
 *.backup
 backups/
+empiria_db.sql
+empiria_backup.dump
+empiria_db_sql
 
-# Datos de sesiones locales (se regeneran)
+# ── Datos de sesión (se regeneran automáticamente) ───────────────────────────
 data/access_logs.json
 data/login_attempts.json
 
-# Uploads locales (producción usa R2)
+# ── Uploads locales (producción usa Cloudflare R2) ───────────────────────────
 uploads/
 
-# Logs
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
+logs/
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Secrets locales
+# ── Archivos de secretos manuales ────────────────────────────────────────────
 EMPIRIA-SECRETS.txt
+*.secret
+*.secret.js
+*.secrets.json
+secrets/
 
-# OS
+# ── Build / cache ─────────────────────────────────────────────────────────────
+.cache/
+dist/
+build/
+
+# ── Sistema operativo ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+Desktop.ini
 
+# ── IDEs y editores ───────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Archivos binarios sueltos ─────────────────────────────────────────────────
 AnyDesk.exe
 gcapi.dll
-empiria_backup.dump
-empiria_db_sql

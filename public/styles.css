@@ -1479,6 +1479,34 @@ tr:hover {
   color: var(--text-soft);
 }
 
+.personnel-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+.personnel-pagination button {
+  padding: 5px 14px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text, #1e293b);
+  transition: background 0.15s;
+}
+.personnel-pagination button:hover:not(:disabled) { background: var(--surface-2, #f1f5f9); }
+.personnel-pagination button:disabled { opacity: 0.38; cursor: not-allowed; }
+.personnel-page-info { font-size: 13px; color: var(--text-soft, #64748b); }
+
+.coverage-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--border, #e2e8f0); }
+.coverage-pagination button { padding: 5px 14px; border: 1px solid var(--border, #e2e8f0); border-radius: 6px; background: var(--surface, #fff); cursor: pointer; font-size: 13px; color: var(--text, #1e293b); transition: background 0.15s; }
+.coverage-pagination button:hover:not(:disabled) { background: var(--surface-2, #f1f5f9); }
+.coverage-pagination button:disabled { opacity: 0.38; cursor: not-allowed; }
+.coverage-page-info { font-size: 13px; color: var(--text-soft, #64748b); }
+
 .personnel-row-actions {
   display: flex;
   gap: 8px;
@@ -23031,5 +23059,115 @@ button.dashboard-kpi-card:disabled {
   background: #eef2ff;
   color: var(--color-primary, #6366f1);
   font-weight: var(--font-weight-semibold);
+}
+
+/* ── Filter Gate — pantalla de selección de filtro (personal / cobertura) ── */
+.pnl-filter-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  min-height: 200px;
+  padding: 32px 20px;
+  box-sizing: border-box;
+}
+.pnl-filter-gate-inner {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 40px 48px;
+  max-width: 800px;
+  width: 100%;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+}
+.pnl-filter-gate-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 6px;
+}
+.pnl-filter-gate-sub {
+  color: #64748b;
+  font-size: 14px;
+  margin: 0 0 28px;
+}
+.pnl-filter-gate-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.pnl-filter-gate-card {
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s;
+}
+.pnl-filter-gate-card:focus-within {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+.pnl-filter-gate-card-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #475569;
+}
+.pnl-filter-gate-input {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: #1e293b;
+  background: #fff;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pnl-filter-gate-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.pnl-filter-gate-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pnl-filter-gate-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.pnl-active-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #1d4ed8;
+}
+.pnl-active-filter-badge button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #3b82f6;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  text-decoration: underline;
+}
+.pnl-active-filter-badge button:hover { color: #1d4ed8; }
+@media (max-width: 640px) {
+  .pnl-filter-gate-cards { grid-template-columns: 1fr; }
+  .pnl-filter-gate-inner { padding: 24px 18px; }
 }
 

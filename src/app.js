@@ -2,25 +2,29 @@
  * EMPIRIA V1 — Express Application
  *
  * Capas de middleware (en orden de ejecución):
- *   1. requestId   — X-Request-ID para trazabilidad
- *   2. logger      — Log de requests estructurado (JSON en prod, pretty en dev)
- *   3. cors        — CORS restrictivo (allow-list en prod)
- *   4. helmet      — Cabeceras de seguridad HTTP
- *   5. rate limit  — Protección contra fuerza bruta y abuso
- *   6. body parse  — JSON + urlencoded
- *   7. static      — Archivos públicos
- *   8. documents   — Router Express nativo (R2, multipart)
- *   9. legacy      — Puente al requestHandler de server.js
- *  10. 404 / error — Handlers finales
+ *   1. compression — gzip nivel 6 para CSS/JS/JSON (threshold 1KB)
+ *   2. requestId   — X-Request-ID para trazabilidad
+ *   3. logger      — Log de requests estructurado (JSON en prod, pretty en dev)
+ *   4. cors        — CORS restrictivo (allow-list en prod)
+ *   5. helmet      — Cabeceras de seguridad HTTP
+ *   6. rate limit  — Protección contra fuerza bruta y abuso
+ *   7. body parse  — JSON + urlencoded
+ *   8. static      — Archivos públicos (cache inmutable en prod vía ?v=HASH)
+ *   9. documents   — Router Express nativo (R2, multipart)
+ *  10. legacy      — Puente al requestHandler de server.js
+ *  11. 404 / error — Handlers finales
  */
 
 "use strict";
 
-const express   = require("express");
-const helmet    = require("helmet");
-const rateLimit = require("express-rate-limit");
-const path      = require("path");
-const { URL }   = require("url");
+const express      = require("express");
+const helmet       = require("helmet");
+const compression  = require("compression");
+const rateLimit    = require("express-rate-limit");
+const path         = require("path");
+const fs           = require("fs");
+const { URL }      = require("url");
+const { APP_VERSION } = require("./version");
 
 const { requestHandler }      = require("./server");
 const { createDocumentsRouter } = require("./modules/documents/documents.router");
@@ -31,9 +35,16 @@ const { corsMiddleware }      = require("./middleware/cors");
 const IS_PROD  = process.env.NODE_ENV === "production";
 const app      = express();
 
-// ── Trust proxy (Railway, Nginx, etc.) ───────────────────────────────────────
-// Necesario para que req.ip refleje la IP real del cliente (no la del proxy).
+// ── Trust proxy (Render, Railway, Nginx, etc.) ───────────────────────────────
 app.set("trust proxy", 1);
+
+// ── Compresión gzip (debe ir antes de cualquier respuesta) ───────────────────
+app.use(compression({
+  // No comprimir respuestas pequeñas (< 1KB) — overhead no vale la pena
+  threshold: 1024,
+  // Nivel 6: buen balance entre ratio y velocidad de CPU
+  level: 6,
+}));
 
 // ── Trazabilidad ──────────────────────────────────────────────────────────────
 app.use(requestId);
@@ -86,14 +97,33 @@ app.use(apiLimiter);
 
 // ── Archivos estáticos ────────────────────────────────────────────────────────
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
+
+// index.html: compilar una vez al arrancar con la versión inyectada
+const _rawHtml    = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+const INDEX_HTML  = _rawHtml.replaceAll("__VER__", APP_VERSION);
+const HTML_HEADERS = { "Cache-Control": "no-store", "Content-Type": "text/html; charset=utf-8" };
+
+// Servir index.html con versión inyectada (evita cache de 1 día en producción)
+app.get(["/", "/index.html"], (_req, res) => {
+  res.set(HTML_HEADERS).send(INDEX_HTML);
+});
+
+// Archivos estáticos: CSS/JS/imágenes con cache controlado por version param
 app.use(express.static(PUBLIC_DIR, {
-  index:      "index.html",
-  maxAge:     IS_PROD ? "1d" : 0,
-  etag:       true,
+  index:        false,   // index.html lo manejamos arriba
+  etag:         true,
   lastModified: true,
   setHeaders: (res, filePath) => {
-    if (/\.(js|mjs)$/.test(filePath)) {
-      res.setHeader("Cache-Control", "no-cache");
+    if (/\.html$/.test(filePath)) {
+      res.setHeader("Cache-Control", "no-store");
+    } else if (/\.(css|js|mjs)$/.test(filePath)) {
+      // URL incluye ?v=HASH → cache 1 año + immutable (se invalida en cada deploy)
+      res.setHeader("Cache-Control", IS_PROD
+        ? "public, max-age=31536000, immutable"
+        : "no-cache");
+    } else if (/\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot)$/.test(filePath)) {
+      // Imágenes: 30 días (sin versión en URL, renovamos periódicamente)
+      res.setHeader("Cache-Control", "public, max-age=2592000");
     }
   },
 }));
@@ -116,7 +146,7 @@ app.use(async (req, res, next) => {
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   if (req.accepts("html")) {
-    res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+    res.set(HTML_HEADERS).send(INDEX_HTML);
   } else {
     res.status(404).json({ ok: false, message: "Ruta no encontrada" });
   }

@@ -1861,7 +1861,8 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
   let payload;
 
   try {
-    payload = await apiFetch("/personnel");
+    const needsCatalog = !state.educationalCatalog || Object.keys(state.educationalCatalog).length === 0;
+    payload = await apiFetch(needsCatalog ? "/personnel?withCatalog=1&limit=1" : "/personnel?limit=1");
 
     if (payload.educationalCatalog && Object.keys(payload.educationalCatalog).length > 0) {
       state.educationalCatalog = payload.educationalCatalog;
@@ -2592,32 +2593,41 @@ function hydratePersonnelDraft(found) {
 // ── renderPersonnelTableModule ────────────────────────────────────────────────
 
 export async function renderPersonnelTableModule() {
-  let payload;
-  try {
-    payload = await apiFetch("/personnel");
-    if (payload.educationalCatalog && Object.keys(payload.educationalCatalog).length > 0) {
-      state.educationalCatalog = payload.educationalCatalog;
-    }
-  } catch (error) {
-    return `<article class="info-card"><h3>Error en Gestión del Personal</h3><p>${escapeHtml(error.message)}</p></article>`;
-  }
-
-  const rows = Array.isArray(payload.data)
-    ? payload.data
-    : Array.isArray(payload.personnel) ? payload.personnel : [];
-
-  let allDocuments = [];
-  try {
-    const docsPayload = await apiFetch("/documents");
-    allDocuments = Array.isArray(docsPayload.data) ? docsPayload.data : [];
-  } catch { /* sin documentos — tabla sigue funcionando */ }
-
   if (!state.personnelFilters) {
     state.personnelFilters = { search: "", status: "", role: "", hvStatus: "", municipality: "",
       companyId: "", contractId: "", gestorZona: "", institution: "", site: "", modality: "", sort: "" };
   }
-
   const f = state.personnelFilters;
+
+  const hasAnyFilter = !!(f.search || f.status || f.role || f.hvStatus || f.municipality ||
+    f.companyId || f.contractId || f.gestorZona || f.institution || f.site || f.modality);
+
+  let rows = [];
+  let allDocuments = [];
+
+  // Solo nameSearch va al servidor (busca en full_name que siempre está completo).
+  // municipio, rol y estado se filtran en frontend para evitar exclusiones por
+  // diferencias entre columnas (real_position vs cargo, municipality_id vs educational).
+  const _listParams = new URLSearchParams({ limit: 5000 });
+  if (f.search) _listParams.set('nameSearch', f.search);
+
+  let _total = 0;
+
+  try {
+    const [payload, docsPayload] = await Promise.all([
+      apiFetch(`/personnel?${_listParams}`),
+      apiFetch("/documents").catch(() => ({ data: [] })),
+    ]);
+    if (payload.educationalCatalog && Object.keys(payload.educationalCatalog).length > 0) {
+      state.educationalCatalog = payload.educationalCatalog;
+    }
+    rows = Array.isArray(payload.data) ? payload.data
+      : Array.isArray(payload.personnel) ? payload.personnel : [];
+    allDocuments = Array.isArray(docsPayload.data) ? docsPayload.data : [];
+    _total = Number(payload.total || rows.length);
+  } catch (error) {
+    return `<article class="info-card"><h3>Error en Gestión del Personal</h3><p>${escapeHtml(error.message)}</p></article>`;
+  }
 
   // ── Filtrar ───────────────────────────────────────────────────────────────
   const filteredRows = rows.filter((item) => {
@@ -2640,9 +2650,29 @@ export async function renderPersonnelTableModule() {
     if (f.companyId && String(item.companyId || item.company_id || "") !== String(f.companyId)) return false;
     if (f.contractId && String(item.contractId || item.contract_id || "") !== String(f.contractId)) return false;
     if (f.municipality) {
-      const munResidencia   = _norm(getPersonnelMunicipality(item));
+      const target           = _norm(f.municipality);
+      const munOperacional   = _norm(item.municipalityName || item.municipality_name || item.municipality || "");
+      const munResidencia    = _norm(item.residenceMunicipality || item.municipio_residencia || item.residence_municipality || "");
       const munInstitucional = _norm(item.educationalMunicipality || item.educational_municipality || item.municipio_institucional || "");
-      if (munResidencia !== _norm(f.municipality) && munInstitucional !== _norm(f.municipality)) return false;
+      const munFallback      = _norm(getPersonnelMunicipality(item));
+      const fullName         = _norm(item.fullName || item.full_name || item.nombre || "");
+      if (fullName.includes("YENNY") || fullName.includes("MORA LOPEZ")) {
+        console.log("[MUN-DEBUG] yenny:", {
+          target,
+          munOperacional,
+          munResidencia,
+          munInstitucional,
+          munFallback,
+          municipalityId:        item.municipalityId,
+          municipalityName:      item.municipalityName,
+          municipality:          item.municipality,
+          residenceMunicipality: item.residenceMunicipality,
+          educationalMunicipality: item.educationalMunicipality,
+          raw_municipality_id:   item.municipality_id,
+          raw_municipality_name: item.municipality_name,
+        });
+      }
+      if (munOperacional !== target && munResidencia !== target && munInstitucional !== target && munFallback !== target) return false;
     }
     if (f.gestorZona && _norm(item.gestorZona || item.gestor_zona || "") !== _norm(f.gestorZona)) return false;
     if (f.institution && _norm(item.institution || item.institucion_educativa || item.institutionName || "") !== _norm(f.institution)) return false;
@@ -2756,7 +2786,11 @@ export async function renderPersonnelTableModule() {
           </tr>
         `;
       }).join("")
-    : `<tr><td colspan="9"><div class="personnel-table-empty">No hay registros que coincidan con los filtros.</div></td></tr>`;
+    : `<tr><td colspan="9"><div class="personnel-table-empty">${
+        hasAnyFilter
+          ? "No hay registros que coincidan con los filtros."
+          : "No hay personal registrado."
+      }</div></td></tr>`;
 
   // ── Event wiring (diferido) ───────────────────────────────────────────────
   setTimeout(() => {
@@ -2777,7 +2811,6 @@ export async function renderPersonnelTableModule() {
         modality:     document.getElementById("personnelFilterModality")?.value    || "",
         sort:         document.getElementById("personnelSort")?.value              || "",
       };
-      state.personnelPage = 1;
       await openModule("gestion_personal");
     };
 
@@ -2793,6 +2826,7 @@ export async function renderPersonnelTableModule() {
         searchTimer = setTimeout(applyFilters, 400);
       });
     }
+
 
     document.getElementById("clearPersonnelFilters")?.addEventListener("click", async () => {
       state.personnelFilters = { search:"", status:"", role:"", hvStatus:"", municipality:"",
@@ -3008,8 +3042,8 @@ export async function renderPersonnelTableModule() {
       <section class="pnl-kpis">
         <div class="pnl-kpi pnl-kpi-main">
           <span class="pnl-kpi-label">Total personal</span>
-          <strong class="pnl-kpi-value">${summary.total || 0}</strong>
-          <small class="pnl-kpi-sub">${filteredRows.length} de ${rows.length} mostrados</small>
+          <strong class="pnl-kpi-value">${_total || summary.total || 0}</strong>
+          <small class="pnl-kpi-sub">${filteredRows.length} mostrados</small>
         </div>
         <div class="pnl-kpi pnl-kpi-success">
           <span class="pnl-kpi-label">HV completas</span>

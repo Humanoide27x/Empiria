@@ -9,6 +9,7 @@ const _actLog     = [];   // { id, description, type, timestamp }
 let _unreadAlerts = 0;
 let _unreadAct    = 0;
 let _notifTimer   = null;
+let _inFlight     = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function alertId(a)    { return a.message; }
@@ -137,6 +138,8 @@ document.getElementById('activityBtn')?.addEventListener('click', () => {
 
 // ── Cargar y acumular ─────────────────────────────────────────────────────────
 export async function loadTopbarNotifications() {
+  if (_inFlight) return;
+
   const hasToken = Boolean(state.token || localStorage.getItem("empiria_token"));
   const hasDashboardAccess = Array.isArray(state.access?.modules)
     ? state.access.modules.some((item) => item?.module === "dashboard")
@@ -146,6 +149,7 @@ export async function loadTopbarNotifications() {
     return;
   }
 
+  _inFlight = true;
   try {
     const [alertsRes, actRes] = await Promise.all([
       apiFetch('/dashboard/alerts'),
@@ -183,13 +187,15 @@ export async function loadTopbarNotifications() {
       stopNotificationLoop();
       return;
     }
+  } finally {
+    _inFlight = false;
   }
 }
 
 export function startNotificationLoop() {
   loadTopbarNotifications();
   if (_notifTimer) clearInterval(_notifTimer);
-  _notifTimer = setInterval(loadTopbarNotifications, 60_000);
+  _notifTimer = setInterval(loadTopbarNotifications, 120_000);
 }
 
 export function stopNotificationLoop() {

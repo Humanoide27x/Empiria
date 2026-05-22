@@ -58,13 +58,15 @@ async function start() {
   // 3. Iniciar servidor HTTP
   const server = app.listen(PORT, () => {
     const { name, version } = require("./package.json");
+    const { APP_VERSION }   = require("./src/version");
     log("info", {
-      msg:     `${name} v${version} iniciado`,
-      env:     process.env.NODE_ENV || "development",
-      port:    PORT,
-      url:     `http://localhost:${PORT}`,
-      cors:    process.env.CORS_ORIGIN || "(sin restricción — dev)",
-      storage: process.env.R2_BUCKET_NAME ? "R2" : "local",
+      msg:         `${name} v${version} iniciado`,
+      env:         process.env.NODE_ENV || "development",
+      port:        PORT,
+      url:         `http://localhost:${PORT}`,
+      assets_ver:  APP_VERSION,
+      cors:        process.env.CORS_ORIGIN || "(sin restricción — dev)",
+      storage:     process.env.R2_BUCKET_NAME ? "R2" : "local",
     });
   });
 

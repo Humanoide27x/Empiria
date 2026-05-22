@@ -1,5 +1,8 @@
-import { state, elements, moduleViews } from './state.js';
+﻿import { state, elements, moduleViews } from './state.js';
 import { prettyLabel, escapeHtml, escapeAttr, getModuleMeta } from './utils.js';
+
+// Versionado de módulos dinámicos: agrega ?v=<hash> para invalidar cache en cada deploy
+const _iv = (mod) => `${mod}?v=${window.APP_VERSION || '0'}`;
 
 // Callback registered by dashboard.js to clean up its timers and charts.
 export const dashboardCleaner = { fn: () => {} };
@@ -235,7 +238,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       renderPersonnelTableModule,
       loadEmployeeDocumentsModule,
       renderPersonnelCvModule,
-    } = await import('./modules/personnel.js');
+    } = await import(_iv('./modules/personnel.js'));
 
     if (state.personnelViewMode === "table") return await renderPersonnelTableModule();
     if (state.personnelViewMode === "documents") return await loadEmployeeDocumentsModule();
@@ -250,31 +253,31 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   }
 
   if (moduleKey === "dashboard_hr") {
-    const { loadDashboardHrModule } = await import('./modules/dashboard-hr.js');
+    const { loadDashboardHrModule } = await import(_iv('./modules/dashboard-hr.js'));
     return await loadDashboardHrModule();
   }
 
   if (moduleKey === "cobertura_calculadora") {
-    const { loadCoverageModule } = await import('./modules/coverage.js');
+    const { loadCoverageModule } = await import(_iv('./modules/coverage.js'));
     return await loadCoverageModule();
   }
 
   if (moduleKey === "calculadora_personal") {
-    const { loadCalculatorModule, wireCalculatorEvents } = await import('./modules/calculator.js');
+    const { loadCalculatorModule, wireCalculatorEvents } = await import(_iv('./modules/calculator.js'));
     const html = await loadCalculatorModule();
     setTimeout(wireCalculatorEvents, 80);
     return html;
   }
 
   if (moduleKey === "nomina_novedades") {
-    const payroll = await import('./modules/payroll.js');
+    const payroll = await import(_iv('./modules/payroll.js'));
     const html = await payroll.loadPayrollModule();
     setTimeout(() => payroll.wirePayrollEvents(), 80);
     return html;
   }
 
   if (moduleKey === "administracion_configuraciones") {
-    const { loadClientesModule, wireConfigEvents, loadContractConfigPanel, wireContractConfigEvents } = await import('./modules/config.js');
+    const { loadClientesModule, wireConfigEvents, loadContractConfigPanel, wireContractConfigEvents } = await import(_iv('./modules/config.js'));
     if (state.cfgContractConfigId) {
       const html = await loadContractConfigPanel(state.cfgContractConfigId);
       setTimeout(wireContractConfigEvents, 0);
@@ -286,22 +289,22 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   }
 
   if (moduleKey === "seguridad_salud_trabajo") {
-    const { loadSstModule } = await import('./modules/sst.js');
+    const { loadSstModule } = await import(_iv('./modules/sst.js'));
     return await loadSstModule();
   }
 
   if (moduleKey === "registro_novedades") {
-    const { loadNovedadesModule } = await import('./modules/novedades.js');
+    const { loadNovedadesModule } = await import(_iv('./modules/novedades.js'));
     return await loadNovedadesModule();
   }
 
   if (moduleKey === "repositorio_hojas_vida") {
-    const { loadRepositorioHvModule } = await import('./modules/repositorio-hv.js');
+    const { loadRepositorioHvModule } = await import(_iv('./modules/repositorio-hv.js'));
     return await loadRepositorioHvModule();
   }
 
   if (moduleKey === "gestion_dotacion") {
-    const { loadDotacionModule } = await import('./modules/dotacion.js');
+    const { loadDotacionModule } = await import(_iv('./modules/dotacion.js'));
     return await loadDotacionModule(moduleConfig);
   }
 
@@ -312,7 +315,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   if (moduleKey === "hoja_vida_documentos" || moduleKey === "contratos_vinculacion") {
     state.activeModule = "gestion_personal";
     state.personnelViewMode = "table";
-    const { renderPersonnelTableModule } = await import('./modules/personnel.js');
+    const { renderPersonnelTableModule } = await import(_iv('./modules/personnel.js'));
     return await renderPersonnelTableModule();
   }
 
@@ -321,7 +324,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       loadTrainingsModule,
       loadTrainingAttendanceModule,
       loadResumeModule,
-    } = await import('./modules/trainings.js');
+    } = await import(_iv('./modules/trainings.js'));
     if (submoduleKey === "programar_capacitacion") return await loadTrainingsModule();
     if (submoduleKey === "registrar_asistencia") return await loadTrainingAttendanceModule();
     if (submoduleKey === "ver_hoja_vida") return await loadResumeModule();
@@ -329,7 +332,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   }
 
   if (moduleKey === "informes_reportes") {
-    const { loadReportsModule } = await import('./modules/reports.js');
+    const { loadReportsModule } = await import(_iv('./modules/reports.js'));
     return await loadReportsModule();
   }
 
@@ -339,7 +342,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
       wireSolicitudFormEvents,
       loadEstadoSolicitudesModule,
       wireEstadoSolicitudesEvents,
-    } = await import('./modules/requests.js');
+    } = await import(_iv('./modules/requests.js'));
 
     if (submoduleKey === "nueva_solicitud") {
       const html = await loadSolicitudFormModule(

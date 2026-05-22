@@ -340,13 +340,41 @@ async function updateEmployeePhoto(id, photoUrl) {
 
 // ─── SELECT base con JOINs ────────────────────────────────────────────────────
 
-const BASE_SELECT = `
-  SELECT
-    e.*,
+const _BASE_COLS = `
+    e.id, e.legacy_json_id,
+    e.full_name, e.first_name, e.second_name, e.first_last_name, e.second_last_name,
+    e.document_type, e.document_number,
+    e.birth_day, e.birth_month, e.birth_year,
+    e.birth_country, e.birth_department, e.birth_municipality,
+    e.expedition_day, e.expedition_month, e.expedition_year,
+    e.expedition_department, e.expedition_municipality,
+    e.blood_type, e.phone, e.email, e.address, e.neighborhood, e.civil_status,
+    e.real_position, e.cargo,
+    e.eps, e.pension_fund, e.compensation_box, e.arl, e.arl_vinculation_date,
+    e.coverage_start_date, e.start_date,
+    e.workday_type, e.sex, e.biological_sex,
+    e.gestor_zona, e.municipios_a_cargo,
+    e.tenant_id, e.company_id, e.contract_id,
+    e.municipality_id, e.institution_id, e.site_id, e.modality,
+    e.residence_municipality, e.residence_zone,
+    e.status,
+    e.sisben, e.sisben_category, e.sisben_exp_date, e.sisben_expiry,
+    e.residence_certificate, e.residence_certificate_issue_date, e.residence_certificate_expiry,
+    e.presented_in_offer, e.offered_position,
+    e.photo_url,
+    e.work_experience, e.studies,
+    e.food_handling_course_issue_date, e.food_handling_course_expiry_date,
+    e.food_handling_exam_issue_date,   e.food_handling_exam_expiry_date,
+    e.shirt_size, e.pants_size, e.shoe_size, e.contract_type,
+    e.account_type, e.bank_name, e.account_number, e.auxiliar_gestor_zona,
+    e.created_at, e.updated_at,
     m.name  AS municipality_name,
     i.name  AS institution_name,
     s.name  AS site_name,
     im.name AS educational_municipality_name
+`;
+
+const _BASE_JOINS = `
   FROM employees e
   LEFT JOIN municipalities    m  ON m.id  = e.municipality_id
   LEFT JOIN institutions      i  ON i.id  = e.institution_id
@@ -354,47 +382,59 @@ const BASE_SELECT = `
   LEFT JOIN municipalities    im ON im.id = i.municipality_id
 `;
 
+const BASE_SELECT = `SELECT ${_BASE_COLS} ${_BASE_JOINS}`;
+
 // ─── Funciones públicas ───────────────────────────────────────────────────────
 
 async function getEmployees(filters = {}) {
   const values = [];
   const conditions = [];
 
-  if (filters.tenantId) {
-    values.push(filters.tenantId);
-    conditions.push(`e.tenant_id = $${values.length}`);
-  }
-
-  if (filters.companyId) {
-    values.push(filters.companyId);
-    conditions.push(`e.company_id = $${values.length}`);
-  }
-
-  if (filters.contractId) {
-    values.push(filters.contractId);
-    conditions.push(`e.contract_id = $${values.length}`);
-  }
-
-  if (filters.municipalityId) {
-    values.push(filters.municipalityId);
-    conditions.push(`e.municipality_id = $${values.length}`);
-  }
+  if (filters.tenantId)      { values.push(filters.tenantId);      conditions.push(`e.tenant_id    = $${values.length}`); }
+  if (filters.companyId)     { values.push(filters.companyId);     conditions.push(`e.company_id   = $${values.length}`); }
+  if (filters.contractId)    { values.push(filters.contractId);    conditions.push(`e.contract_id  = $${values.length}`); }
+  if (filters.municipalityId){ values.push(filters.municipalityId);conditions.push(`e.municipality_id = $${values.length}`); }
+  if (filters.documentNumber){ values.push(filters.documentNumber);conditions.push(`e.document_number = $${values.length}`); }
 
   if (filters.status) {
-    values.push(filters.status);
-    conditions.push(`e.status = $${values.length}`);
+    values.push(filters.status.toUpperCase().trim());
+    conditions.push(`UPPER(TRIM(e.status)) = $${values.length}`);
+  }
+  if (filters.role) {
+    values.push(`%${filters.role}%`);
+    conditions.push(`e.real_position ILIKE $${values.length}`);
+  }
+  if (filters.nameSearch) {
+    values.push(`%${filters.nameSearch}%`);
+    conditions.push(`e.full_name ILIKE $${values.length}`);
+  }
+  if (filters.municipalityName) {
+    values.push(filters.municipalityName);
+    conditions.push(`m.name ILIKE $${values.length}`);
   }
 
-  if (filters.documentNumber) {
-    values.push(filters.documentNumber);
-    conditions.push(`e.document_number = $${values.length}`);
-  }
+  const where  = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limit  = Math.min(Number(filters.limit)  || 60, 5000);
+  const page   = Math.max(1, Number(filters.page) || 1);
+  const offset = (page - 1) * limit;
 
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const query = `${BASE_SELECT} ${where} ORDER BY e.full_name ASC`;
+  // COUNT(*) OVER() gives total matching rows without a second query
+  const query = `
+    SELECT ${_BASE_COLS},
+           COUNT(*) OVER() AS _total_count
+    ${_BASE_JOINS}
+    ${where}
+    ORDER BY e.full_name ASC
+    LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+  `;
 
-  const result = await pool.query(query, values);
-  return result.rows.map(mapEmployee);
+  const result = await pool.query(query, [...values, limit, offset]);
+  return {
+    rows:  result.rows.map(mapEmployee),
+    total: Number(result.rows[0]?._total_count || 0),
+    page,
+    limit,
+  };
 }
 
 async function getEmployeeById(id) {

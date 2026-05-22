@@ -14,10 +14,27 @@ function fileToBase64(file) {
 }
 
 export async function loadCoverageModule() {
+  const activeMun = (state.coverageFilters || {}).coverageFilterMunicipality || "";
+
+  // Lanzar history y personnel en paralelo — son independientes entre sí
+  const knownUploadId = state.coverageSelectedUploadId || "";
+
   let historyPayload;
+  let personnelPayload = { data: [] };
+  let earlyRowsPayload = { data: [] };
 
   try {
-    historyPayload = await apiFetch("/coverage/history");
+    const parallelFetches = [
+      apiFetch("/coverage/history"),
+      // Traer SIEMPRE todo el personal — sin filtro de municipio para que el
+      // _empMap tenga todos los OPERARIOS MANIPULADORES sin importar dónde viven.
+      apiFetch("/personnel?limit=5000"),
+      knownUploadId
+        ? apiFetch(`/coverage/upload/${knownUploadId}`).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
+    ];
+
+    [historyPayload, personnelPayload, earlyRowsPayload] = await Promise.all(parallelFetches);
   } catch (error) {
     return `
       <article class="info-card">
@@ -28,15 +45,26 @@ export async function loadCoverageModule() {
   }
 
   const history = Array.isArray(historyPayload.data) ? historyPayload.data : [];
-  let personnelPayload = { data: [] };
-
-  try {
-    personnelPayload = await apiFetch("/personnel");
-  } catch {
-    personnelPayload = { data: [] };
-  }
-
   const personnelRows = Array.isArray(personnelPayload.data) ? personnelPayload.data : [];
+
+  // Precompute employee lookup for O(1) per coverage row
+  const normalize0 = (value) =>
+    String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+
+  const _empMap = new Map();
+  for (const emp of personnelRows) {
+    const isActive = normalize0(emp.status || emp.estado) === "ACTIVO";
+    const isManip  = normalize0(emp.cargo_real || emp.real_position || emp.position).includes("OPERARIO MANIPULADOR DE ALIMENTOS");
+    if (!isActive || !isManip) continue;
+    const k = [
+      normalize0(emp.educationalMunicipality || emp.educational_municipality || emp.municipio_institucional || getPersonnelMunicipality(emp)),
+      normalize0(emp.institution || emp.institucion_educativa || emp.educational_institution || emp.institutionName || ""),
+      normalize0(emp.site || emp.sede_educativa || emp.educational_site || emp.siteName || ""),
+      normalize0(emp.educationalModality || emp.modalidad || emp.modality || emp.modalidad_educativa || ""),
+    ].join("|");
+    if (!_empMap.has(k)) _empMap.set(k, []);
+    _empMap.get(k).push(emp);
+  }
 
   const selectedUploadId =
     state.coverageSelectedUploadId || (history[0]?.id ? String(history[0].id) : "");
@@ -44,11 +72,16 @@ export async function loadCoverageModule() {
   let selectedRows = [];
 
   if (selectedUploadId) {
-    try {
-      const rowsPayload = await apiFetch(`/coverage/upload/${selectedUploadId}`);
-      selectedRows = Array.isArray(rowsPayload.data) ? rowsPayload.data : [];
-    } catch {
-      selectedRows = [];
+    if (knownUploadId === selectedUploadId) {
+      // Ya lo pedimos en la primera ronda en paralelo
+      selectedRows = Array.isArray(earlyRowsPayload.data) ? earlyRowsPayload.data : [];
+    } else {
+      try {
+        const rowsPayload = await apiFetch(`/coverage/upload/${selectedUploadId}`);
+        selectedRows = Array.isArray(rowsPayload.data) ? rowsPayload.data : [];
+      } catch {
+        selectedRows = [];
+      }
     }
   }
 
@@ -60,50 +93,13 @@ export async function loadCoverageModule() {
     String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 
   const getCoveragePersonnelForRow = (row) => {
-    return personnelRows.filter((employee) => {
-      const isActive = normalize(employee.status || employee.estado) === "ACTIVO";
-
-      const isManipulator = normalize(
-        employee.cargo_real || employee.real_position || employee.position
-      ).includes("OPERARIO MANIPULADOR DE ALIMENTOS");
-
-      const empMunicipality = normalize(
-        employee.educationalMunicipality ||
-        employee.educational_municipality ||
-        employee.municipio_institucional ||
-        getPersonnelMunicipality(employee)
-      );
-      const sameMunicipality = empMunicipality === normalize(row.municipality);
-
-      const empInstitution = normalize(
-        employee.institution ||
-        employee.institucion_educativa ||
-        employee.educational_institution ||
-        employee.institutionName ||
-        ""
-      );
-      const sameInstitution = empInstitution === normalize(row.institution);
-
-      const empSite = normalize(
-        employee.site ||
-        employee.sede_educativa ||
-        employee.educational_site ||
-        employee.siteName ||
-        ""
-      );
-      const sameSite = empSite === normalize(row.site);
-
-      const empModality = normalize(
-        employee.educationalModality ||
-        employee.modalidad ||
-        employee.modality ||
-        employee.modalidad_educativa ||
-        ""
-      );
-      const sameModality = empModality === normalize(row.modality);
-
-      return isActive && isManipulator && sameMunicipality && sameInstitution && sameSite && sameModality;
-    });
+    const k = [
+      normalize(row.municipality),
+      normalize(row.institution),
+      normalize(row.site),
+      normalize(row.modality),
+    ].join("|");
+    return _empMap.get(k) || [];
   };
 
   const getEmployeeWorkTimeType = (employee = {}) => {
@@ -229,6 +225,7 @@ export async function loadCoverageModule() {
     if (coverageStatus && normalize(live.coverageStatus) !== normalize(coverageStatus)) return false;
     return true;
   });
+
 
   const formatDate = (value) => {
     if (!value) return "";
@@ -417,6 +414,7 @@ export async function loadCoverageModule() {
         await openModule("cobertura_calculadora");
       });
     }
+
 
     if (exportBtn) {
       exportBtn.addEventListener("click", () => {
@@ -609,7 +607,11 @@ export async function loadCoverageModule() {
                           <td class="act-cell">${row.update_origin !== "HEREDADO" ? `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ""}</td>
                         </tr>`;
                     }).join("")
-                  : `<tr><td colspan="15" class="empty">Sin registros para mostrar.</td></tr>`}
+                  : `<tr><td colspan="15" class="empty">${
+                      activeMun
+                        ? "Sin registros para mostrar."
+                        : "Escoge un municipio en los filtros para ver la cobertura de personal."
+                    }</td></tr>`}
               </tbody>
             </table>
           </div>
@@ -623,7 +625,7 @@ export async function loadNovedadesPersonalModule() {
   let personnelRows = [];
   let novedadesData = [];
   try {
-    const pp = await apiFetch("/personnel");
+    const pp = await apiFetch("/personnel?limit=5000");
     personnelRows = Array.isArray(pp.data) ? pp.data : [];
   } catch { personnelRows = []; }
   try {

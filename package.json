@@ -4,12 +4,12 @@
   "description": "EMPIRIA — SaaS de Gestión de Talento Humano PAE",
   "main": "app.js",
   "scripts": {
-    "start":       "node app.js",
-    "dev":         "node --watch app.js",
-    "db:migrate":  "node scripts/run-migrations.js",
-    "db:backup":   "node scripts/backup-db.js",
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "db:migrate": "node scripts/run-migrations.js",
+    "db:backup": "node scripts/backup-db.js",
     "db:migrate-json": "node scripts/migrate-json-to-pg.js",
-    "test":        "node -e \"console.log('Sin pruebas automáticas todavía')\""
+    "test": "node -e \"console.log('Sin pruebas automáticas todavía')\""
   },
   "keywords": [],
   "author": "",
@@ -22,6 +22,7 @@
     "@aws-sdk/client-s3": "^3.1045.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
     "dotenv": "^17.4.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.1",

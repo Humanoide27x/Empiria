@@ -1039,6 +1039,19 @@ function _cacheGet(k) {
 }
 function _cacheSet(k, data) { _kpiCache.set(k, { data, ts: Date.now() }); }
 
+// ── 60-second cache for alerts and recent-activity ────────────────────────────
+const _alertsCache = new Map();
+const _activityCache = new Map();
+const SHORT_TTL = 60 * 1000;
+
+function _shortGet(cache, k) {
+  const e = cache.get(k);
+  if (!e) return null;
+  if (Date.now() - e.ts > SHORT_TTL) { cache.delete(k); return null; }
+  return e.data;
+}
+function _shortSet(cache, k, data) { cache.set(k, { data, ts: Date.now() }); }
+
 // ── Role helpers ──────────────────────────────────────────────────────────────
 function isOpsOnly(user) {
   return String(user.role || "").toLowerCase() === ROLES.OPERATIONS;
@@ -1234,10 +1247,16 @@ function handleDashboardAlerts(req, res, url) {
       sendJson(innerRes, 200, { ok: true, data: [{ type: "ok", severity: "ok", message: "Sin alertas activas", count: 0, action_url: null }] });
       return;
     }
+
+    const alertKey = String(user.companyId ?? "");
+    const cached   = _shortGet(_alertsCache, alertKey);
+    if (cached) { sendJson(innerRes, 200, { ok: true, cached: true, data: cached }); return; }
+
     const cVals   = user.companyId ? [user.companyId] : [];
     const cFilter = user.companyId ? "AND company_id = $1" : "";
     const cEmp    = user.companyId ? "AND e.company_id = $1" : "";
 
+    const t0 = performance.now();
     const [expiringR, lowCovR, novR, retirosR] = await Promise.all([
       // Certificados de manipulación expirando próximamente o ya expirados
       pool.query(`
@@ -1340,7 +1359,11 @@ function handleDashboardAlerts(req, res, url) {
       alerts.push({ type: "ok", severity: "ok", message: "Sin alertas activas", count: 0, action_url: null });
     }
 
-    sendJson(innerRes, 200, { ok: true, data: alerts });
+    _shortSet(_alertsCache, alertKey, alerts);
+    const elapsed = Math.round(performance.now() - t0);
+    if (elapsed > 500) console.warn(`[dashboard/alerts] lento: ${elapsed}ms`);
+
+    sendJson(innerRes, 200, { ok: true, cached: false, data: alerts });
   })(req, res, url);
 }
 
@@ -1434,6 +1457,11 @@ function handleDashboardRecentActivity(req, res, url) {
     if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
     const limit = Math.min(Number(innerUrl.searchParams.get("limit") || 10), 50);
 
+    const actKey  = `${user.companyId ?? ""}|${limit}`;
+    const actHit  = _shortGet(_activityCache, actKey);
+    if (actHit) { sendJson(innerRes, 200, { ok: true, cached: true, data: actHit }); return; }
+
+    const t0 = performance.now();
     let empQuery, empVals, novQuery, novVals;
 
     if (user.companyId) {
@@ -1512,7 +1540,12 @@ function handleDashboardRecentActivity(req, res, url) {
 
     activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-    sendJson(innerRes, 200, { ok: true, data: activities.slice(0, limit) });
+    const result = activities.slice(0, limit);
+    _shortSet(_activityCache, actKey, result);
+    const elapsed = Math.round(performance.now() - t0);
+    if (elapsed > 500) console.warn(`[dashboard/recent-activity] lento: ${elapsed}ms`);
+
+    sendJson(innerRes, 200, { ok: true, cached: false, data: result });
   })(req, res, url);
 }
 

@@ -18,7 +18,16 @@ function toTitleCase(value) {
     .replace(/\b\p{L}/gu, (char) => char.toUpperCase());
 }
 
+// Cache del catálogo educativo — se reconstruye máximo una vez cada 5 minutos
+let _catalogCache = null;
+let _catalogCacheTs = 0;
+const CATALOG_TTL = 5 * 60 * 1000;
+
 async function getEducationalCatalog() {
+  if (_catalogCache && Date.now() - _catalogCacheTs < CATALOG_TTL) {
+    return _catalogCache;
+  }
+
   const result = await pool.query(`
     SELECT
       TRIM(m.name) AS municipality,
@@ -55,6 +64,8 @@ async function getEducationalCatalog() {
     }
   }
 
+  _catalogCache = catalog;
+  _catalogCacheTs = Date.now();
   return catalog;
 }
 
@@ -131,17 +142,38 @@ function handlePersonnel(req, res) {
         if (resource?.contractId) filters.contractId = resource.contractId;
         if (resource?.tenantId) filters.tenantId = resource.tenantId;
 
-        const data = await getEmployees(filters);
+        const parsedUrl = new URL(req.url, 'http://localhost');
+        const qMunicipalityName = parsedUrl.searchParams.get('municipalityName') || '';
+        const qNameSearch       = parsedUrl.searchParams.get('nameSearch')       || '';
+        const qDocumentNumber   = parsedUrl.searchParams.get('documentNumber')   || '';
+        const qStatus           = parsedUrl.searchParams.get('status')           || '';
+        const qRole             = parsedUrl.searchParams.get('role')             || '';
+        const qPage             = Math.max(1, Number(parsedUrl.searchParams.get('page')  || 1));
+        const qLimit            = Math.min(Math.max(1, Number(parsedUrl.searchParams.get('limit') || 60)), 5000);
+        const withCatalog       = parsedUrl.searchParams.get('withCatalog') === '1';
 
-        let educationalCatalog = {};
-        try {
-          educationalCatalog = await getEducationalCatalog();
-        } catch (error) {
-          console.error("ERROR CATALOGO EDUCATIVO:", error);
-        }
+        if (qMunicipalityName) filters.municipalityName = qMunicipalityName;
+        if (qNameSearch)       filters.nameSearch       = qNameSearch;
+        if (qDocumentNumber)   filters.documentNumber   = qDocumentNumber;
+        if (qStatus)           filters.status           = qStatus;
+        if (qRole)             filters.role             = qRole;
+        filters.page  = qPage;
+        filters.limit = qLimit;
+
+        const hasUserFilter = !!(qMunicipalityName || qNameSearch || qDocumentNumber || qStatus || qRole);
+
+        const [result, educationalCatalog] = await Promise.all([
+          getEmployees(filters),
+          withCatalog && !hasUserFilter
+            ? getEducationalCatalog().catch(err => { console.error("ERROR CATALOGO EDUCATIVO:", err); return {}; })
+            : Promise.resolve({}),
+        ]);
 
         return sendJson(res, 200, {
-          data,
+          data:  result.rows,
+          total: result.total,
+          page:  result.page,
+          limit: result.limit,
           educationalCatalog,
         });
       }
