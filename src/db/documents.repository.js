@@ -1,4 +1,9 @@
 const pool = require("./pool");
+const { normalizeText } = require("../utils/text");
+
+pool.query(
+  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS normalized_full_name TEXT`
+).catch(err => console.warn("[migration] normalized_full_name:", err.message));
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 // Columnas reales de employee_documents:
@@ -193,6 +198,47 @@ async function getDocumentAlerts(companyId, daysAhead = 30) {
   });
 }
 
+async function getDocumentTypes() {
+  const result = await pool.query(
+    `SELECT id, code, name
+     FROM document_types
+     WHERE COALESCE(active, true) = true
+     ORDER BY name`
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    code: row.code || "",
+    name: row.name || "",
+  }));
+}
+
+async function getEmployeesForDocumentMatching(companyId) {
+  const values = [];
+  const conditions = [];
+
+  if (companyId) {
+    values.push(companyId);
+    conditions.push(`company_id = $${values.length}`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await pool.query(
+    `SELECT id, full_name, normalized_full_name, document_type, document_number
+     FROM employees
+     ${where}
+     ORDER BY full_name`,
+    values
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    fullName: row.full_name || "",
+    normalizedFullName: row.normalized_full_name || normalizeText(row.full_name),
+    documentType: row.document_type || "",
+    documentNumber: row.document_number || "",
+  }));
+}
+
 module.exports = {
   getDocumentsByEmployee,
   getDocumentById,
@@ -200,4 +246,6 @@ module.exports = {
   updateDocumentStatus,
   deleteDocument,
   getDocumentAlerts,
+  getDocumentTypes,
+  getEmployeesForDocumentMatching,
 };

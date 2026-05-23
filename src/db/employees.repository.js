@@ -1,10 +1,24 @@
 const pool = require("./pool");
 const XLSX = require("xlsx");
+const { normalizeText } = require("../utils/text");
 
 // Auto-migration: add municipios_a_cargo column if it doesn't exist yet
 pool.query(
   `ALTER TABLE employees ADD COLUMN IF NOT EXISTS municipios_a_cargo TEXT DEFAULT ''`
 ).catch(err => console.warn("[migration] municipios_a_cargo:", err.message));
+
+pool.query(
+  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS normalized_full_name TEXT`
+).catch(err => console.warn("[migration] normalized_full_name:", err.message));
+
+pool.query(`
+  ALTER TABLE employees
+    ADD COLUMN IF NOT EXISTS account_type         TEXT DEFAULT '',
+    ADD COLUMN IF NOT EXISTS bank_name            TEXT DEFAULT '',
+    ADD COLUMN IF NOT EXISTS account_number       TEXT DEFAULT '',
+    ADD COLUMN IF NOT EXISTS auxiliar_gestor_zona TEXT DEFAULT '',
+    ADD COLUMN IF NOT EXISTS contract_type        TEXT DEFAULT ''
+`).catch(err => console.warn("[migration] bank/auxiliar columns:", err.message));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -149,6 +163,7 @@ function mapEmployee(row) {
     legacyJsonId: row.legacy_json_id || null,
 
     fullName: row.full_name || "",
+    normalizedFullName: row.normalized_full_name || normalizeText(row.full_name),
     name: row.full_name || "",
     nombre: row.full_name || "",
 
@@ -396,6 +411,11 @@ async function getEmployees(filters = {}) {
   if (filters.municipalityId){ values.push(filters.municipalityId);conditions.push(`e.municipality_id = $${values.length}`); }
   if (filters.documentNumber){ values.push(filters.documentNumber);conditions.push(`e.document_number = $${values.length}`); }
 
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    values.push(filters.municipalityIds);
+    conditions.push(`e.municipality_id = ANY($${values.length})`);
+  }
+
   if (filters.status) {
     values.push(filters.status.toUpperCase().trim());
     conditions.push(`UPPER(TRIM(e.status)) = $${values.length}`);
@@ -572,6 +592,14 @@ async function createEmployee(data) {
     ]
   );
 
+  if (result.rows[0]) {
+    result.rows[0].normalized_full_name = normalizeText(fullName);
+    await pool.query(
+      `UPDATE employees SET normalized_full_name = $2 WHERE id = $1`,
+      [result.rows[0].id, result.rows[0].normalized_full_name]
+    );
+  }
+
   return mapEmployee(result.rows[0]);
 }
 
@@ -732,6 +760,14 @@ async function updateEmployee(id, data) {
       data.contractType       || data.contract_type || "",
     ]
   );
+
+  if (result.rows[0]) {
+    result.rows[0].normalized_full_name = normalizeText(fullName);
+    await pool.query(
+      `UPDATE employees SET normalized_full_name = $2 WHERE id = $1`,
+      [result.rows[0].id, result.rows[0].normalized_full_name]
+    );
+  }
 
   return result.rows[0] ? mapEmployee(result.rows[0]) : null;
 }

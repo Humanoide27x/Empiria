@@ -9,6 +9,8 @@ const {
   handleUpdateContractUser, handleDeactivateContractUser,
   handleGetDashboardConfig, handleUpsertDashboardConfig,
   handleGetModuleFields, handleUpsertModuleFields,
+  handleGetContractMunicipalityAssignments,
+  handleGetAllMunicipalities, handleGetUserMunicipalities, handleSetUserMunicipalities,
 } = require("./clients.controller");
 
 async function handleClientsRoutes(req, res, url) {
@@ -49,6 +51,24 @@ async function handleClientsRoutes(req, res, url) {
   if (userById) {
     if (m === "PUT" || m === "PATCH") { await handleUpdateContractUser(req, res, Number(userById[1]));   return true; }
     if (m === "DELETE")               { await handleDeactivateContractUser(req, res, Number(userById[1])); return true; }
+  }
+
+  // ── Users: municipality assignment ───────────────────────────────────────────
+  const userMunicipalities = p.match(/^\/config\/users\/(\d+)\/municipalities$/);
+  if (userMunicipalities) {
+    if (m === "GET")               { await handleGetUserMunicipalities(req, res, Number(userMunicipalities[1])); return true; }
+    if (m === "PUT" || m === "POST") { await handleSetUserMunicipalities(req, res, Number(userMunicipalities[1])); return true; }
+  }
+
+  // ── Municipalities catalog ────────────────────────────────────────────────────
+  if (p === "/config/municipalities" && m === "GET") {
+    await handleGetAllMunicipalities(req, res); return true;
+  }
+
+  // ── Contract: municipality assignments map ───────────────────────────────────
+  const ctMunAssign = p.match(/^\/config\/contracts\/(\d+)\/municipality-assignments$/);
+  if (ctMunAssign && m === "GET") {
+    await handleGetContractMunicipalityAssignments(req, res, Number(ctMunAssign[1])); return true;
   }
 
   // ── Contracts: dashboard widget config ───────────────────────────────────────

@@ -112,6 +112,11 @@ async function getCoverageByContract(filters = {}) {
     conditions.push(`cp.company_id = $${values.length}`);
   }
 
+  const empMunFilter =
+    Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0
+      ? (() => { values.push(filters.municipalityIds); return ` AND e.municipality_id = ANY($${values.length})`; })()
+      : "";
+
   const result = await pool.query(
     `
     SELECT
@@ -131,7 +136,7 @@ async function getCoverageByContract(filters = {}) {
     LEFT JOIN employees e
       ON e.contract_id = cp.contract_id
       AND e.company_id = cp.company_id
-      AND UPPER(TRIM(e.real_position)) = UPPER(TRIM(cp.name))
+      AND UPPER(TRIM(e.real_position)) = UPPER(TRIM(cp.name))${empMunFilter}
     WHERE ${conditions.join(" AND ")}
     ORDER BY co.name, c.name, cp.category, cp.name
     `,
@@ -200,6 +205,11 @@ async function getCoverageByMunicipality(filters = {}) {
   if (filters.municipalityId) {
     values.push(Number(filters.municipalityId));
     conditions.push(`e.municipality_id = $${values.length}`);
+  }
+
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    values.push(filters.municipalityIds);
+    conditions.push(`e.municipality_id = ANY($${values.length})`);
   }
 
   const result = await pool.query(
@@ -280,6 +290,11 @@ async function getEmployeesByMunicipalityAndPosition(filters = {}) {
     conditions.push(`e.municipality_id = $${values.length}`);
   }
 
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    values.push(filters.municipalityIds);
+    conditions.push(`e.municipality_id = ANY($${values.length})`);
+  }
+
   if (filters.position) {
     values.push(safeString(filters.position));
     conditions.push(`UPPER(TRIM(e.real_position)) = UPPER(TRIM($${values.length}))`);
@@ -357,6 +372,11 @@ async function getCoverageSummary(filters = {}) {
 
     posValues.push(Number(filters.companyId));
     posConditions.push(`cp.company_id = $${posValues.length}`);
+  }
+
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    empValues.push(filters.municipalityIds);
+    empConditions.push(`e.municipality_id = ANY($${empValues.length})`);
   }
 
   const [empResult, posResult] = await Promise.all([

@@ -90,12 +90,8 @@
       "Bash(Format-Table)",
       "Bash(kill 13692)",
       "Bash(pkill -f \"node src/app.js\")",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\" -Depth 1 | Select-Object Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"DIR\"}else{\"FILE\"}}} | Sort-Object Name)",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\" -Depth 1 | Where-Object { $_.PSIsContainer } | Select-Object Name | Sort-Object Name)",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\" -Depth 0 | Where-Object { $_.PSIsContainer } | Select-Object Name | Sort-Object Name)",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\public\\\\js\\\\modules\" -File | ForEach-Object { \"{0} \\({1} bytes\\)\" -f $_.Name, $_.Length } | Sort-Object)",
-      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\\\\server.js\" | Select-Object Length; \\(Get-Content \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\\\\server.js\" | Measure-Object -Line\\).Lines)",
-      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\\\\server.js\" | Measure-Object -Line\\).Lines; \\(Get-Item \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\\\\server.js\"\\).Length)"
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(git rebase *)"
     ]
   }
 }

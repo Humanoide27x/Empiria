@@ -7,7 +7,6 @@ const {
   createEmployee,
   updateEmployee,
   updateEmployeePhoto,
-  importEmployeesFromExcel,
 } = require("../../db/employees.repository");
 
 const pool = require("../../db/pool");
@@ -91,6 +90,11 @@ function handlePersonnel(req, res) {
       "gestion_personal",
       "create",
       async (req, res) => {
+        return sendJson(res, 410, {
+          ok: false,
+          message: "La importacion directa fue deshabilitada. Usa /employee-import/preview.",
+        });
+
         try {
           const body = await readJsonBody(req);
 
@@ -141,6 +145,9 @@ function handlePersonnel(req, res) {
         if (resource?.companyId) filters.companyId = resource.companyId;
         if (resource?.contractId) filters.contractId = resource.contractId;
         if (resource?.tenantId) filters.tenantId = resource.tenantId;
+        if (Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0) {
+          filters.municipalityIds = resource.municipalityIds;
+        }
 
         const parsedUrl = new URL(req.url, 'http://localhost');
         const qMunicipalityName = parsedUrl.searchParams.get('municipalityName') || '';

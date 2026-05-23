@@ -12,6 +12,10 @@ const SYSTEM_MODULES = [
   { key: "calculadora_personal",  label: "Calculadora"           },
 ];
 
+const SYSTEM_FEATURES = [
+  { key: "equipo_minimo", label: "Tab Equipo Mínimo (Dashboard)" },
+];
+
 
 const DOC_CATALOG = [
   "HOJA DE VIDA",
@@ -759,6 +763,22 @@ export async function loadContractConfigPanel(contractId) {
                   <span class="ccp-module-label">${escapeHtml(mod.label)}</span>
                   <div class="ccp-toggle ${enabled ? "ccp-toggle-on" : ""}">
                     <input type="checkbox" class="ccp-module-toggle" data-module-key="${escapeAttr(mod.key)}" ${enabled ? "checked" : ""}>
+                    <span class="ccp-toggle-track"><span class="ccp-toggle-thumb"></span></span>
+                  </div>
+                </label>`;
+            }).join("")}
+          </div>
+          <div class="ccp-modules-divider"></div>
+          <div class="ccp-panel-subtitle">Funcionalidades</div>
+          <p class="ccp-modules-hint">Activa o desactiva características específicas dentro de los módulos.</p>
+          <div class="ccp-modules-grid">
+            ${SYSTEM_FEATURES.map(feat => {
+              const enabled = modules[feat.key] === true;
+              return `
+                <label class="ccp-module-row">
+                  <span class="ccp-module-label">${escapeHtml(feat.label)}</span>
+                  <div class="ccp-toggle ${enabled ? "ccp-toggle-on" : ""}">
+                    <input type="checkbox" class="ccp-module-toggle" data-module-key="${escapeAttr(feat.key)}" ${enabled ? "checked" : ""}>
                     <span class="ccp-toggle-track"><span class="ccp-toggle-thumb"></span></span>
                   </div>
                 </label>`;
@@ -1552,16 +1572,23 @@ function _renderUsersTable(users) {
           <th>Nombre completo</th>
           <th>Usuario</th>
           <th>Cargo / Rol</th>
+          <th>Municipios</th>
           <th>Estado</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        ${users.map(u => `
+        ${users.map(u => {
+          const munIds = Array.isArray(u.municipality_ids) ? u.municipality_ids : [];
+          const munBadge = munIds.length
+            ? `<span class="ccp-mun-badge">${munIds.length} municipio${munIds.length !== 1 ? "s" : ""}</span>`
+            : `<span class="ccp-mun-badge ccp-mun-badge-empty">Sin asignar</span>`;
+          return `
           <tr>
             <td>${escapeHtml(u.full_name)}</td>
             <td><code class="ccp-user-code">${escapeHtml(u.username)}</code></td>
             <td>${escapeHtml(roleLabels[u.role_code] || u.role_code || "—")}</td>
+            <td>${munBadge}</td>
             <td>${statusBadge(u.active)}</td>
             <td class="ccp-users-actions">
               <button type="button" class="ccp-user-edit-btn"
@@ -1569,9 +1596,13 @@ function _renderUsersTable(users) {
                 data-name="${escapeAttr(u.full_name)}"
                 data-username="${escapeAttr(u.username)}"
                 data-role="${escapeAttr(u.role_code || "")}">✏ Editar</button>
+              <button type="button" class="ccp-user-mun-btn"
+                data-uid="${escapeAttr(String(u.id))}"
+                data-name="${escapeAttr(u.full_name)}">🗺 Municipios</button>
               ${u.active ? `<button type="button" class="ccp-user-deact-btn" data-uid="${escapeAttr(String(u.id))}">⊘ Desactivar</button>` : ""}
             </td>
-          </tr>`).join("")}
+          </tr>`;
+        }).join("")}
       </tbody>
     </table>`;
 }
@@ -1599,6 +1630,13 @@ function _wireUsersTableEvents(contractId) {
       name:     btn.dataset.name,
       username: btn.dataset.username,
       role:     btn.dataset.role,
+    }));
+  });
+  wrap.querySelectorAll(".ccp-user-mun-btn").forEach(btn => {
+    btn.addEventListener("click", () => openUserMunicipalitiesModal({
+      contractId,
+      userId:   Number(btn.dataset.uid),
+      userName: btn.dataset.name,
     }));
   });
   wrap.querySelectorAll(".ccp-user-deact-btn").forEach(btn => {
@@ -1709,6 +1747,168 @@ function openUserModal({ contractId, id = null, name = "", username = "", role =
     } catch (e) {
       showError(e.message || "No fue posible guardar.");
       btn.disabled = false; btn.textContent = isEdit ? "Guardar cambios" : "Crear usuario";
+    }
+  });
+}
+
+// ── User municipalities modal ─────────────────────────────────────────────────
+
+async function openUserMunicipalitiesModal({ contractId, userId, userName }) {
+  document.getElementById("ccpMunModal")?.remove();
+
+  const modal = document.createElement("div");
+  modal.id    = "ccpMunModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-card cfg-modal-card ccp-mun-modal-card">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">🗺</span>
+          <div>
+            <h3 style="margin:0;font-size:15px;font-weight:800;color:#0f172a">Municipios asignados</h3>
+            <p style="margin:2px 0 0;font-size:12px;color:#64748b">${escapeHtml(userName)}</p>
+          </div>
+        </div>
+        <button type="button" class="modal-close" id="ccpMunClose">&#x2715;</button>
+      </div>
+      <div class="modal-body" style="padding:16px 24px 0">
+        <div class="ccp-mun-toolbar">
+          <input id="ccpMunSearch" type="text" class="cfg-search-input" placeholder="Buscar municipio…" style="max-width:260px">
+          <div class="ccp-mun-sel-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="ccpMunSelAll">Seleccionar todos</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="ccpMunSelNone">Limpiar</button>
+          </div>
+        </div>
+        <div id="ccpMunCount" class="ccp-mun-count">Cargando…</div>
+        <div id="ccpMunList" class="ccp-mun-list">
+          <div class="ccp-loading-row">Cargando municipios…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="ccpMunSave" style="flex:1;justify-content:center">Guardar asignación</button>
+        <button type="button" class="btn btn-secondary" id="ccpMunCancel">Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  document.getElementById("ccpMunClose").addEventListener("click", close);
+  document.getElementById("ccpMunCancel").addEventListener("click", close);
+  modal.addEventListener("click", e => { if (e.target === modal) close(); });
+
+  let allMunicipalities = [];
+  let assignedIds       = new Set();
+  let takenByOther      = {};   // { [municipalityId]: full_name }
+
+  const updateCount = () => {
+    const count = document.getElementById("ccpMunCount");
+    if (count) count.textContent = `${assignedIds.size} municipio${assignedIds.size !== 1 ? "s" : ""} seleccionado${assignedIds.size !== 1 ? "s" : ""}`;
+  };
+
+  const renderList = (filter = "") => {
+    const listEl = document.getElementById("ccpMunList");
+    if (!listEl) return;
+    const lc = filter.toLowerCase();
+    const visible = lc
+      ? allMunicipalities.filter(m => m.name.toLowerCase().includes(lc))
+      : allMunicipalities;
+    if (!visible.length) {
+      listEl.innerHTML = `<p class="ccp-mun-empty">No se encontraron municipios.</p>`;
+      return;
+    }
+    listEl.innerHTML = visible.map(m => {
+      const owner   = takenByOther[m.id];
+      const checked = assignedIds.has(m.id);
+      if (owner) {
+        return `
+          <label class="ccp-mun-row ccp-mun-row-taken" title="Asignado a ${escapeHtml(owner)}">
+            <input type="checkbox" class="ccp-mun-chk" value="${m.id}" disabled checked>
+            <span class="ccp-mun-name">${escapeHtml(m.name)}</span>
+            <span class="ccp-mun-owner">Asignado a ${escapeHtml(owner)}</span>
+          </label>`;
+      }
+      return `
+        <label class="ccp-mun-row ${checked ? "ccp-mun-row-checked" : ""}">
+          <input type="checkbox" class="ccp-mun-chk" value="${m.id}" ${checked ? "checked" : ""}>
+          <span class="ccp-mun-name">${escapeHtml(m.name)}</span>
+        </label>`;
+    }).join("");
+
+    listEl.querySelectorAll(".ccp-mun-chk:not([disabled])").forEach(chk => {
+      chk.addEventListener("change", () => {
+        const id = Number(chk.value);
+        if (chk.checked) { assignedIds.add(id); chk.closest(".ccp-mun-row")?.classList.add("ccp-mun-row-checked"); }
+        else             { assignedIds.delete(id); chk.closest(".ccp-mun-row")?.classList.remove("ccp-mun-row-checked"); }
+        updateCount();
+      });
+    });
+  };
+
+  try {
+    const [munRes, assignedRes, assignmentsRes] = await Promise.all([
+      apiFetch("/config/municipalities"),
+      apiFetch(`/config/users/${userId}/municipalities`),
+      apiFetch(`/config/contracts/${contractId}/municipality-assignments`),
+    ]);
+    allMunicipalities = Array.isArray(munRes.data) ? munRes.data : [];
+    const rawIds      = Array.isArray(assignedRes.data) ? assignedRes.data : [];
+    assignedIds       = new Set(rawIds.map(Number));
+
+    // Build takenByOther: municipios asignados a OTROS usuarios del mismo contrato
+    const allAssignments = (assignmentsRes.data && typeof assignmentsRes.data === "object")
+      ? assignmentsRes.data : {};
+    takenByOther = {};
+    for (const [munId, info] of Object.entries(allAssignments)) {
+      if (Number(info.user_id) !== userId) {
+        takenByOther[Number(munId)] = info.full_name;
+      }
+    }
+
+    renderList();
+    updateCount();
+  } catch (e) {
+    document.getElementById("ccpMunList").innerHTML =
+      `<p style="color:red;padding:12px">${escapeHtml(e.message)}</p>`;
+  }
+
+  document.getElementById("ccpMunSearch").addEventListener("input", e => {
+    renderList(e.target.value);
+  });
+
+  document.getElementById("ccpMunSelAll").addEventListener("click", () => {
+    const filter = document.getElementById("ccpMunSearch")?.value?.toLowerCase() || "";
+    const visible = filter
+      ? allMunicipalities.filter(m => m.name.toLowerCase().includes(filter))
+      : allMunicipalities;
+    visible.filter(m => !takenByOther[m.id]).forEach(m => assignedIds.add(m.id));
+    renderList(filter);
+    updateCount();
+  });
+
+  document.getElementById("ccpMunSelNone").addEventListener("click", () => {
+    const filter = document.getElementById("ccpMunSearch")?.value?.toLowerCase() || "";
+    const visible = filter
+      ? allMunicipalities.filter(m => m.name.toLowerCase().includes(filter))
+      : allMunicipalities;
+    visible.filter(m => !takenByOther[m.id]).forEach(m => assignedIds.delete(m.id));
+    renderList(filter);
+    updateCount();
+  });
+
+  document.getElementById("ccpMunSave").addEventListener("click", async () => {
+    const btn = document.getElementById("ccpMunSave");
+    btn.disabled = true; btn.textContent = "Guardando…";
+    try {
+      await apiFetch(`/config/users/${userId}/municipalities`, {
+        method: "PUT",
+        body:   JSON.stringify({ municipality_ids: [...assignedIds] }),
+      });
+      showSuccess("Municipios asignados correctamente.");
+      close();
+      await _loadUsersTab(contractId);
+    } catch (e) {
+      showError(e.message || "No fue posible guardar la asignación.");
+      btn.disabled = false; btn.textContent = "Guardar asignación";
     }
   });
 }

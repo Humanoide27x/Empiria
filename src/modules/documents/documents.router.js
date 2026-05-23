@@ -19,7 +19,10 @@ const {
   updateDocumentStatus,
   deleteDocument,
   getDocumentAlerts,
+  getDocumentTypes,
+  getEmployeesForDocumentMatching,
 } = require("../../db/documents.repository");
+const { buildBulkReviewRow } = require("./bulk-match.service");
 
 // Backward compat: JSON-based document data source
 const legacyDocs = require("../../data/documents");
@@ -92,6 +95,46 @@ function createDocumentsRouter() {
 
   // ── POST /documents/upload — subir archivo a R2 ───────────────────────────
   const uploadMiddleware = upload("documents");
+
+  router.post("/bulk-preview", authMiddleware, async (req, res) => {
+    try {
+      const companyId = resolveCompanyId(req);
+      if (!companyId) {
+        return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+      }
+
+      const body = await readJsonBody(req);
+      const files = Array.isArray(body.files) ? body.files : [];
+      if (!files.length) {
+        return sendJson(res, 400, { ok: false, message: "Debes enviar archivos para validar" });
+      }
+
+      const [employees, documentTypes] = await Promise.all([
+        getEmployeesForDocumentMatching(companyId),
+        getDocumentTypes(),
+      ]);
+
+      const rows = files.map((file) =>
+        buildBulkReviewRow(
+          typeof file === "string" ? { originalname: file } : file,
+          employees,
+          documentTypes
+        )
+      );
+
+      const summary = rows.reduce((acc, row) => {
+        acc.total += 1;
+        acc[row.status] = (acc[row.status] || 0) + 1;
+        if (row.canAutoAssign) acc.assignable += 1;
+        return acc;
+      }, { total: 0, assignable: 0 });
+
+      return sendJson(res, 200, { ok: true, data: { rows, summary } });
+    } catch (err) {
+      console.error("[documents] POST /bulk-preview:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error prevalidando documentos" });
+    }
+  });
 
   router.post(
     "/upload",

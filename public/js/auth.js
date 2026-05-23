@@ -131,8 +131,8 @@ export async function renderDashboard(user, access) {
   if (elements.contractValue)elements.contractValue.textContent= formatContract(user.contractId);
 
   if (elements.municipalityValue) {
-    elements.municipalityValue.textContent =
-      user.assignedMunicipalities?.length ? user.assignedMunicipalities.join(", ") : "Sin restricción";
+    const munNames = user.municipality_names?.length ? user.municipality_names : (user.assignedMunicipalities || []);
+    elements.municipalityValue.textContent = munNames.length ? munNames.join(", ") : "Sin restricción";
   }
   if (elements.topUser) {
     elements.topUser.textContent = user.name || "Usuario";
@@ -141,9 +141,10 @@ export async function renderDashboard(user, access) {
   if (elements.sbCompany)      elements.sbCompany.textContent      = formatCompany(user.companyId);
   if (elements.sbContract)     elements.sbContract.textContent     = formatContract(user.contractId);
   if (elements.sbMunicipality) {
-    const muns = user.assignedMunicipalities || [];
+    const muns = user.municipality_names?.length ? user.municipality_names : (user.assignedMunicipalities || []);
     if (muns.length) {
-      elements.sbMunicipality.innerHTML = muns.map(m => `<span class="sb-mun-chip">${m}</span>`).join("");
+      const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      elements.sbMunicipality.innerHTML = muns.map(m => `<span class="sb-mun-chip">${esc(m)}</span>`).join("");
       elements.sbMunicipality.title = muns.join(", ");
     } else {
       elements.sbMunicipality.innerHTML = `<span class="sb-mun-chip sb-mun-free">Sin restricción</span>`;

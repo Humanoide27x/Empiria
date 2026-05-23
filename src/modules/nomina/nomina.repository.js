@@ -93,7 +93,15 @@ function calcLine(salaryConfig, modClass, diasNoClase, novedades) {
 
 // ── Empleados del contrato con modalidad derivada ─────────────────────────────
 
-async function getContractEmployees(contractId) {
+async function getContractEmployees(contractId, municipalityIds = null) {
+  const params = [contractId];
+  const extraWhere = [];
+  if (Array.isArray(municipalityIds) && municipalityIds.length > 0) {
+    params.push(municipalityIds);
+    extraWhere.push(`e.municipality_id = ANY($${params.length})`);
+  }
+  const munFilter = extraWhere.length ? ` AND ${extraWhere.join(" AND ")}` : "";
+
   const { rows } = await pool.query(`
     SELECT
       e.id, e.full_name, e.document_number, e.document_type,
@@ -114,9 +122,9 @@ async function getContractEmployees(contractId) {
     LEFT JOIN educational_sites s ON s.id = e.site_id
     LEFT JOIN institutions      i ON i.id = e.institution_id
     LEFT JOIN municipalities    m ON m.id = e.municipality_id
-    WHERE e.contract_id = $1 AND e.status = 'ACTIVO'
+    WHERE e.contract_id = $1 AND e.status = 'ACTIVO'${munFilter}
     ORDER BY s.name NULLS LAST, e.full_name
-  `, [contractId]);
+  `, params);
 
   return rows.map(r => ({
     id:              r.id,

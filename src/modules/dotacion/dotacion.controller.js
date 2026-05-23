@@ -266,7 +266,11 @@ async function handleImportarAsignaciones(req, res, url) {
 
 async function handleFiltrosMunicipios(req, res, url) {
   return withModuleProtection(MODULES.DOTACION, ACTIONS.VIEW, async (req, res, url, user, resource) => {
-    const data = await getMunicipiosConEmpleados({ companyId: resource.companyId, contractId: resource.contractId });
+    const data = await getMunicipiosConEmpleados({
+      companyId: resource.companyId,
+      contractId: resource.contractId,
+      municipalityIds: resource.municipalityIds || null,
+    });
     sendJson(res, 200, { ok: true, data });
   })(req, res, url);
 }
@@ -305,7 +309,15 @@ async function handleEmpleadasParaRemision(req, res, url) {
     const institucionId = url.searchParams.get("institucionId") ? Number(url.searchParams.get("institucionId")) : null;
     const sedeId        = url.searchParams.get("sedeId")        ? Number(url.searchParams.get("sedeId"))        : null;
     const modalidad     = url.searchParams.get("modalidad")     || null;
-    const data = await getEmpleadasParaRemision({ companyId: resource.companyId, contractId: resource.contractId, municipioId, institucionId, sedeId, modalidad });
+    const data = await getEmpleadasParaRemision({
+      companyId: resource.companyId,
+      contractId: resource.contractId,
+      municipalityIds: resource.municipalityIds || null,
+      municipioId,
+      institucionId,
+      sedeId,
+      modalidad,
+    });
     sendJson(res, 200, { ok: true, data });
   })(req, res, url);
 }

@@ -629,13 +629,9 @@ function getCoverageStatus({ requiredTc, requiredMt, contractedTc, contractedMt 
   return "CUMPLE";
 }
 
-async function getCoverageRowsByUpload(uploadId) {
+async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
   const uploadResult = await pool.query(
-    `
-    SELECT *
-    FROM coverage_uploads
-    WHERE id = $1
-    `,
+    `SELECT * FROM coverage_uploads WHERE id = $1`,
     [uploadId]
   );
 
@@ -645,14 +641,23 @@ async function getCoverageRowsByUpload(uploadId) {
     return [];
   }
 
+  const hasMunFilter = Array.isArray(municipalityNames) && municipalityNames.length > 0;
+  const rowParams = hasMunFilter
+    ? [uploadId, municipalityNames.map(n => n.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim())]
+    : [uploadId];
+  const ACCENT_FROM = "ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ";
+  const ACCENT_TO   = "AAAAAAEEEEIIIIOOOOOOUUUUYNC";
+  const munCondition = hasMunFilter
+    ? ` AND REGEXP_REPLACE(translate(UPPER(TRIM(municipality)),'${ACCENT_FROM}','${ACCENT_TO}'),'[^A-Z0-9 ]','','g') = ANY(
+          SELECT REGEXP_REPLACE(translate(UPPER(TRIM(unnest($2::text[]))),'${ACCENT_FROM}','${ACCENT_TO}'),'[^A-Z0-9 ]','','g')
+        )`
+    : "";
+
   const currentRowsResult = await pool.query(
-    `
-    SELECT *
-    FROM coverage_upload_rows
-    WHERE upload_id = $1
-    ORDER BY municipality, institution, site, modality, unique_code
-    `,
-    [uploadId]
+    `SELECT * FROM coverage_upload_rows
+     WHERE upload_id = $1${munCondition}
+     ORDER BY municipality, institution, site, modality, unique_code`,
+    rowParams
   );
 
   const previousUpload = await getPreviousUpload(currentUpload);

@@ -148,8 +148,9 @@ function handleCoverageSummary(req, res, url) {
     ACTIONS.VIEW,
     async (innerReq, innerRes, innerUrl, user, resource) => {
       const filters = {
-        companyId: innerUrl.searchParams.get("companyId") || resource.companyId,
-        contractId: innerUrl.searchParams.get("contractId") || resource.contractId,
+        companyId:       innerUrl.searchParams.get("companyId") || resource.companyId,
+        contractId:      innerUrl.searchParams.get("contractId") || resource.contractId,
+        municipalityIds: resource.municipalityIds || null,
       };
 
       const summary = await getCoverageSummary(filters);
@@ -253,7 +254,7 @@ function handleCoverageUploadRows(req, res, url) {
   return withModuleProtection(
     MODULES.COVERAGE,
     ACTIONS.VIEW,
-    async (innerReq, innerRes, innerUrl) => {
+    async (innerReq, innerRes, innerUrl, user, resource) => {
       const uploadId = innerUrl.pathname.split("/")[3];
 
       if (!uploadId) {
@@ -264,7 +265,8 @@ function handleCoverageUploadRows(req, res, url) {
         return;
       }
 
-      const data = await getCoverageRowsByUpload(uploadId);
+      const munNames = user?.municipality_names?.length ? user.municipality_names : null;
+      const data = await getCoverageRowsByUpload(uploadId, munNames);
 
       sendJson(innerRes, 200, {
         ok: true,
@@ -287,8 +289,9 @@ function handleCoverageByContract(req, res, url) {
     async (innerReq, innerRes, innerUrl, user, resource) => {
       if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
       const filters = {
-        companyId:  resource.companyId  || innerUrl.searchParams.get("companyId"),
-        contractId: resource.contractId || innerUrl.searchParams.get("contractId"),
+        companyId:       resource.companyId  || innerUrl.searchParams.get("companyId"),
+        contractId:      resource.contractId || innerUrl.searchParams.get("contractId"),
+        municipalityIds: resource.municipalityIds || null,
       };
 
       const data = await getCoverageByContract(filters);
@@ -314,9 +317,10 @@ function handleCoverageByMunicipality(req, res, url) {
     async (innerReq, innerRes, innerUrl, user, resource) => {
       if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
       const filters = {
-        companyId:      resource.companyId  || innerUrl.searchParams.get("companyId"),
-        contractId:     resource.contractId || innerUrl.searchParams.get("contractId"),
-        municipalityId: innerUrl.searchParams.get("municipalityId"),
+        companyId:       resource.companyId  || innerUrl.searchParams.get("companyId"),
+        contractId:      resource.contractId || innerUrl.searchParams.get("contractId"),
+        municipalityId:  innerUrl.searchParams.get("municipalityId"),
+        municipalityIds: resource.municipalityIds || null,
       };
 
       const data = await getCoverageByMunicipality(filters);
@@ -342,10 +346,11 @@ function handleCoverageEmployees(req, res, url) {
     async (innerReq, innerRes, innerUrl, user, resource) => {
       if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
       const filters = {
-        companyId:      resource.companyId  || innerUrl.searchParams.get("companyId"),
-        contractId:     resource.contractId || innerUrl.searchParams.get("contractId"),
-        municipalityId: innerUrl.searchParams.get("municipalityId"),
-        position:       innerUrl.searchParams.get("position"),
+        companyId:       resource.companyId  || innerUrl.searchParams.get("companyId"),
+        contractId:      resource.contractId || innerUrl.searchParams.get("contractId"),
+        municipalityId:  innerUrl.searchParams.get("municipalityId"),
+        position:        innerUrl.searchParams.get("position"),
+        municipalityIds: resource.municipalityIds || null,
       };
 
       const data = await getEmployeesByMunicipalityAndPosition(filters);

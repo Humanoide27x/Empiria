@@ -2850,7 +2850,7 @@ export async function renderPersonnelTableModule() {
     });
 
     document.getElementById("btnImportPersonnel")?.addEventListener("click", () => {
-      openImportPersonnelModal();
+      openSafeImportPersonnelModal();
     });
 
     document.querySelectorAll("[data-cv-personnel-id]").forEach((btn) => {
@@ -3410,6 +3410,157 @@ function _resolveMunName(value) {
   return found ? found.name : String(value);
 }
 
+async function openBulkDocumentUploadModal() {
+  document.getElementById("bulkDocumentModal")?.remove();
+
+  let personnelPayload = {};
+  try {
+    personnelPayload = await apiFetch("/personnel");
+  } catch {
+    personnelPayload = {};
+  }
+
+  const employees = Array.isArray(personnelPayload.data)
+    ? personnelPayload.data
+    : Array.isArray(personnelPayload.personnel)
+      ? personnelPayload.personnel
+      : [];
+
+  const modal = document.createElement("div");
+  modal.id = "bulkDocumentModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:1100px">
+      <div class="modal-header">
+        <h3>Validacion de carga documental masiva</h3>
+        <button type="button" class="modal-close" id="closeBulkDocumentModal">x</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end;margin-bottom:1rem">
+          <label style="font-size:13px;font-weight:600">PDFs
+            <input id="bulkDocumentFiles" type="file" accept="application/pdf" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
+          </label>
+          <button type="button" class="btn btn-secondary" id="previewBulkDocuments">Prevalidar</button>
+        </div>
+        <div id="bulkDocumentSummary" style="margin-bottom:.75rem;font-size:13px;color:#475569"></div>
+        <div style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead style="position:sticky;top:0;background:var(--panel);z-index:1">
+              <tr>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Archivo</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Nombre extraido</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Empleado detectado</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Estado</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Confianza</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Correccion</th>
+              </tr>
+            </thead>
+            <tbody id="bulkDocumentRows">
+              <tr><td colspan="7" style="padding:1rem;color:#64748b">Selecciona PDFs para validar coincidencias.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Cargar seleccionados</button>
+        <button type="button" class="btn btn-secondary" id="cancelBulkDocumentModal">Cancelar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const fileInput = modal.querySelector("#bulkDocumentFiles");
+  const rowsBody = modal.querySelector("#bulkDocumentRows");
+  const summaryEl = modal.querySelector("#bulkDocumentSummary");
+  const uploadBtn = modal.querySelector("#uploadBulkDocuments");
+  let reviewRows = [];
+
+  const close = () => modal.remove();
+  modal.querySelector("#closeBulkDocumentModal")?.addEventListener("click", close);
+  modal.querySelector("#cancelBulkDocumentModal")?.addEventListener("click", close);
+
+  const renderRows = () => {
+    if (!reviewRows.length) {
+      rowsBody.innerHTML = `<tr><td colspan="7" style="padding:1rem;color:#64748b">Sin resultados.</td></tr>`;
+      uploadBtn.disabled = true;
+      return;
+    }
+
+    rowsBody.innerHTML = reviewRows.map((row, index) => {
+      const detected = row.detectedEmployee?.fullName || "";
+      const statusColor = row.status === "MATCHED" ? "#15803d"
+        : row.status === "NO_MATCH" ? "#dc2626"
+        : "#d97706";
+      const options = `<option value="">No asignar</option>` + employees.map((emp) => {
+        const selected = String(row.employeeId || "") === String(emp.id) ? " selected" : "";
+        const label = `${getPersonnelFullName(emp)} - ${getPersonnelDocument(emp)}`;
+        return `<option value="${escapeAttr(String(emp.id))}"${selected}>${escapeHtml(label)}</option>`;
+      }).join("");
+
+      return `<tr data-bulk-row="${index}">
+        <td style="padding:.55rem;border-bottom:1px solid var(--border);max-width:220px;word-break:break-word">${escapeHtml(row.fileName || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.documentTypeName || row.documentTypeCode || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.extractedName || row.documentNumber || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(detected || "Pendiente")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border);font-weight:700;color:${statusColor}">${escapeHtml(row.status || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${Number(row.confidence || 0)}%</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <select data-bulk-employee-select="${index}" style="width:230px;padding:.35rem;border:1px solid var(--border);border-radius:6px">${options}</select>
+        </td>
+      </tr>`;
+    }).join("");
+    uploadBtn.disabled = false;
+  };
+
+  modal.querySelector("#previewBulkDocuments")?.addEventListener("click", async () => {
+    const files = Array.from(fileInput?.files || []);
+    if (!files.length) { showWarning("Selecciona al menos un PDF."); return; }
+    try {
+      const res = await apiFetch("/documents/bulk-preview", {
+        method: "POST",
+        body: JSON.stringify({ files: files.map((file) => file.name) }),
+      });
+      reviewRows = res.data?.rows || [];
+      const summary = res.data?.summary || {};
+      summaryEl.textContent = `${summary.total || 0} archivos - ${summary.MATCHED || 0} exactos - ${summary.PARTIAL_MATCH || 0} parciales - ${summary.NO_MATCH || 0} sin coincidencia - ${summary.DUPLICATE || 0} duplicados`;
+      renderRows();
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  uploadBtn.addEventListener("click", async () => {
+    const files = Array.from(fileInput?.files || []);
+    const byName = new Map(files.map((file) => [file.name, file]));
+    const selectedRows = reviewRows.map((row, index) => ({
+      ...row,
+      employeeId: modal.querySelector(`[data-bulk-employee-select="${index}"]`)?.value || "",
+    })).filter((row) => row.employeeId);
+
+    if (!selectedRows.length) {
+      showWarning("Selecciona al menos un empleado para cargar.");
+      return;
+    }
+
+    let uploaded = 0;
+    for (const row of selectedRows) {
+      const file = byName.get(row.fileName);
+      if (!file) continue;
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("employeeId", row.employeeId);
+      if (row.documentTypeId) formData.append("docTypeId", String(row.documentTypeId));
+      await apiFetch("/documents/upload", { method: "POST", body: formData });
+      uploaded += 1;
+    }
+
+    showSuccess(`${uploaded} documentos cargados.`);
+    close();
+    await openModule("gestion_personal");
+  });
+}
+
 export async function loadEmployeeDocumentsModule() {
   const employee = state.personnelDocumentsEmployee;
 
@@ -3545,6 +3696,10 @@ export async function loadEmployeeDocumentsModule() {
       state.personnelSelectedId = "__none__";
       state.personnelDocumentsEmployee = null;
       await openModule("gestion_personal");
+    });
+
+    document.getElementById("openBulkDocumentUpload")?.addEventListener("click", () => {
+      openBulkDocumentUploadModal();
     });
 
     document.getElementById("saveDoc")?.addEventListener("click", async () => {
@@ -3683,7 +3838,10 @@ export async function loadEmployeeDocumentsModule() {
             <h2>Documentos del empleado</h2>
             <p>${escapeHtml(getPersonnelFullName(employee))}</p>
           </div>
-          <button id="backToPersonnel" class="btn btn-secondary">Volver</button>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">
+            <button id="openBulkDocumentUpload" class="btn btn-primary">Carga masiva</button>
+            <button id="backToPersonnel" class="btn btn-secondary">Volver</button>
+          </div>
         </section>
 
         <section class="documents-audit-summary">
@@ -4147,6 +4305,415 @@ function openExportPersonnelModal(rows) {
   });
 
   updateCounter();
+}
+
+function openSafeImportPersonnelModal() {
+  document.getElementById("importPersonnelModal")?.remove();
+
+  const cu = state.currentUser || {};
+  const role = (cu.role || "").toLowerCase();
+  const isAdmin = role === "administrador";
+  const isTalent = role === "talento_humano";
+  if (!isAdmin && !isTalent) {
+    showError("Solo administrador y talento humano pueden importar empleados.");
+    return;
+  }
+
+  const fixedContract = !isAdmin && cu.contractId ? String(cu.contractId) : null;
+  let currentBatchId = null;
+  let currentRows = [];
+  let currentSummary = null;
+  let catalogs = { municipalities: [], managers: [], contracts: [], positions: [] };
+  let updateFieldsCatalog = [];
+
+  const contractSelectorHtml = isAdmin
+    ? `<label style="display:block;font-size:13px;font-weight:600;margin-bottom:.4rem;margin-top:.8rem">Contrato de destino *</label>
+       <select id="importContractId" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;font-size:13px;margin-bottom:.8rem">
+         <option value="">Selecciona un contrato</option>
+         ${(state.contracts || []).map(c => `<option value="${escapeAttr(String(c.id))}">${escapeHtml(c.name || String(c.id))}</option>`).join("")}
+       </select>`
+    : `<input type="hidden" id="importContractId" value="${escapeAttr(fixedContract || "")}">`;
+
+  const modal = document.createElement("div");
+  modal.id = "importPersonnelModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:1120px;width:min(1120px,96vw)">
+      <div class="modal-header">
+        <h3>Preimportacion de empleados</h3>
+        <button type="button" class="modal-close" id="closeImportModal">&#x2715;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:1rem;align-items:start">
+          <section style="border:1px solid var(--border);border-radius:8px;padding:1rem">
+            <button type="button" id="btnDownloadTemplate" class="btn btn-secondary" style="width:100%;margin-bottom:1rem">Descargar plantilla (.xls)</button>
+            ${contractSelectorHtml}
+            <label style="display:block;font-size:13px;font-weight:600;margin-bottom:.4rem">Subir archivo Excel</label>
+            <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="width:100%;padding:.5rem;border:1px solid var(--border);border-radius:6px;font-size:13px"/>
+            <button type="button" class="btn btn-primary" id="doPreviewImport" style="width:100%;margin-top:1rem">Previsualizar</button>
+            <p id="importResult" style="margin-top:.8rem;font-size:13px"></p>
+          </section>
+          <section>
+            <div id="importSummary" style="display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:.6rem;margin-bottom:1rem"></div>
+            <div id="importResolvePanel" style="display:none;border:1px solid var(--border);border-radius:8px;padding:.85rem;margin-bottom:1rem">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.6rem;align-items:end">
+                <label style="font-size:12px;font-weight:600">Campo
+                  <select id="importResolveType" style="width:100%;margin-top:.25rem;padding:.45rem;border:1px solid var(--border);border-radius:6px">
+                    <option value="municipality">Municipio</option>
+                    <option value="manager">Gestor</option>
+                    <option value="contract">Contrato</option>
+                    <option value="position">Cargo real</option>
+                  </select>
+                </label>
+                <label style="font-size:12px;font-weight:600">Valor del Excel
+                  <select id="importSourceValue" style="width:100%;margin-top:.25rem;padding:.45rem;border:1px solid var(--border);border-radius:6px"></select>
+                </label>
+                <label style="font-size:12px;font-weight:600">Valor correcto
+                  <select id="importTargetValue" style="width:100%;margin-top:.25rem;padding:.45rem;border:1px solid var(--border);border-radius:6px"></select>
+                </label>
+                <button type="button" class="btn btn-secondary" id="applyImportResolve">Aplicar</button>
+              </div>
+              <label style="display:flex;gap:.45rem;align-items:center;margin-top:.7rem;font-size:12px">
+                <input type="checkbox" id="importSaveAlias"/>
+                Guardar equivalencia para futuras importaciones
+              </label>
+            </div>
+            <div id="importUpdateFieldsPanel" style="display:none;border:1px solid var(--border);border-radius:8px;padding:.9rem;margin-bottom:1rem;background:#fff">
+              <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center;margin-bottom:.75rem;flex-wrap:wrap">
+                <div>
+                  <strong style="font-size:13px;display:block">Campos a actualizar</strong>
+                  <span style="font-size:12px;color:#64748b">Por defecto solo se actualiza dotacion/calzado. Los demas datos se mantienen.</span>
+                </div>
+                <label style="display:flex;gap:.4rem;align-items:center;font-size:12px;color:#64748b">
+                  <input type="checkbox" id="importAllowOverwriteEmpty"/>
+                  permitir sobrescribir con vacio
+                </label>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:.5rem;align-items:end;margin-bottom:.7rem">
+                <label style="font-size:12px;font-weight:600">Aplicar mismo valor
+                  <select id="importMassField" style="width:100%;margin-top:.25rem;padding:.4rem;border:1px solid var(--border);border-radius:6px"></select>
+                </label>
+                <label style="font-size:12px;font-weight:600">Valor
+                  <input id="importMassValue" type="text" style="width:100%;margin-top:.25rem;padding:.4rem;border:1px solid var(--border);border-radius:6px"/>
+                </label>
+                <button type="button" class="btn btn-secondary" id="applyImportMassValue">Usar valor</button>
+              </div>
+              <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.7rem">
+                <button type="button" class="btn btn-secondary" id="selectImportDotacionFields">Solo dotacion/calzado</button>
+                <button type="button" class="btn btn-secondary" id="selectImportWorkFields">Datos laborales</button>
+                <button type="button" class="btn btn-secondary" id="clearImportUpdateFields">Limpiar</button>
+              </div>
+              <div id="importUpdateFields" style="display:grid;grid-template-columns:repeat(2,minmax(230px,1fr));gap:.75rem"></div>
+            </div>
+            <div style="max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+              <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead style="position:sticky;top:0;background:var(--panel);z-index:1">
+                  <tr>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Fila</th>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Empleado</th>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Documento</th>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Dotacion y tallas</th>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Estado</th>
+                    <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Diferencias / errores</th>
+                  </tr>
+                </thead>
+                <tbody id="importErrorsBody">
+                  <tr><td colspan="6" style="padding:1rem;color:#64748b">Carga un Excel para ver la prevalidacion.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="commitImportPersonnel" disabled>Importar empleados validos</button>
+        <button type="button" class="btn btn-secondary" id="closeImportModal2">Cancelar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  document.getElementById("closeImportModal").addEventListener("click", close);
+  document.getElementById("closeImportModal2").addEventListener("click", close);
+  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+  const renderSummary = () => {
+    const wrap = document.getElementById("importSummary");
+    if (!wrap || !currentSummary) { if (wrap) wrap.innerHTML = ""; return; }
+    const card = (label, value, color) => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:.7rem;background:#fff">
+        <span style="display:block;font-size:11px;color:#64748b">${label}</span>
+        <strong style="font-size:22px;color:${color}">${Number(value || 0)}</strong>
+      </div>`;
+    wrap.innerHTML =
+      card("Filas leidas", currentSummary.totalRows, "#0f172a") +
+      card("Listas", currentSummary.validRows, "#15803d") +
+      card("Errores", currentSummary.errorRows, "#dc2626") +
+      card("Existentes", currentSummary.existingRows, "#2563eb") +
+      card("Diferencias", currentSummary.conflictRows, "#d97706");
+    document.getElementById("commitImportPersonnel").disabled =
+      !currentSummary.validRows && !currentSummary.existingRows && !currentSummary.conflictRows;
+    document.getElementById("importResolvePanel").style.display = currentRows.length ? "" : "none";
+    document.getElementById("importUpdateFieldsPanel").style.display =
+      (currentSummary.existingRows || currentSummary.conflictRows) ? "" : "none";
+  };
+
+  const renderRows = () => {
+    const body = document.getElementById("importErrorsBody");
+    if (!body) return;
+    if (!currentRows.length) {
+      body.innerHTML = `<tr><td colspan="6" style="padding:1rem;color:#64748b">No hay errores pendientes.</td></tr>`;
+      return;
+    }
+    const selectedFields = new Set(
+      [...document.querySelectorAll("[data-import-update-field]:checked")]
+        .map((input) => input.dataset.importUpdateField)
+        .filter(Boolean)
+    );
+    body.innerHTML = currentRows.map((row) => {
+      const errors = (row.errors || [])
+        .filter((e) => e.code !== "EXISTING_EMPLOYEE")
+        .map((e) => e.message || e.code);
+      const visibleConflicts = (row.conflicts || [])
+        .filter((c) => selectedFields.size ? selectedFields.has(c.field) : false);
+      const conflicts = visibleConflicts.map((c) => `${c.label}: "${c.current || "vacio"}" -> "${c.incoming || "vacio"}"`);
+      const sizes = row.sizes || {};
+      const sizeText = Object.entries(sizes)
+        .filter(([, value]) => value)
+        .map(([key, value]) => `${key.replace("talla_", "").replace("_", " ")}: ${value}`)
+        .join(" | ");
+      const color = row.status === "ERROR" ? "#dc2626"
+        : row.status === "EXISTING_EMPLOYEE" ? "#2563eb"
+        : row.status === "HAS_CONFLICTS" ? "#d97706"
+        : "#15803d";
+      const statusLabel = row.status === "HAS_CONFLICTS" ? "DIFERENCIAS"
+        : row.status === "EXISTING_EMPLOYEE" ? "EXISTENTE"
+        : row.status;
+      return `<tr>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(String(row.rowNumber || ""))}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.fullName || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.documentNumber || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(sizeText || "Sin tallas")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border);color:${color};font-weight:700">${escapeHtml(statusLabel || "")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml([...conflicts, ...errors].join("; ") || "Sin cambios en campos seleccionados")}</td>
+      </tr>`;
+    }).join("");
+  };
+
+  const renderUpdateFields = () => {
+    const wrap = document.getElementById("importUpdateFields");
+    if (!wrap) return;
+    const fields = updateFieldsCatalog.length ? updateFieldsCatalog : [];
+    const dotacion = fields.filter((field) => field.group === "Dotacion y tallas");
+    const others = fields.filter((field) => field.group !== "Dotacion y tallas");
+    const check = (field, checked = false) => `
+      <label style="display:flex;gap:.5rem;align-items:center;font-size:12px;padding:.32rem .35rem;border-radius:6px">
+        <input type="checkbox" data-import-update-field="${escapeAttr(field.key)}"${checked ? " checked" : ""}/>
+        <span>${escapeHtml(field.label || field.key)}</span>
+      </label>`;
+    const group = (title, description, items, checked = false) => `
+      <section style="border:1px solid var(--border);border-radius:8px;padding:.75rem;background:#f8fafc">
+        <strong style="display:block;font-size:12px;margin-bottom:.15rem">${escapeHtml(title)}</strong>
+        <span style="display:block;font-size:11px;color:#64748b;margin-bottom:.45rem">${escapeHtml(description)}</span>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.15rem">${items.map((field) => check(field, checked)).join("")}</div>
+      </section>`;
+    wrap.innerHTML = [
+      group("Dotacion y calzado", "Recomendado para cargar tallas sin tocar datos personales.", dotacion, true),
+      group("Datos del empleado", "Activalos solo si vas a corregir esos datos.", others, false),
+    ].join("");
+    wrap.querySelectorAll("[data-import-update-field]").forEach((input) => {
+      input.addEventListener("change", renderRows);
+    });
+    const massField = document.getElementById("importMassField");
+    if (massField) {
+      massField.innerHTML = fields.map((field) =>
+        `<option value="${escapeAttr(field.key)}">${escapeHtml(field.label || field.key)}</option>`
+      ).join("");
+    }
+  };
+
+  const targetCatalogForType = (type) => {
+    if (type === "municipality") return catalogs.municipalities || [];
+    if (type === "manager") return catalogs.managers || [];
+    if (type === "contract") return catalogs.contracts || [];
+    if (type === "position") return catalogs.positions || [];
+    return [];
+  };
+  const sourceValueForType = (row, type) => {
+    if (type === "municipality") return row.municipalityText || "";
+    if (type === "manager") return row.managerText || "";
+    if (type === "contract") return row.contractText || "";
+    if (type === "position") return row.realPositionText || "";
+    return "";
+  };
+  const refreshResolveControls = () => {
+    const type = document.getElementById("importResolveType")?.value || "municipality";
+    const sourceSelect = document.getElementById("importSourceValue");
+    const targetSelect = document.getElementById("importTargetValue");
+    if (!sourceSelect || !targetSelect) return;
+    const sourceValues = [...new Set(currentRows.map((row) => sourceValueForType(row, type)).filter(Boolean))].sort();
+    sourceSelect.innerHTML = sourceValues.map((v) => `<option value="${escapeAttr(v)}">${escapeHtml(v)}</option>`).join("");
+    targetSelect.innerHTML = targetCatalogForType(type).map((item) =>
+      `<option value="${escapeAttr(String(item.id || ""))}" data-label="${escapeAttr(item.name || item.label || "")}">${escapeHtml(item.name || item.label || String(item.id))}</option>`
+    ).join("");
+  };
+  const setPreviewState = (payload) => {
+    currentSummary = payload.summary || null;
+    currentBatchId = currentSummary?.importBatchId || currentBatchId;
+    currentRows = Array.isArray(payload.rows) ? payload.rows : [];
+    catalogs = payload.catalogs || catalogs;
+    updateFieldsCatalog = catalogs.updateFields || updateFieldsCatalog;
+    renderSummary();
+    renderUpdateFields();
+    renderRows();
+    refreshResolveControls();
+  };
+
+  document.getElementById("btnDownloadTemplate").addEventListener("click", () => {
+    exportToExcel(
+      [
+        "PRIMER NOMBRE","SEGUNDO NOMBRE","PRIMER APELLIDO","SEGUNDO APELLIDO",
+        "TIPO DOCUMENTO","NUMERO DOCUMENTO","EMPRESA","CONTRATO",
+        "CARGO REAL","TIPO JORNADA","ESTADO","GESTOR ZONA","MUNICIPIO OPERACION",
+        "INSTITUCION EDUCATIVA","SEDE EDUCATIVA","MODALIDAD",
+        "CELULAR","CORREO","DIRECCION","BARRIO","ESTADO CIVIL",
+        "EPS","FONDO PENSIONES","CAJA COMPENSACION","ARL",
+        "UNIFORME","TALLA CAMISA","TALLA PANTALON","CALZADO",
+      ],
+      [[
+        "JUAN","CARLOS","PEREZ","GARCIA","CC","12345678","EMPIRIA","Contrato PAE",
+        "OPERARIO MANIPULADOR DE ALIMENTOS","TC","ACTIVO","Laura Gomez","Acacias",
+        "INST. EDUCATIVA EJEMPLO","SEDE PRINCIPAL","CAA",
+        "3101234567","juan@email.com","CRA 5 #10-20","CENTRO","SOLTERO",
+        "COMPENSAR","COLPENSIONES","COFREM","SURA",
+        "M","","","38",
+      ]],
+      "plantilla_importacion_personal"
+    );
+  });
+
+  document.getElementById("importResolveType").addEventListener("change", refreshResolveControls);
+
+  const setUpdateFieldSelection = (predicate) => {
+    document.querySelectorAll("[data-import-update-field]").forEach((input) => {
+      const field = updateFieldsCatalog.find((item) => item.key === input.dataset.importUpdateField);
+      input.checked = Boolean(field && predicate(field));
+    });
+    renderRows();
+  };
+
+  document.getElementById("selectImportDotacionFields").addEventListener("click", () => {
+    setUpdateFieldSelection((field) => field.group === "Dotacion y tallas");
+  });
+
+  document.getElementById("selectImportWorkFields").addEventListener("click", () => {
+    setUpdateFieldSelection((field) => field.group !== "Dotacion y tallas");
+  });
+
+  document.getElementById("clearImportUpdateFields").addEventListener("click", () => {
+    setUpdateFieldSelection(() => false);
+  });
+
+  document.getElementById("applyImportMassValue").addEventListener("click", () => {
+    const field = document.getElementById("importMassField")?.value || "";
+    if (!field) return;
+    const checkbox = [...document.querySelectorAll("[data-import-update-field]")]
+      .find((input) => input.dataset.importUpdateField === field);
+    if (checkbox) checkbox.checked = true;
+    renderRows();
+    showSuccess("Valor masivo preparado para el commit.");
+  });
+
+  document.getElementById("doPreviewImport").addEventListener("click", async () => {
+    const fileInput = document.getElementById("importExcelFile");
+    const resultEl = document.getElementById("importResult");
+    if (!fileInput?.files?.length) { showWarning("Selecciona un archivo Excel."); return; }
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const contractId = document.getElementById("importContractId")?.value || null;
+      if (isAdmin && !contractId) {
+        if (resultEl) resultEl.textContent = "Selecciona un contrato antes de importar.";
+        return;
+      }
+      if (resultEl) resultEl.textContent = "Validando archivo...";
+      try {
+        const res = await apiFetch("/employee-import/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileBase64: e.target.result,
+            fileName: file.name,
+            contractId: contractId ? Number(contractId) : null,
+            companyId: cu.companyId || null,
+          }),
+        });
+        setPreviewState(res);
+        if (resultEl) resultEl.textContent = "Prevalidacion completada.";
+      } catch (err) {
+        if (resultEl) resultEl.innerHTML = `<span style="color:#dc2626">${escapeHtml(err.message)}</span>`;
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById("applyImportResolve").addEventListener("click", async () => {
+    if (!currentBatchId) { showWarning("Primero previsualiza un archivo."); return; }
+    const type = document.getElementById("importResolveType")?.value || "";
+    const sourceValue = document.getElementById("importSourceValue")?.value || "";
+    const targetEl = document.getElementById("importTargetValue");
+    const targetId = targetEl?.value || "";
+    const targetLabel = targetEl?.selectedOptions?.[0]?.dataset?.label || targetEl?.selectedOptions?.[0]?.textContent || "";
+    if (!sourceValue || !targetId) { showWarning("Selecciona el valor del Excel y el valor correcto."); return; }
+    try {
+      const res = await apiFetch(`/employee-import/${currentBatchId}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          sourceValue,
+          target: { id: Number(targetId), label: targetLabel },
+          applyToAll: true,
+          saveAlias: document.getElementById("importSaveAlias")?.checked || false,
+        }),
+      });
+      setPreviewState(res);
+      showSuccess("Correccion aplicada a todos los casos iguales.");
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  document.getElementById("commitImportPersonnel").addEventListener("click", async () => {
+    if (!currentBatchId) return;
+    try {
+      const updateFields = [...document.querySelectorAll("[data-import-update-field]:checked")]
+        .map((input) => input.dataset.importUpdateField)
+        .filter(Boolean);
+      const massField = document.getElementById("importMassField")?.value || "";
+      const massValue = document.getElementById("importMassValue")?.value ?? "";
+      const allowOverwriteEmpty = document.getElementById("importAllowOverwriteEmpty")?.checked || false;
+      const overrideValues = massField && (massValue !== "" || allowOverwriteEmpty) ? { [massField]: massValue } : {};
+      const res = await apiFetch(`/employee-import/${currentBatchId}/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updateFields,
+          overrideValues,
+          allowOverwriteEmpty,
+        }),
+      });
+      setPreviewState(res);
+      const imported = res.summary?.importedRows || 0;
+      const updated = res.summary?.updatedRows || 0;
+      const skipped = res.summary?.skippedRows || 0;
+      showSuccess(`${imported} empleados creados, ${updated} actualizados, ${skipped} existentes sin cambios.`);
+      if (imported > 0 || updated > 0) setTimeout(() => { close(); openModule("gestion_personal"); }, 1200);
+    } catch (err) {
+      showError(err.message);
+    }
+  });
 }
 
 function openImportPersonnelModal() {

@@ -442,10 +442,12 @@ async function getMunicipiosConEmpleados(filters = {}) {
   const params = [];
   if (filters.companyId)  { params.push(filters.companyId);  extra.push(`e.company_id  = $${params.length}`); }
   if (filters.contractId) { params.push(filters.contractId); extra.push(`e.contract_id = $${params.length}`); }
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    params.push(filters.municipalityIds);
+    extra.push(`e.municipality_id = ANY($${params.length})`);
+  }
   const where = extra.length ? ` AND ${extra.join(" AND ")}` : "";
 
-  // Rama 1: municipio directo en el empleado
-  // Rama 2: municipio via institución del empleado (cuando municipality_id no está en el empleado)
   const q = `
     SELECT DISTINCT m.id, m.name
     FROM employees e
@@ -568,7 +570,10 @@ async function getEmpleadasParaRemision(filters = {}) {
   if (filters.companyId)   { params.push(filters.companyId);   q += ` AND e.company_id  = $${params.length}`; }
   if (filters.contractId)  { params.push(filters.contractId);  q += ` AND e.contract_id = $${params.length}`; }
   // Filtrar por municipio solo cuando NO hay institución seleccionada
-  if (filters.municipioId && !filters.institucionId) {
+  if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
+    params.push(filters.municipalityIds);
+    q += ` AND e.municipality_id = ANY($${params.length})`;
+  } else if (filters.municipioId && !filters.institucionId) {
     params.push(filters.municipioId);
     q += ` AND e.municipality_id = $${params.length}`;
   }

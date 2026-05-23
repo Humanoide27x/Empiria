@@ -165,15 +165,13 @@ function buildDashboardEmployeeScope({
   }
 
   if (includeAssignedMunicipalities) {
-    const assignedMunicipalities = Array.isArray(user?.assignedMunicipalities)
-      ? user.assignedMunicipalities
-          .map((item) => String(item || "").trim().toLowerCase())
-          .filter(Boolean)
-      : [];
+    const munIds = Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0
+      ? resource.municipalityIds
+      : null;
 
-    if (assignedMunicipalities.length) {
-      values.push(assignedMunicipalities);
-      conditions.push(`LOWER(TRIM(COALESCE(m.name, ''))) = ANY($${values.length})`);
+    if (munIds) {
+      values.push(munIds);
+      conditions.push(`e.municipality_id = ANY($${values.length})`);
     }
   }
 
@@ -223,11 +221,24 @@ function buildMunicipalityDistribution(rows = []) {
 function handleDashboardSummary(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
 
-  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (innerReq, innerRes, innerUrl, user) => {
+  withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (innerReq, innerRes, innerUrl, user, resource) => {
     const filterMunicipality = (innerUrl.searchParams.get("municipality") || "").trim();
     const yr = new Date().getFullYear();
 
-    const allPersonnel = getScopedPersonnel(user);
+    // Municipality restriction via new integer-ID assignment system
+    const munNamesRestriction =
+      Array.isArray(user?.municipality_names) && user.municipality_names.length > 0
+        ? new Set(user.municipality_names.map(n => normalizeDashboardText(n)))
+        : null;
+
+    const scopedPersonnel = getScopedPersonnel(user);
+    const allPersonnel = munNamesRestriction
+      ? scopedPersonnel.filter(p => {
+          const mun = normalizeDashboardText(getMunicipality(p));
+          return mun && munNamesRestriction.has(mun);
+        })
+      : scopedPersonnel;
+
     const municipalitiesList = [...new Set(allPersonnel.map(getMunicipality).filter(Boolean))].sort();
 
     const personnel = filterMunicipality
@@ -312,26 +323,29 @@ function handleDashboardSummary(req, res, url) {
           sedesConManipuladora = Number(sedesQ.rows[0]?.con_personal || 0);
           sedesSinManipuladora = totalSedes - sedesConManipuladora;
         } else {
-          const totals = await pool.query(
-            `SELECT COALESCE(SUM(required_tc),0) AS req_tc,
-                    COALESCE(SUM(required_mt),0) AS req_mt,
-                    COALESCE(SUM(cupos),0) AS cupos
-             FROM coverage_upload_rows WHERE upload_id = $1`,
-            [upId]
-          );
-          requiredTc = Number(totals.rows[0]?.req_tc || 0);
-          requiredMt = Number(totals.rows[0]?.req_mt || 0);
-          totalCupos = Number(totals.rows[0]?.cupos  || 0);
+          // Totals will be recalculated from munRows if municipality restriction is active
+          if (!munNamesRestriction) {
+            const totals = await pool.query(
+              `SELECT COALESCE(SUM(required_tc),0) AS req_tc,
+                      COALESCE(SUM(required_mt),0) AS req_mt,
+                      COALESCE(SUM(cupos),0) AS cupos
+               FROM coverage_upload_rows WHERE upload_id = $1`,
+              [upId]
+            );
+            requiredTc = Number(totals.rows[0]?.req_tc || 0);
+            requiredMt = Number(totals.rows[0]?.req_mt || 0);
+            totalCupos = Number(totals.rows[0]?.cupos  || 0);
 
-          const sedesQ = await pool.query(
-            `SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN required_tc > 0 OR required_mt > 0 THEN 1 ELSE 0 END) AS con_personal
-             FROM coverage_upload_rows WHERE upload_id = $1`,
-            [upId]
-          );
-          totalSedes           = Number(sedesQ.rows[0]?.total        || 0);
-          sedesConManipuladora = Number(sedesQ.rows[0]?.con_personal || 0);
-          sedesSinManipuladora = totalSedes - sedesConManipuladora;
+            const sedesQ = await pool.query(
+              `SELECT COUNT(*) AS total,
+                      SUM(CASE WHEN required_tc > 0 OR required_mt > 0 THEN 1 ELSE 0 END) AS con_personal
+               FROM coverage_upload_rows WHERE upload_id = $1`,
+              [upId]
+            );
+            totalSedes           = Number(sedesQ.rows[0]?.total        || 0);
+            sedesConManipuladora = Number(sedesQ.rows[0]?.con_personal || 0);
+            sedesSinManipuladora = totalSedes - sedesConManipuladora;
+          }
         }
 
         const munRows = await pool.query(
@@ -347,6 +361,7 @@ function handleDashboardSummary(req, res, url) {
         for (const row of munRows.rows) {
           const mun = String(row.municipality || "").trim();
           if (!mun) continue;
+          if (munNamesRestriction && !munNamesRestriction.has(normalizeDashboardText(mun))) continue;
           coverageByMunicipality[mun] = {
             requiredTc:   Number(row.req_tc || 0),
             requiredMt:   Number(row.req_mt || 0),
@@ -362,6 +377,17 @@ function handleDashboardSummary(req, res, url) {
           const wt = norm(p.workTimeType || p.work_time_type || p.tipo_tiempo);
           if (wt === "TC") coverageByMunicipality[mun].contractedTc += 1;
           if (wt === "MT") coverageByMunicipality[mun].contractedMt += 1;
+        }
+
+        // Recalculate totals from filtered coverage when municipality restriction is active
+        if (munNamesRestriction && !filterMunicipality) {
+          requiredTc = 0; requiredMt = 0; totalCupos = 0;
+          totalSedes = 0; sedesConManipuladora = 0;
+          for (const v of Object.values(coverageByMunicipality)) {
+            requiredTc += v.requiredTc;
+            requiredMt += v.requiredMt;
+            totalCupos += v.cupos || 0;
+          }
         }
       }
     } catch { /* ignore */ }
@@ -827,17 +853,21 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           employeeCoverageConditions.push(`e.municipality_id = $${coverageValues.length}`);
         }
 
-        const assignedMunicipalities = Array.isArray(user?.assignedMunicipalities)
-          ? user.assignedMunicipalities
-              .map((item) => String(item || "").trim().toLowerCase())
-              .filter(Boolean)
-          : [];
-        if (assignedMunicipalities.length) {
-          coverageValues.push(assignedMunicipalities);
-          rowConditions.push(`LOWER(TRIM(r.municipality)) = ANY($${coverageValues.length})`);
+        const munIds = Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0
+          ? resource.municipalityIds
+          : null;
 
-          coverageValues.push(assignedMunicipalities);
-          employeeCoverageConditions.push(`LOWER(TRIM(COALESCE(m.name, ''))) = ANY($${coverageValues.length})`);
+        if (munIds) {
+          coverageValues.push(munIds);
+          rowConditions.push(`EXISTS (
+            SELECT 1 FROM municipalities mf
+            WHERE mf.id = ANY($${coverageValues.length})
+              AND REGEXP_REPLACE(translate(UPPER(TRIM(mf.name)),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')
+                = REGEXP_REPLACE(translate(UPPER(TRIM(r.municipality)),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')
+          )`);
+
+          coverageValues.push(munIds);
+          employeeCoverageConditions.push(`e.municipality_id = ANY($${coverageValues.length})`);
         }
 
         // Priority param: pick the upload whose period_month matches the selected period;

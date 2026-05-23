@@ -20,6 +20,9 @@ async function applyContractModules(access, user) {
   // Strip modules that are exclusively for the global admin
   let modules = access.modules.filter((m) => !GLOBAL_ADMIN_ONLY.has(m.module));
 
+  // Feature flags controlled per-contract — disabled by default, enabled only when explicitly set
+  const features = { equipo_minimo: false };
+
   try {
     const result = await pool.query(
       "SELECT modules FROM contract_settings WHERE contract_id = $1 LIMIT 1",
@@ -33,12 +36,14 @@ async function applyContractModules(access, user) {
         }
         return true;
       });
+      // Sub-feature flags — opt-in
+      if (contractModules.equipo_minimo === true) features.equipo_minimo = true;
     }
   } catch {
     // fall back — global-admin-only modules are still stripped
   }
 
-  return { ...access, modules };
+  return { ...access, modules, features };
 }
 
 const {

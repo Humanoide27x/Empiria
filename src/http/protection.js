@@ -35,6 +35,12 @@ function parseResourceFromRequest(url) {
 }
 
 function getDefaultResourceForUser(user, req) {
+  const rawMunIds = user?.municipality_ids;
+  const municipalityIds =
+    Array.isArray(rawMunIds) && rawMunIds.length > 0
+      ? rawMunIds.map(Number).filter(n => n > 0)
+      : null;
+
   return {
     tenantId:   getTenantIdFromRequest(req, user),
     companyId:  user?.companyId  ?? user?.company_id  ?? null,
@@ -44,6 +50,7 @@ function getDefaultResourceForUser(user, req) {
       user.assignedMunicipalities.length
         ? user.assignedMunicipalities[0]
         : null,
+    municipalityIds,
   };
 }
 
@@ -60,17 +67,19 @@ function mergeResource(userResource, requestResource, user) {
   // This prevents contract-scoped users from querying other companies via query string.
   if (userResource.companyId || userResource.contractId) {
     return {
-      tenantId:     requestResource.tenantId ?? userResource.tenantId,
-      companyId:    userResource.companyId,
-      contractId:   userResource.contractId,
-      municipality: requestResource.municipality ?? userResource.municipality,
+      tenantId:        requestResource.tenantId ?? userResource.tenantId,
+      companyId:       userResource.companyId,
+      contractId:      userResource.contractId,
+      municipality:    requestResource.municipality ?? userResource.municipality,
+      municipalityIds: userResource.municipalityIds,
     };
   }
   return {
-    tenantId:     requestResource.tenantId ?? userResource.tenantId,
-    companyId:    requestResource.companyId ?? userResource.companyId,
-    contractId:   requestResource.contractId ?? userResource.contractId,
-    municipality: requestResource.municipality ?? userResource.municipality,
+    tenantId:        requestResource.tenantId ?? userResource.tenantId,
+    companyId:       requestResource.companyId ?? userResource.companyId,
+    contractId:      requestResource.contractId ?? userResource.contractId,
+    municipality:    requestResource.municipality ?? userResource.municipality,
+    municipalityIds: userResource.municipalityIds,
   };
 }
 

@@ -1,6 +1,7 @@
 import { apiFetch } from "../api.js";
 import { escapeHtml } from "../utils.js";
 import { dashboardCleaner } from "../nav.js";
+import { state } from "../state.js";
 
 const ROOT_ID    = "dashHrRoot";
 const REFRESH_MS = 60_000;
@@ -319,6 +320,10 @@ function buildAgeBars(d) {
 
 // ── Widget builders ───────────────────────────────────────────────────────────
 
+function hasEquipoMinimo() {
+  return state.access?.features?.equipo_minimo !== false;
+}
+
 function buildTopbar() {
   return `
   <div class="hr-topbar">
@@ -326,9 +331,10 @@ function buildTopbar() {
       <button type="button" class="hr-type-tab${_activeType === "operario" ? " active" : ""}" data-type="operario">
         Operario Manip. Alimentos
       </button>
+      ${hasEquipoMinimo() ? `
       <button type="button" class="hr-type-tab${_activeType === "equipo" ? " active" : ""}" data-type="equipo">
         Equipo Mínimo (Adm.)
-      </button>
+      </button>` : ""}
     </div>
   </div>`;
 }
@@ -1640,6 +1646,7 @@ export async function loadDashboardHrModule() {
   dashboardCleaner.fn();
   _clearDashboardHrTimers();
   dashboardCleaner.fn = _clearDashboardHrTimers;
+  if (!hasEquipoMinimo()) _activeType = "operario";
 
   const html = `${buildStyles()}<div id="${ROOT_ID}">${buildLoadingHtml()}</div>`;
 

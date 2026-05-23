@@ -7,6 +7,11 @@ pool.query(
   `ALTER TABLE contract_settings ADD COLUMN IF NOT EXISTS salary_config JSONB DEFAULT '{}'::jsonb`
 ).catch(err => console.warn("[migration] salary_config:", err.message));
 
+// Auto-migration: municipality_ids array on users
+pool.query(
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS municipality_ids INTEGER[] DEFAULT ARRAY[]::INTEGER[]`
+).catch(err => console.warn("[migration] municipality_ids:", err.message));
+
 async function listClients() {
   const { rows } = await pool.query(`
     SELECT
@@ -235,12 +240,62 @@ const crypto = require("crypto");
 
 async function getContractUsers(contractId) {
   const { rows } = await pool.query(`
-    SELECT id, username, full_name, role_code, active, created_at
+    SELECT id, username, full_name, role_code, active, created_at,
+           COALESCE(municipality_ids, ARRAY[]::INTEGER[]) AS municipality_ids
     FROM users
     WHERE contract_id = $1
     ORDER BY active DESC, full_name
   `, [contractId]);
   return rows;
+}
+
+async function getUserMunicipalities(userId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(municipality_ids, ARRAY[]::INTEGER[]) AS municipality_ids
+     FROM users WHERE id = $1`,
+    [Number(userId)]
+  );
+  return rows[0] ? rows[0].municipality_ids : null;
+}
+
+async function getAllMunicipalities() {
+  const { rows } = await pool.query(`
+    SELECT id, TRIM(name) AS name
+    FROM municipalities
+    ORDER BY name
+  `);
+  return rows;
+}
+
+async function getContractMunicipalityAssignments(contractId) {
+  const { rows } = await pool.query(`
+    SELECT u.id AS user_id, u.full_name,
+           UNNEST(COALESCE(u.municipality_ids, ARRAY[]::INTEGER[])) AS municipality_id
+    FROM users u
+    WHERE u.contract_id = $1 AND u.active = true
+      AND array_length(u.municipality_ids, 1) > 0
+  `, [contractId]);
+
+  const result = {};
+  for (const row of rows) {
+    result[row.municipality_id] = { user_id: row.user_id, full_name: row.full_name };
+  }
+  return result;
+}
+
+async function setUserMunicipalities(userId, municipalityIds) {
+  const ids = [...new Set(
+    Array.isArray(municipalityIds)
+      ? municipalityIds.map(Number).filter(n => !isNaN(n) && n > 0)
+      : []
+  )];
+  const { rows } = await pool.query(
+    `UPDATE users SET municipality_ids = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, username, full_name, role_code, active, municipality_ids`,
+    [ids, Number(userId)]
+  );
+  return rows[0] || null;
 }
 
 async function createContractUser(contractId, { name, username, password, role }) {
@@ -318,4 +373,6 @@ module.exports = {
   getContractConfig, upsertContractSettings,
   getSalaryConfig, upsertSalaryConfigOnly,
   getContractUsers, createContractUser, updateContractUser,
+  getAllMunicipalities, getUserMunicipalities, setUserMunicipalities,
+  getContractMunicipalityAssignments,
 };

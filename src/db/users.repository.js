@@ -77,18 +77,24 @@ async function findUserByUsername(username) {
 
 async function getUsers() {
   const { rows } = await pool.query(
-    `SELECT u.*, r.code as role_from_table
+    `SELECT u.*,
+            r.code as role_from_table,
+            COALESCE((
+              SELECT ARRAY_AGG(m.name ORDER BY m.name)
+              FROM municipalities m
+              WHERE m.id = ANY(u.municipality_ids)
+            ), ARRAY[]::TEXT[]) AS municipality_names
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
      ORDER BY u.id`
   );
   return rows.map((u) => {
-    u.role       = u.role_code || (u.role_from_table ? u.role_from_table.toLowerCase() : null);
-    // Add camelCase aliases so permission/session code can use either convention
-    u.companyId  = u.company_id  ?? null;
-    u.contractId = u.contract_id ?? null;
-    u.mfaEnabled = u.mfa_enabled || false;
-    u.name       = u.full_name   || u.name || null;
+    u.role             = u.role_code || (u.role_from_table ? u.role_from_table.toLowerCase() : null);
+    u.companyId        = u.company_id  ?? null;
+    u.contractId       = u.contract_id ?? null;
+    u.mfaEnabled       = u.mfa_enabled || false;
+    u.name             = u.full_name   || u.name || null;
+    u.municipality_names = u.municipality_names || [];
     return u;
   });
 }

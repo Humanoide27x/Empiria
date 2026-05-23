@@ -1,6 +1,12 @@
 const { handlePersonnel, handleContractPositions } = require("./employees.controller");
+const { handleEmployeeImport } = require("./employee-import.controller");
 
 async function handleEmployeesRoutes(req, res, url) {
+  if (url.pathname.startsWith("/employee-import")) {
+    await handleEmployeeImport(req, res, url);
+    return true;
+  }
+
   if (req.url.startsWith("/personnel")) {
     handlePersonnel(req, res);
     return true;

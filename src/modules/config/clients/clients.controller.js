@@ -3,12 +3,15 @@
 const { sendJson, sendMethodNotAllowed } = require("../../../http/response");
 const { readJsonBody }                   = require("../../../http/request");
 const { requireAuth }                    = require("../../auth/auth.helpers");
+const { refreshCache }                   = require("../../../data/users");
 const {
   listClients, createClient, updateClient,
   createContract, updateContract,
   getContractConfig, upsertContractSettings,
   getSalaryConfig, upsertSalaryConfigOnly,
   getContractUsers, createContractUser, updateContractUser,
+  getAllMunicipalities, getUserMunicipalities, setUserMunicipalities,
+  getContractMunicipalityAssignments,
 } = require("./clients.repository");
 
 const {
@@ -236,6 +239,43 @@ async function handleUpsertModuleFields(req, res, id, slug) {
   sendJson(res, 200, { ok: true, data });
 }
 
+// ── Municipalities ────────────────────────────────────────────────────────────
+
+async function handleGetContractMunicipalityAssignments(req, res, contractId) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  if (!guardAdmin(req, res)) return;
+  const data = await getContractMunicipalityAssignments(contractId);
+  sendJson(res, 200, { ok: true, data });
+}
+
+async function handleGetAllMunicipalities(req, res) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  if (!requireAuth(req, res)) return;
+  const data = await getAllMunicipalities();
+  sendJson(res, 200, { ok: true, data });
+}
+
+async function handleGetUserMunicipalities(req, res, userId) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  if (!guardAdmin(req, res)) return;
+  const ids = await getUserMunicipalities(userId);
+  if (ids === null) { sendJson(res, 404, { ok: false, message: "Usuario no encontrado" }); return; }
+  sendJson(res, 200, { ok: true, data: ids });
+}
+
+async function handleSetUserMunicipalities(req, res, userId) {
+  if (req.method !== "PUT" && req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  if (!guardAdmin(req, res)) return;
+  const body    = await readJsonBody(req);
+  if (!Array.isArray(body.municipality_ids)) {
+    sendJson(res, 400, { ok: false, message: "municipality_ids debe ser un array" }); return;
+  }
+  const updated = await setUserMunicipalities(userId, body.municipality_ids);
+  if (!updated) { sendJson(res, 404, { ok: false, message: "Usuario no encontrado" }); return; }
+  refreshCache().catch(() => {});
+  sendJson(res, 200, { ok: true, data: updated });
+}
+
 module.exports = {
   handleListClients, handleCreateClient, handleUpdateClient,
   handleCreateContract, handleUpdateContract,
@@ -245,4 +285,6 @@ module.exports = {
   handleUpdateContractUser, handleDeactivateContractUser,
   handleGetDashboardConfig, handleUpsertDashboardConfig,
   handleGetModuleFields, handleUpsertModuleFields,
+  handleGetContractMunicipalityAssignments,
+  handleGetAllMunicipalities, handleGetUserMunicipalities, handleSetUserMunicipalities,
 };

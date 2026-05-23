@@ -33,10 +33,15 @@ function guardTH(req, res) {
 // GET /nomina/employees?contractId=X
 async function handleGetEmployees(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
-  if (!requireAuth(req, res)) return;
+  const auth = requireAuth(req, res);
+  if (!auth) return;
   const contractId = Number(url.searchParams.get("contractId"));
   if (!contractId) { sendJson(res, 400, { ok: false, message: "contractId requerido" }); return; }
-  const employees = await getContractEmployees(contractId);
+  const rawMunIds = auth.user?.municipality_ids;
+  const municipalityIds = Array.isArray(rawMunIds) && rawMunIds.length > 0
+    ? rawMunIds.map(Number).filter(n => n > 0)
+    : null;
+  const employees = await getContractEmployees(contractId, municipalityIds);
   sendJson(res, 200, { ok: true, data: employees });
 }
 
