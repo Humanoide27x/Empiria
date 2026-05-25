@@ -6157,5 +6157,41 @@
     "ip": "::1",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
     "createdAt": "2026-05-25T01:33:32.300Z"
+  },
+  {
+    "id": 515,
+    "username": "admin",
+    "userId": null,
+    "role": null,
+    "success": false,
+    "status": "failed",
+    "reason": "invalid_credentials",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-25T11:48:33.089Z"
+  },
+  {
+    "id": 516,
+    "username": "admin",
+    "userId": 1,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-25T11:48:37.123Z"
+  },
+  {
+    "id": 517,
+    "username": "admin",
+    "userId": 1,
+    "role": "administrador",
+    "success": true,
+    "status": "success",
+    "reason": "login_success",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+    "createdAt": "2026-05-25T11:49:34.902Z"
   }
 ]

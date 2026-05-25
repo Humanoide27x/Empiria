@@ -4,6 +4,8 @@ const {
   handleContractualMeta,
   handleMasterCatalog,
   handleMasterCatalogById,
+  handleContractDocumentMatrix,
+  handleContractDocumentMatrixCell,
   handleContractSummary,
   handleContractPositionRules,
   handleContractPositionRuleById,
@@ -44,6 +46,16 @@ async function handleContractualRoutes(req, res, url) {
 
   if (/^\/admin\/contractual\/contracts\/\d+\/summary$/.test(path)) {
     await handleContractSummary(req, res, url);
+    return true;
+  }
+
+  if (/^\/admin\/contractual\/contracts\/\d+\/document-matrix\/cell$/.test(path)) {
+    await handleContractDocumentMatrixCell(req, res, url);
+    return true;
+  }
+
+  if (/^\/admin\/contractual\/contracts\/\d+\/document-matrix$/.test(path)) {
+    await handleContractDocumentMatrix(req, res, url);
     return true;
   }
 

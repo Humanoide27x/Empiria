@@ -2,6 +2,7 @@ import { state }                 from '../state.js';
 import { apiFetch }               from '../api.js';
 import { escapeHtml, escapeAttr } from '../utils.js';
 import { showError, showSuccess } from '../toast.js';
+import { loadContractualAdminPanel } from './contractual-config.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -495,6 +496,7 @@ export function wireConfigEvents() {
     document.querySelectorAll(".cfg-ct-name-btn").forEach(btn => {
       btn.addEventListener("click", async () => {
         state.cfgContractConfigId = Number(btn.dataset.ctConfigId);
+        state.cfgContractConfigTab = "contractual";
         const { openModule } = await import('../nav.js');
         await openModule("administracion_configuraciones");
       });
@@ -617,6 +619,7 @@ export async function loadContractConfigPanel(contractId) {
     ? settings.role_permissions
     : {};
   const rolePerms = _ccpRolePerms;
+  const activeTab = state.cfgContractConfigTab || "contractual";
 
   return `
 <div class="ccp-wrap">
@@ -633,7 +636,7 @@ export async function loadContractConfigPanel(contractId) {
 
   <!-- ── Pestañas ────────────────────────────────────────────────────────────── -->
   <div class="pnl-tabs ccp-tabs">
-    <button type="button" class="pnl-tab pnl-tab-active" data-ccp-tab="info">
+    <button type="button" class="pnl-tab ${activeTab === "info" ? "pnl-tab-active" : ""}" data-ccp-tab="info">
       <span class="pnl-tab-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
@@ -642,7 +645,17 @@ export async function loadContractConfigPanel(contractId) {
       </span>
       <span class="pnl-tab-lbl">Información</span>
     </button>
-    <button type="button" class="pnl-tab" data-ccp-tab="cargos">
+    <button type="button" class="pnl-tab ${activeTab === "contractual" ? "pnl-tab-active" : ""}" data-ccp-tab="contractual">
+      <span class="pnl-tab-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 7.5V6a2 2 0 0 0-2-2h-3V2.5"/><path d="M8 2.5V4H5a2 2 0 0 0-2 2v3.5"/>
+          <path d="M3 16.5V18a2 2 0 0 0 2 2h3v1.5"/><path d="M16 21.5V20h3a2 2 0 0 0 2-2v-1.5"/>
+          <rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 12h4"/><path d="M12 10v4"/>
+        </svg>
+      </span>
+      <span class="pnl-tab-lbl">ConfiguraciÃ³n Contractual</span>
+    </button>
+    <button type="button" class="pnl-tab ${activeTab === "cargos" ? "pnl-tab-active" : ""}" data-ccp-tab="cargos">
       <span class="pnl-tab-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -652,7 +665,7 @@ export async function loadContractConfigPanel(contractId) {
       </span>
       <span class="pnl-tab-lbl">Cargos</span>
     </button>
-    <button type="button" class="pnl-tab" data-ccp-tab="modulos">
+    <button type="button" class="pnl-tab ${activeTab === "modulos" ? "pnl-tab-active" : ""}" data-ccp-tab="modulos">
       <span class="pnl-tab-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
@@ -661,7 +674,7 @@ export async function loadContractConfigPanel(contractId) {
       </span>
       <span class="pnl-tab-lbl">Módulos</span>
     </button>
-    <button type="button" class="pnl-tab" data-ccp-tab="usuarios">
+    <button type="button" class="pnl-tab ${activeTab === "usuarios" ? "pnl-tab-active" : ""}" data-ccp-tab="usuarios">
       <span class="pnl-tab-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -670,7 +683,7 @@ export async function loadContractConfigPanel(contractId) {
       </span>
       <span class="pnl-tab-lbl">Usuarios</span>
     </button>
-    <button type="button" class="pnl-tab" data-ccp-tab="calculadora">
+    <button type="button" class="pnl-tab ${activeTab === "calculadora" ? "pnl-tab-active" : ""}" data-ccp-tab="calculadora">
       <span class="pnl-tab-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
@@ -685,7 +698,7 @@ export async function loadContractConfigPanel(contractId) {
   <div class="ccp-body">
 
     <!-- TAB 1: Información -->
-    <div class="ccp-panel ccp-panel-active" data-ccp-panel="info">
+    <div class="ccp-panel ${activeTab === "info" ? "ccp-panel-active" : ""}" data-ccp-panel="info">
       <div class="ccp-panel-inner">
         <div class="ccp-card">
           <div class="ccp-panel-title">Información del Contrato</div>
@@ -723,7 +736,18 @@ export async function loadContractConfigPanel(contractId) {
     </div>
 
     <!-- TAB 2: Cargos -->
-    <div class="ccp-panel" data-ccp-panel="cargos">
+    <div class="ccp-panel ${activeTab === "contractual" ? "ccp-panel-active" : ""}" data-ccp-panel="contractual">
+      <div class="ccp-panel-inner">
+        <div class="ccp-card">
+          <div class="ccp-panel-title">ConfiguraciÃ³n Contractual</div>
+          <div id="ccpContractualPanelContent" class="ctc-root">
+            <div class="ccp-loading-row">Cargando configuraciÃ³n contractualâ€¦</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ccp-panel ${activeTab === "cargos" ? "ccp-panel-active" : ""}" data-ccp-panel="cargos">
       <div class="ccp-panel-inner">
         <div class="ccp-card">
 
@@ -748,7 +772,7 @@ export async function loadContractConfigPanel(contractId) {
     </div>
 
     <!-- TAB 3: Módulos -->
-    <div class="ccp-panel" data-ccp-panel="modulos">
+    <div class="ccp-panel ${activeTab === "modulos" ? "ccp-panel-active" : ""}" data-ccp-panel="modulos">
       <div class="ccp-panel-inner">
 
         <!-- Card: Habilitar / deshabilitar módulos -->
@@ -827,7 +851,7 @@ export async function loadContractConfigPanel(contractId) {
     </div>
 
     <!-- TAB 4: Usuarios -->
-    <div class="ccp-panel" data-ccp-panel="usuarios">
+    <div class="ccp-panel ${activeTab === "usuarios" ? "ccp-panel-active" : ""}" data-ccp-panel="usuarios">
       <div class="ccp-panel-inner">
 
         <!-- Card: Usuarios del contrato -->
@@ -863,7 +887,7 @@ export async function loadContractConfigPanel(contractId) {
     </div>
 
     <!-- TAB 5: Calculadora -->
-    <div class="ccp-panel" data-ccp-panel="calculadora">
+    <div class="ccp-panel ${activeTab === "calculadora" ? "ccp-panel-active" : ""}" data-ccp-panel="calculadora">
       <div class="ccp-panel-inner">
         <div class="ccp-card">
           <div class="ccp-panel-title">⚙ Configuración de Calculadora</div>
@@ -943,10 +967,12 @@ export function wireContractConfigEvents() {
     document.querySelectorAll(".pnl-tab[data-ccp-tab]").forEach(tab => {
       tab.addEventListener("click", () => {
         const key = tab.dataset.ccpTab;
+        state.cfgContractConfigTab = key;
         document.querySelectorAll(".pnl-tab[data-ccp-tab]").forEach(t => t.classList.remove("pnl-tab-active"));
         document.querySelectorAll(".ccp-panel").forEach(p => p.classList.remove("ccp-panel-active"));
         tab.classList.add("pnl-tab-active");
         document.querySelector(`.ccp-panel[data-ccp-panel="${key}"]`)?.classList.add("ccp-panel-active");
+        if (key === "contractual") loadContractualAdminPanel(state.cfgContractConfigId);
         if (key === "usuarios")    _loadUsersTab(state.cfgContractConfigId);
         if (key === "modulos")     { _loadWidgets(); _loadFields(_ccpActiveFieldSlug); }
         if (key === "calculadora") SALARY_MODALITIES.forEach(m => _renderModAdics(m.key));
@@ -956,9 +982,14 @@ export function wireContractConfigEvents() {
     // ── Back ────────────────────────────────────────────────────────────────
     document.getElementById("ccpBack")?.addEventListener("click", async () => {
       state.cfgContractConfigId = null;
+      state.cfgContractConfigTab = "contractual";
       const { openModule } = await import('../nav.js');
       await openModule("administracion_configuraciones");
     });
+
+    if ((state.cfgContractConfigTab || "contractual") === "contractual") {
+      loadContractualAdminPanel(state.cfgContractConfigId);
+    }
 
     // ── Sección 1: Guardar info ──────────────────────────────────────────────
     document.getElementById("ccpSaveInfo")?.addEventListener("click", async () => {

@@ -54,6 +54,85 @@ function normalizeExtraDocumentSource(bidPositionName, operationalPositionName, 
   return bid || operational || safe(fallback);
 }
 
+function normalizeStaffingMode(value, bidPositionName = "") {
+  const normalized = upperSafe(value);
+  if (["EXTRA", "LICITACION"].includes(normalized)) return normalized;
+  return upperSafe(bidPositionName) === "EXTRA" ? "EXTRA" : "LICITACION";
+}
+
+function deriveContractPositionFields(payload, masterPosition, current = null) {
+  const hasBidPositionInput = payload.bidPositionName !== undefined || payload.bid_position_name !== undefined;
+  const hasOperationalInput = payload.operationalPositionName !== undefined || payload.operational_position_name !== undefined;
+  const staffingMode = normalizeStaffingMode(
+    payload.staffingMode || payload.staffing_mode || payload.staffingType || payload.staffing_type,
+    payload.bidPositionName || payload.bid_position_name || current?.bidPositionName || masterPosition?.bidPositionName || ""
+  );
+
+  const bidPositionName = staffingMode === "EXTRA"
+    ? "EXTRA"
+    : (
+      (hasBidPositionInput ? safe(payload.bidPositionName || payload.bid_position_name) : "")
+      || masterPosition?.bidPositionName
+      || (current?.bidPositionName && upperSafe(current.bidPositionName) !== "EXTRA" ? current.bidPositionName : null)
+      || null
+    );
+
+  const operationalPositionName = (
+    (hasOperationalInput ? safe(payload.operationalPositionName || payload.operational_position_name) : "")
+    || current?.operationalPositionName
+    || masterPosition?.operationalPositionName
+    || null
+  );
+
+  const documentRuleSource = staffingMode === "EXTRA"
+    ? (operationalPositionName || "")
+    : (bidPositionName || "");
+
+  return {
+    staffingMode,
+    bidPositionName,
+    operationalPositionName,
+    documentRuleSource,
+  };
+}
+
+async function ensureContractPositionRuleUniqueness({
+  contractId,
+  code,
+  name,
+  bidPositionName,
+  operationalPositionName,
+  excludeId = null,
+}, client = pool) {
+  const result = await client.query(
+    `SELECT id
+     FROM contract_position_rules
+     WHERE contract_id = $1
+       AND ($2::int IS NULL OR id <> $2)
+       AND (
+         UPPER(BTRIM(code)) = UPPER(BTRIM($3))
+         OR (
+           UPPER(BTRIM(name)) = UPPER(BTRIM($4))
+           AND UPPER(BTRIM(COALESCE(bid_position_name, ''))) = UPPER(BTRIM(COALESCE($5, '')))
+           AND UPPER(BTRIM(COALESCE(operational_position_name, ''))) = UPPER(BTRIM(COALESCE($6, '')))
+         )
+       )
+     LIMIT 1`,
+    [
+      toInt(contractId),
+      toInt(excludeId),
+      safe(code),
+      safe(name),
+      bidPositionName || null,
+      operationalPositionName || null,
+    ]
+  );
+
+  if (result.rows[0]) {
+    throw new Error("Ya existe una regla de cargo equivalente para este contrato.");
+  }
+}
+
 function isPgUniqueViolation(error) {
   return error && error.code === "23505";
 }
@@ -509,6 +588,8 @@ const MASTER_KIND_CONFIG = {
         description,
         phase,
         is_global_base AS "isGlobalBase",
+        default_expires AS "defaultExpires",
+        default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
         visible_to_auditor AS "visibleToAuditor",
         active,
         created_at AS "createdAt",
@@ -523,6 +604,8 @@ const MASTER_KIND_CONFIG = {
         description,
         phase,
         is_global_base AS "isGlobalBase",
+        default_expires AS "defaultExpires",
+        default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
         visible_to_auditor AS "visibleToAuditor",
         active,
         created_at AS "createdAt",
@@ -705,23 +788,32 @@ async function createMasterCatalogRecord(kind, payload = {}) {
     } else if (kind === "document-types") {
       const code = lowerSafe(payload.code || normalizeCode(payload.name || "documento", "DOCUMENTO"));
       const name = safe(payload.name);
+      const isGlobalBase = toBool(payload.isGlobalBase ?? payload.is_global_base, false);
+      const defaultExpires = toBool(payload.defaultExpires ?? payload.default_expires, false);
+      const active = isGlobalBase ? true : toBool(payload.active, true);
       if (!code) throw new Error("El código es obligatorio");
       if (!name) throw new Error("El nombre es obligatorio");
 
       const result = await client.query(
         `INSERT INTO master_document_types (
-           code, name, description, phase, is_global_base, visible_to_auditor, active
+           code, name, description, phase, is_global_base,
+           default_expires, default_alert_days_before_expiration,
+           visible_to_auditor, active
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id`,
         [
           code,
           name,
           safe(payload.description) || null,
           safe(payload.phase) || null,
-          toBool(payload.isGlobalBase ?? payload.is_global_base, false),
+          isGlobalBase,
+          defaultExpires,
+          defaultExpires
+            ? toInt(payload.defaultAlertDaysBeforeExpiration || payload.default_alert_days_before_expiration)
+            : null,
           toBool(payload.visibleToAuditor ?? payload.visible_to_auditor, false),
-          toBool(payload.active, true),
+          active,
         ]
       );
       createdId = result.rows[0].id;
@@ -844,6 +936,27 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
         ]
       );
     } else if (kind === "document-types") {
+      const requestedIsGlobalBase =
+        payload.isGlobalBase !== undefined || payload.is_global_base !== undefined
+          ? toBool(payload.isGlobalBase ?? payload.is_global_base, false)
+          : current.isGlobalBase;
+      const requestedActive =
+        payload.active !== undefined ? toBool(payload.active, true) : current.active;
+      const requestedDefaultExpires =
+        payload.defaultExpires !== undefined || payload.default_expires !== undefined
+          ? toBool(payload.defaultExpires ?? payload.default_expires, false)
+          : current.defaultExpires;
+
+      if (current.isGlobalBase && requestedIsGlobalBase === false) {
+        throw new Error("No se puede quitar la marca global base a un documento global base.");
+      }
+      if (current.isGlobalBase && requestedActive === false) {
+        throw new Error("No se puede desactivar un documento global base.");
+      }
+      if (requestedIsGlobalBase && requestedActive === false) {
+        throw new Error("Los documentos globales base deben permanecer activos.");
+      }
+
       await client.query(
         `UPDATE master_document_types
          SET code = $2,
@@ -851,8 +964,10 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
              description = $4,
              phase = $5,
              is_global_base = $6,
-             visible_to_auditor = $7,
-             active = $8
+             default_expires = $7,
+             default_alert_days_before_expiration = $8,
+             visible_to_auditor = $9,
+             active = $10
          WHERE id = $1`,
         [
           toInt(id),
@@ -860,13 +975,19 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
           payload.name !== undefined ? safe(payload.name) : current.name,
           payload.description !== undefined ? (safe(payload.description) || null) : current.description,
           payload.phase !== undefined ? (safe(payload.phase) || null) : current.phase,
-          payload.isGlobalBase !== undefined || payload.is_global_base !== undefined
-            ? toBool(payload.isGlobalBase ?? payload.is_global_base, false)
-            : current.isGlobalBase,
+          current.isGlobalBase ? true : requestedIsGlobalBase,
+          requestedDefaultExpires,
+          requestedDefaultExpires
+            ? (
+              payload.defaultAlertDaysBeforeExpiration !== undefined || payload.default_alert_days_before_expiration !== undefined
+                ? toInt(payload.defaultAlertDaysBeforeExpiration || payload.default_alert_days_before_expiration)
+                : current.defaultAlertDaysBeforeExpiration
+            )
+            : null,
           payload.visibleToAuditor !== undefined || payload.visible_to_auditor !== undefined
             ? toBool(payload.visibleToAuditor ?? payload.visible_to_auditor, false)
             : current.visibleToAuditor,
-          payload.active !== undefined ? toBool(payload.active, true) : current.active,
+          requestedIsGlobalBase ? true : requestedActive,
         ]
       );
       await syncLegacyDocumentType(client, id);
@@ -914,6 +1035,319 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
   }
 }
 
+async function deleteMasterCatalogRecord(kind, id) {
+  if (kind !== "document-types") {
+    throw new Error("La eliminacion solo esta soportada para documentos maestros.");
+  }
+
+  const current = await getMasterCatalogRecord(kind, id);
+  if (!current) throw new Error("Registro maestro no encontrado");
+  if (current.isGlobalBase) {
+    throw new Error("No se puede eliminar un documento global base.");
+  }
+
+  const usageResult = await pool.query(
+    `SELECT
+       EXISTS (
+         SELECT 1
+         FROM contract_document_rules
+         WHERE master_document_type_id = $1
+       ) AS "usedInContractRules",
+       EXISTS (
+         SELECT 1
+         FROM employee_documents
+         WHERE master_document_type_id = $1
+       ) AS "usedInEmployeeDocuments",
+       EXISTS (
+         SELECT 1
+         FROM employee_documents ed
+         JOIN document_types dt ON dt.id = ed.document_type_id
+         WHERE dt.master_document_type_id = $1
+       ) AS "usedInLegacyEmployeeDocuments",
+       EXISTS (
+         SELECT 1
+         FROM contract_position_documents cpd
+         JOIN document_types dt ON dt.id = cpd.document_type_id
+         WHERE dt.master_document_type_id = $1
+       ) AS "usedInLegacyContractRules"`,
+    [toInt(id)]
+  );
+
+  const usage = usageResult.rows[0] || {};
+  if (
+    usage.usedInContractRules
+    || usage.usedInEmployeeDocuments
+    || usage.usedInLegacyEmployeeDocuments
+    || usage.usedInLegacyContractRules
+  ) {
+    throw new Error("No se puede eliminar porque este documento ya tiene historial. Puede desactivarlo.");
+  }
+
+  await pool.query(
+    `DELETE FROM master_document_types
+     WHERE id = $1`,
+    [toInt(id)]
+  );
+
+  return { id: toInt(id), deleted: true };
+}
+
+async function findContractDocumentMatrixRule(client, contractId, contractPositionRuleId, masterDocumentTypeId) {
+  const result = await client.query(
+    `SELECT id
+     FROM contract_document_rules
+     WHERE contract_id = $1
+       AND contract_position_rule_id = $2
+       AND master_document_type_id = $3
+       AND master_modality_id IS NULL
+       AND municipality_id IS NULL
+       AND institution_id IS NULL
+       AND site_id IS NULL
+       AND applies_to_staffing_type = 'ANY'
+     ORDER BY id
+     LIMIT 1`,
+    [toInt(contractId), toInt(contractPositionRuleId), toInt(masterDocumentTypeId)]
+  );
+  return result.rows[0]?.id || null;
+}
+
+async function listContractDocumentMatrix(contractId) {
+  const scope = await getContractScope(contractId);
+  const [positions, documentsResult, rulesResult] = await Promise.all([
+    listContractPositionRules(scope.id, { active: true }),
+    pool.query(
+      `SELECT
+         mdt.id,
+         mdt.code,
+         mdt.name,
+         mdt.description,
+         mdt.phase,
+         mdt.is_global_base AS "isGlobalBase",
+         mdt.default_expires AS "defaultExpires",
+         mdt.default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
+         mdt.visible_to_auditor AS "visibleToAuditor",
+         mdt.active,
+         mdt.created_at AS "createdAt",
+         mdt.updated_at AS "updatedAt",
+         COUNT(DISTINCT cdr.id) AS "contractRuleCount",
+         COUNT(DISTINCT ed.id) AS "employeeDocumentCount",
+         (
+           SELECT COUNT(*)
+           FROM employee_documents led
+           JOIN document_types ldt ON ldt.id = led.document_type_id
+           WHERE ldt.master_document_type_id = mdt.id
+         ) AS "legacyEmployeeDocumentCount",
+         (
+           SELECT COUNT(*)
+           FROM contract_position_documents cpd
+           JOIN document_types ldt ON ldt.id = cpd.document_type_id
+           WHERE ldt.master_document_type_id = mdt.id
+         ) AS "legacyContractRuleCount"
+       FROM master_document_types mdt
+       LEFT JOIN contract_document_rules cdr
+         ON cdr.master_document_type_id = mdt.id
+       LEFT JOIN employee_documents ed
+         ON ed.master_document_type_id = mdt.id
+       GROUP BY mdt.id
+       ORDER BY mdt.is_global_base DESC, mdt.active DESC, mdt.code ASC`
+    ),
+    pool.query(
+      `SELECT
+         cdr.id,
+         cdr.contract_position_rule_id AS "contractPositionRuleId",
+         cdr.master_document_type_id AS "masterDocumentTypeId",
+         cdr.required,
+         cdr.expires,
+         cdr.alert_days_before_expiration AS "alertDaysBeforeExpiration",
+         cdr.requires_approval AS "requiresApproval",
+         cdr.validation_mode AS "validationMode",
+         cdr.active
+       FROM contract_document_rules cdr
+       WHERE cdr.contract_id = $1
+         AND cdr.contract_position_rule_id IS NOT NULL
+         AND cdr.master_modality_id IS NULL
+         AND cdr.municipality_id IS NULL
+         AND cdr.institution_id IS NULL
+         AND cdr.site_id IS NULL
+         AND cdr.applies_to_staffing_type = 'ANY'
+       ORDER BY cdr.id`,
+      [scope.id]
+    ),
+  ]);
+
+  const ruleMap = new Map();
+  for (const rule of rulesResult.rows) {
+    ruleMap.set(`${rule.masterDocumentTypeId}:${rule.contractPositionRuleId}`, rule);
+  }
+
+  const documents = documentsResult.rows.map((doc) => ({
+    ...doc,
+    canDelete:
+      !doc.isGlobalBase
+      && Number(doc.contractRuleCount || 0) === 0
+      && Number(doc.employeeDocumentCount || 0) === 0
+      && Number(doc.legacyEmployeeDocumentCount || 0) === 0
+      && Number(doc.legacyContractRuleCount || 0) === 0,
+    cells: positions.map((position) => {
+      const rule = ruleMap.get(`${doc.id}:${position.id}`) || null;
+      return {
+        contractPositionRuleId: position.id,
+        checked: doc.isGlobalBase ? true : Boolean(rule?.active && rule?.required),
+        locked: Boolean(doc.isGlobalBase),
+        ruleId: rule?.id || null,
+        required: rule?.required ?? Boolean(doc.isGlobalBase),
+        active: rule?.active ?? false,
+        expires: rule?.expires ?? Boolean(doc.defaultExpires),
+        alertDaysBeforeExpiration: rule?.alertDaysBeforeExpiration ?? doc.defaultAlertDaysBeforeExpiration ?? null,
+        requiresApproval: rule?.requiresApproval ?? true,
+        validationMode: rule?.validationMode || "DOCUMENTAL",
+      };
+    }),
+  }));
+
+  return {
+    contractId: scope.id,
+    companyId: scope.company_id,
+    companyName: scope.company_name,
+    contractName: scope.contract_name,
+    positions: positions.map((position) => ({
+      id: position.id,
+      code: position.code,
+      name: position.name,
+      bidPositionName: position.bidPositionName,
+      operationalPositionName: position.operationalPositionName,
+      active: position.active,
+    })),
+    documents,
+  };
+}
+
+async function applyContractDocumentMatrixChange(client, scope, change = {}) {
+  const contractPositionRuleId = toInt(change.contractPositionRuleId || change.contract_position_rule_id);
+  const masterDocumentTypeId = toInt(change.masterDocumentTypeId || change.master_document_type_id);
+  const checked = toBool(change.checked, false);
+
+  if (!contractPositionRuleId || !masterDocumentTypeId) {
+    throw new Error("Cada cambio de matriz requiere cargo contractual y documento maestro.");
+  }
+
+  const [positionResult, documentResult] = await Promise.all([
+    client.query(
+      `SELECT id, contract_id, name
+       FROM contract_position_rules
+       WHERE id = $1
+         AND contract_id = $2
+       LIMIT 1`,
+      [contractPositionRuleId, scope.id]
+    ),
+    client.query(
+      `SELECT
+         id,
+         name,
+         is_global_base AS "isGlobalBase",
+         default_expires AS "defaultExpires",
+         default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration"
+       FROM master_document_types
+       WHERE id = $1
+       LIMIT 1`,
+      [masterDocumentTypeId]
+    ),
+  ]);
+
+  const position = positionResult.rows[0];
+  const document = documentResult.rows[0];
+  if (!position) throw new Error("El cargo contractual seleccionado no pertenece a este contrato.");
+  if (!document) throw new Error("El documento maestro seleccionado no existe.");
+  if (document.isGlobalBase && checked === false) {
+    throw new Error("Los documentos globales base siempre aplican a todos los cargos.");
+  }
+
+  const existingRuleId = await findContractDocumentMatrixRule(
+    client,
+    scope.id,
+    contractPositionRuleId,
+    masterDocumentTypeId
+  );
+
+  if (checked) {
+    if (existingRuleId) {
+      await client.query(
+        `UPDATE contract_document_rules
+         SET required = true,
+             active = true,
+             expires = COALESCE(expires, $2),
+             alert_days_before_expiration = COALESCE(alert_days_before_expiration, $3),
+             requires_approval = COALESCE(requires_approval, true),
+             validation_mode = COALESCE(validation_mode, 'DOCUMENTAL')
+         WHERE id = $1`,
+        [
+          existingRuleId,
+          Boolean(document.defaultExpires),
+          toInt(document.defaultAlertDaysBeforeExpiration),
+        ]
+      );
+      await syncLegacyContractDocumentRule(client, existingRuleId);
+      return existingRuleId;
+    }
+
+    const insert = await client.query(
+      `INSERT INTO contract_document_rules (
+         tenant_id, company_id, contract_id, contract_position_rule_id, master_document_type_id,
+         applies_to_staffing_type, required, expires, alert_days_before_expiration, requires_approval,
+         validation_mode, active
+       )
+       VALUES ($1, $2, $3, $4, $5, 'ANY', true, $6, $7, true, 'DOCUMENTAL', true)
+       RETURNING id`,
+      [
+        toInt(scope.tenant_id) || 1,
+        scope.company_id,
+        scope.id,
+        contractPositionRuleId,
+        masterDocumentTypeId,
+        Boolean(document.defaultExpires),
+        toInt(document.defaultAlertDaysBeforeExpiration),
+      ]
+    );
+    await syncLegacyContractDocumentRule(client, insert.rows[0].id);
+    return insert.rows[0].id;
+  }
+
+  if (!existingRuleId) return null;
+
+  await client.query(
+    `UPDATE contract_document_rules
+     SET required = false,
+         active = false
+     WHERE id = $1`,
+    [existingRuleId]
+  );
+  await syncLegacyContractDocumentRule(client, existingRuleId);
+  return existingRuleId;
+}
+
+async function saveContractDocumentMatrix(contractId, payload = {}) {
+  const scope = await getContractScope(contractId);
+  const changes = Array.isArray(payload.changes) ? payload.changes : [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const change of changes) {
+      await applyContractDocumentMatrixChange(client, scope, change);
+    }
+    await client.query("COMMIT");
+    return await listContractDocumentMatrix(scope.id);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw mapPgError(error, "No fue posible guardar la matriz documental.");
+  } finally {
+    client.release();
+  }
+}
+
+async function updateContractDocumentMatrixCell(contractId, payload = {}) {
+  return saveContractDocumentMatrix(contractId, { changes: [payload] });
+}
+
 async function listContractConfigurationSummary(contractId) {
   const scope = await getContractScope(contractId);
   const result = await pool.query(
@@ -938,12 +1372,23 @@ async function listContractConfigurationSummary(contractId) {
      LIMIT 1`,
     [scope.id]
   );
+  const row = result.rows[0] || {};
+  const coverageEnabled =
+    row?.coverageSettings?.enabled === true
+    || row?.modules?.cobertura_calculadora === true
+    || Number(row?.coverageRulesCount || 0) > 0;
+
   return {
     companyId: scope.company_id,
     companyName: scope.company_name,
     contractId: scope.id,
     contractName: scope.contract_name,
-    ...(result.rows[0] || {}),
+    ...row,
+    coverageEnabled,
+    coverageSettings: {
+      enabled: coverageEnabled,
+      ...(row?.coverageSettings && typeof row.coverageSettings === "object" ? row.coverageSettings : {}),
+    },
   };
 }
 
@@ -1053,27 +1498,31 @@ async function createContractPositionRule(contractId, payload = {}) {
 
     const masterPositionId = await resolveMasterPositionId(payload.masterPositionId || payload.master_position_id, client);
     const masterPosition = masterPositionId ? await getMasterPositionById(masterPositionId, client) : null;
-    const bidPositionName = safe(payload.bidPositionName || payload.bid_position_name)
-      || masterPosition?.bidPositionName
-      || null;
-    const operationalPositionName = safe(payload.operationalPositionName || payload.operational_position_name)
-      || masterPosition?.operationalPositionName
-      || null;
+    const derivedFields = deriveContractPositionFields(payload, masterPosition);
+    const staffingMode = derivedFields.staffingMode;
+    const bidPositionName = derivedFields.bidPositionName;
+    const operationalPositionName = derivedFields.operationalPositionName;
     const code = upperSafe(payload.code || masterPosition?.code || normalizeCode(bidPositionName || operationalPositionName || payload.name || "CPR", "CPR"));
     const name = safe(payload.name || documentRuleNameFromPayload(payload, masterPosition, bidPositionName, operationalPositionName, code));
-    const documentRuleSource = normalizeExtraDocumentSource(
-      bidPositionName,
-      operationalPositionName,
-      payload.documentRuleSource || payload.document_rule_source || masterPosition?.documentRuleSource || name
-    );
+    const documentRuleSource = derivedFields.documentRuleSource;
     const areaCode = await resolveMasterAreaCode(payload.areaCode || payload.area_code || payload.area || masterPosition?.area, client);
 
     if (!code) throw new Error("El código del cargo contractual es obligatorio");
     if (!name) throw new Error("El nombre del cargo contractual es obligatorio");
-    if (upperSafe(bidPositionName) === "EXTRA" && !operationalPositionName) {
+    if (staffingMode === "LICITACION" && !bidPositionName) {
+      throw new Error("bid_position_name es obligatorio cuando el tipo de personal es LICITACION");
+    }
+    if (staffingMode === "EXTRA" && !operationalPositionName) {
       throw new Error("operational_position_name es obligatorio cuando bid_position_name = EXTRA");
     }
     if (!documentRuleSource) throw new Error("document_rule_source es obligatorio");
+    await ensureContractPositionRuleUniqueness({
+      contractId: scope.id,
+      code,
+      name,
+      bidPositionName,
+      operationalPositionName,
+    }, client);
 
     const result = await client.query(
       `INSERT INTO contract_position_rules (
@@ -1098,7 +1547,7 @@ async function createContractPositionRule(contractId, payload = {}) {
         safe(payload.category || masterPosition?.category) || null,
         areaCode,
         toBool(payload.countsForCoverage ?? payload.counts_for_coverage, masterPosition?.countsForCoverage ?? false),
-        toBool(payload.isMinimumTeam ?? payload.is_minimum_team, upperSafe(bidPositionName) !== "EXTRA"),
+        toBool(payload.isMinimumTeam ?? payload.is_minimum_team, staffingMode !== "EXTRA"),
         toBool(payload.allowsExtraPersonnel ?? payload.allows_extra_personnel, true),
         toBool(payload.managesMultipleMunicipalities ?? payload.manages_multiple_municipalities, false),
         safe(payload.workdayType || payload.workday_type) || null,
@@ -1142,30 +1591,33 @@ async function updateContractPositionRule(id, payload = {}) {
       : current.masterPositionId;
     const masterPosition = masterPositionId ? await getMasterPositionById(masterPositionId, client) : null;
 
-    const bidPositionName = payload.bidPositionName !== undefined || payload.bid_position_name !== undefined
-      ? (safe(payload.bidPositionName || payload.bid_position_name) || null)
-      : current.bidPositionName;
-    const operationalPositionName = payload.operationalPositionName !== undefined || payload.operational_position_name !== undefined
-      ? (safe(payload.operationalPositionName || payload.operational_position_name) || null)
-      : current.operationalPositionName;
+    const derivedFields = deriveContractPositionFields(payload, masterPosition, current);
+    const staffingMode = derivedFields.staffingMode;
+    const bidPositionName = derivedFields.bidPositionName;
+    const operationalPositionName = derivedFields.operationalPositionName;
     const name = payload.name !== undefined
       ? safe(payload.name)
       : current.name;
-    const documentRuleSource = normalizeExtraDocumentSource(
-      bidPositionName,
-      operationalPositionName,
-      payload.documentRuleSource !== undefined || payload.document_rule_source !== undefined
-        ? payload.documentRuleSource || payload.document_rule_source
-        : current.documentRuleSource
-    );
+    const documentRuleSource = derivedFields.documentRuleSource;
     const areaCode = payload.areaCode !== undefined || payload.area_code !== undefined || payload.area !== undefined
       ? await resolveMasterAreaCode(payload.areaCode || payload.area_code || payload.area, client)
       : current.areaCode;
 
-    if (upperSafe(bidPositionName) === "EXTRA" && !operationalPositionName) {
+    if (staffingMode === "LICITACION" && !bidPositionName) {
+      throw new Error("bid_position_name es obligatorio cuando el tipo de personal es LICITACION");
+    }
+    if (staffingMode === "EXTRA" && !operationalPositionName) {
       throw new Error("operational_position_name es obligatorio cuando bid_position_name = EXTRA");
     }
     if (!documentRuleSource) throw new Error("document_rule_source es obligatorio");
+    await ensureContractPositionRuleUniqueness({
+      contractId: current.contractId,
+      code: payload.code !== undefined ? upperSafe(payload.code) : current.code,
+      name,
+      bidPositionName,
+      operationalPositionName,
+      excludeId: id,
+    }, client);
 
     await client.query(
       `UPDATE contract_position_rules
@@ -1202,7 +1654,7 @@ async function updateContractPositionRule(id, payload = {}) {
           : current.countsForCoverage,
         payload.isMinimumTeam !== undefined || payload.is_minimum_team !== undefined
           ? toBool(payload.isMinimumTeam ?? payload.is_minimum_team, false)
-          : current.isMinimumTeam,
+          : (staffingMode !== "EXTRA" ? current.isMinimumTeam : false),
         payload.allowsExtraPersonnel !== undefined || payload.allows_extra_personnel !== undefined
           ? toBool(payload.allowsExtraPersonnel ?? payload.allows_extra_personnel, true)
           : current.allowsExtraPersonnel,
@@ -2438,6 +2890,10 @@ module.exports = {
   getMasterCatalogRecord,
   createMasterCatalogRecord,
   updateMasterCatalogRecord,
+  deleteMasterCatalogRecord,
+  listContractDocumentMatrix,
+  saveContractDocumentMatrix,
+  updateContractDocumentMatrixCell,
   listContractConfigurationSummary,
   listContractPositionRules,
   getContractPositionRuleById,

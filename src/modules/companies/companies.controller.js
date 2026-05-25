@@ -21,6 +21,7 @@ async function handleGetCompanies(req, res) {
     sendJson(res, 200, {
       ok: true,
       tenantId,
+      data: companies,
       companies,
     });
   } catch (error) {

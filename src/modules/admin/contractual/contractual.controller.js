@@ -9,6 +9,10 @@ const {
   getMasterCatalogRecord,
   createMasterCatalogRecord,
   updateMasterCatalogRecord,
+  deleteMasterCatalogRecord,
+  listContractDocumentMatrix,
+  saveContractDocumentMatrix,
+  updateContractDocumentMatrixCell,
   listContractConfigurationSummary,
   listContractPositionRules,
   getContractPositionRuleById,
@@ -230,6 +234,92 @@ async function handleMasterCatalogById(req, res, url) {
         ok: true,
         data,
         message: "Registro maestro actualizado",
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, message: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    const user = guardAdmin(req, res);
+    if (!user) return;
+
+    try {
+      const data = await deleteMasterCatalogRecord(kind, id);
+      sendJson(res, 200, {
+        ok: true,
+        data,
+        message: "Registro maestro eliminado",
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, message: error.message });
+    }
+    return;
+  }
+
+  sendMethodNotAllowed(res);
+}
+
+async function handleContractDocumentMatrix(req, res, url) {
+  const contractId = parseId(url.pathname, "/admin/contractual/contracts/");
+  if (!contractId) {
+    sendJson(res, 400, { ok: false, message: "contract_id invalido" });
+    return;
+  }
+
+  if (req.method === "GET") {
+    const user = guardView(req, res);
+    if (!user) return;
+
+    try {
+      const data = await listContractDocumentMatrix(contractId);
+      sendJson(res, 200, { ok: true, data });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, message: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "PUT" || req.method === "PATCH") {
+    const user = guardAdmin(req, res);
+    if (!user) return;
+
+    try {
+      const body = await readJsonBody(req);
+      const data = await saveContractDocumentMatrix(contractId, body);
+      sendJson(res, 200, {
+        ok: true,
+        data,
+        message: "Matriz documental guardada",
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, message: error.message });
+    }
+    return;
+  }
+
+  sendMethodNotAllowed(res);
+}
+
+async function handleContractDocumentMatrixCell(req, res, url) {
+  const contractId = parseId(url.pathname, "/admin/contractual/contracts/");
+  if (!contractId) {
+    sendJson(res, 400, { ok: false, message: "contract_id invalido" });
+    return;
+  }
+
+  if (req.method === "PUT" || req.method === "PATCH") {
+    const user = guardAdmin(req, res);
+    if (!user) return;
+
+    try {
+      const body = await readJsonBody(req);
+      const data = await updateContractDocumentMatrixCell(contractId, body);
+      sendJson(res, 200, {
+        ok: true,
+        data,
+        message: "Celda documental actualizada",
       });
     } catch (error) {
       sendJson(res, 400, { ok: false, message: error.message });
@@ -948,6 +1038,8 @@ module.exports = {
   handleContractualMeta,
   handleMasterCatalog,
   handleMasterCatalogById,
+  handleContractDocumentMatrix,
+  handleContractDocumentMatrixCell,
   handleContractSummary,
   handleContractPositionRules,
   handleContractPositionRuleById,

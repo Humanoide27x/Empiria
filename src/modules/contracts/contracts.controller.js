@@ -24,6 +24,7 @@ async function handleGetContracts(req, res, url) {
     sendJson(res, 200, {
       ok: true,
       tenantId,
+      data: contracts,
       contracts,
     });
   } catch (error) {

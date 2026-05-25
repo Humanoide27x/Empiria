@@ -50,6 +50,7 @@ export const state = {
   // Config module
   cfgClientSearch: "",
   cfgContractConfigId: null,
+  cfgContractConfigTab: "contractual",
   coverageSelectedUploadId: null,
   coverageActiveTab: "cobertura",
   coverageFilters: {
