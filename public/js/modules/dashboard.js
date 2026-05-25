@@ -98,6 +98,26 @@ function buildEmptyState(message) {
   return `<div class="dashboard-empty-state"><div><strong>${escapeHtml(message)}</strong></div></div>`;
 }
 
+function buildInitialSummary() {
+  return {
+    activeEmployees: 0,
+    requiredTc: 0,
+    contractedTc: 0,
+    requiredMt: 0,
+    contractedMt: 0,
+    required20PercentTc: 0,
+    coveragePercent: 0,
+    coverageStatus: "SIN_OPERACION",
+    coverageByMunicipality: [],
+    employeesByGender: [],
+    employeesByModality: [],
+    employeesByAgeRange: [],
+    employeesByArea: [],
+    birthdaysThisMonth: [],
+    upcomingEvents: [],
+  };
+}
+
 function buildGauge(percent, status) {
   const safePercent = Math.max(0, Math.min(100, Number(percent || 0)));
   const meta = getStatusMeta(status);
@@ -628,25 +648,30 @@ function normalizeLegacySummary(payload = {}) {
 }
 
 async function loadDashboardSummary() {
-  const legacyParams = new URLSearchParams();
+  const params = new URLSearchParams();
 
   if (_selectedMunicipalityId) {
-    legacyParams.set("municipality", _selectedMunicipalityId);
+    params.set("municipality_id", _selectedMunicipalityId);
   }
 
-  const legacyUrl = `/dashboard-summary${
-    legacyParams.toString() ? `?${legacyParams.toString()}` : ""
-  }`;
+  const url = `/dashboard/summary${params.toString() ? `?${params.toString()}` : ""}`;
 
-  const legacyResponse = await apiFetch(legacyUrl);
-  return normalizeLegacySummary(legacyResponse);
+  const response = await apiFetch(url);
+  return response?.data || normalizeLegacySummary(response);
 }
 
 async function renderDashboardWorkspace(showToast = false) {
   const root = document.getElementById(ROOT_ID);
   if (!root) return;
 
-  const summary = await loadDashboardSummary();
+  let summary;
+  try {
+    summary = await loadDashboardSummary();
+  } catch (error) {
+    root.querySelector("[data-dashboard-status]")?.replaceChildren();
+    root.insertAdjacentHTML("beforeend", buildErrorState(error.message || "No se pudo cargar el resumen"));
+    return;
+  }
   root.innerHTML = buildWorkspace(summary);
 
   const municipalitySelect = document.getElementById("dashboardSummaryMunicipality");
@@ -657,7 +682,7 @@ async function renderDashboardWorkspace(showToast = false) {
       _selectedMunicipalityId = event.target.value || "";
       try {
         const workspaceRoot = document.getElementById(ROOT_ID);
-        if (workspaceRoot) workspaceRoot.innerHTML = buildLoadingState();
+        if (workspaceRoot) workspaceRoot.innerHTML = buildWorkspace(buildInitialSummary());
         await renderDashboardWorkspace(false);
       } catch (error) {
         const workspaceRoot = document.getElementById(ROOT_ID);
@@ -672,7 +697,7 @@ async function renderDashboardWorkspace(showToast = false) {
       refreshButton.disabled = true;
       try {
         const workspaceRoot = document.getElementById(ROOT_ID);
-        if (workspaceRoot) workspaceRoot.innerHTML = buildLoadingState();
+        if (workspaceRoot) workspaceRoot.innerHTML = buildWorkspace(buildInitialSummary());
         await renderDashboardWorkspace(false);
         showSuccess("Dashboard actualizado");
       } catch (error) {
@@ -1156,7 +1181,7 @@ export async function loadDashboardModule() {
   const html = `
     ${inlineStyles}
     <div class="dashboard-workspace-premium dashboard-workspace-premium--final" id="${ROOT_ID}">
-      ${buildLoadingState()}
+      ${buildWorkspace(buildInitialSummary())}
     </div>
   `;
 

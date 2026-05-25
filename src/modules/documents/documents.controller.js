@@ -4,6 +4,7 @@ const { readJsonBody } = require("../../http/request");
 const {
   getAllDocuments,
   getDocumentsByEmployee,
+  getDocumentsByEmployees,
   saveDocument,
   validateDocument,
   rejectDocument,
@@ -12,8 +13,19 @@ const {
 async function handleDocuments(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const employeeId = url.searchParams.get("employeeId");
+  const employeeIds = String(url.searchParams.get("employeeIds") || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
 
   if (req.method === "GET") {
+    if (employeeIds.length) {
+      return sendJson(res, 200, {
+        ok: true,
+        data: getDocumentsByEmployees(employeeIds),
+      });
+    }
+
     if (!employeeId) {
       return sendJson(res, 200, {
         ok: true,

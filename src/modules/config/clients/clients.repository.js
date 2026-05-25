@@ -2,16 +2,6 @@
 
 const pool = require("../../../db/pool");
 
-// Auto-migration: add salary_config column if it doesn't exist yet
-pool.query(
-  `ALTER TABLE contract_settings ADD COLUMN IF NOT EXISTS salary_config JSONB DEFAULT '{}'::jsonb`
-).catch(err => console.warn("[migration] salary_config:", err.message));
-
-// Auto-migration: municipality_ids array on users
-pool.query(
-  `ALTER TABLE users ADD COLUMN IF NOT EXISTS municipality_ids INTEGER[] DEFAULT ARRAY[]::INTEGER[]`
-).catch(err => console.warn("[migration] municipality_ids:", err.message));
-
 async function listClients() {
   const { rows } = await pool.query(`
     SELECT

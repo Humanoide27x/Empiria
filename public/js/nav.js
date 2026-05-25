@@ -378,7 +378,7 @@ export async function openModule(moduleKey) {
   state.expandedModule = moduleKey;
   syncTopbarModuleTitle(moduleKey, state.activeSubmodule);
 
-  if (!state.access) {
+  if (!state.token || !state.access) {
     renderEmptyWorkspace();
     return;
   }

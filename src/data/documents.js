@@ -40,6 +40,12 @@ function getDocumentsByEmployee(employeeId) {
   );
 }
 
+function getDocumentsByEmployees(employeeIds = []) {
+  const ids = new Set(employeeIds.map((id) => String(id)).filter(Boolean));
+  if (!ids.size) return [];
+  return readDocuments().filter((doc) => ids.has(String(doc.employeeId)));
+}
+
 function sanitizeFileName(name = "documento.pdf") {
   return String(name)
     .replace(/[^\w.\-]+/g, "_")
@@ -138,6 +144,7 @@ function rejectDocument(id, reason = "", userName = "Usuario") {
 module.exports = {
   getAllDocuments,
   getDocumentsByEmployee,
+  getDocumentsByEmployees,
   saveDocument,
   validateDocument,
   rejectDocument,

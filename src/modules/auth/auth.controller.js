@@ -48,7 +48,7 @@ async function applyContractModules(access, user) {
 
 const {
   enableMfaForUser,
-  findUserByCredentials,
+  findUserByCredentialsAsync,
   findUserById,
   sanitizeUser,
   saveMfaSecret,
@@ -78,6 +78,10 @@ const {
   getBlockedMessage,
   requireAuth,
 } = require("./auth.helpers");
+
+let _rolesCache = null;
+let _rolesCacheTs = 0;
+const ROLES_CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function handleLogin(req, res) {
   if (req.method !== "POST") {
@@ -125,7 +129,7 @@ async function handleLogin(req, res) {
       return;
     }
 
-    const user = findUserByCredentials(username, password);
+    const user = await findUserByCredentialsAsync(username, password);
 
     if (!user) {
       const attempt = registerFailedAttempt(normalizedUsername);
@@ -270,6 +274,14 @@ async function handleLogin(req, res) {
   } catch (error) {
     console.error("Error en login:", error);
 
+    if (error.code === "USER_LOOKUP_FAILED") {
+      sendJson(res, 503, {
+        ok: false,
+        message: "No fue posible validar credenciales en este momento",
+      });
+      return;
+    }
+
     sendJson(res, 500, {
       ok: false,
       message: "Error interno iniciando sesion",
@@ -329,10 +341,18 @@ async function handleRoles(req, res) {
   }
 
   try {
-    const roles = await getRolesFromDb();
+    let roles = _rolesCache;
+    let cached = Boolean(roles && Date.now() - _rolesCacheTs <= ROLES_CACHE_TTL_MS);
+    if (!roles || Date.now() - _rolesCacheTs > ROLES_CACHE_TTL_MS) {
+      roles = await getRolesFromDb();
+      _rolesCache = roles;
+      _rolesCacheTs = Date.now();
+      cached = false;
+    }
 
     sendJson(res, 200, {
       ok: true,
+      cached,
       roles,
     });
   } catch (error) {

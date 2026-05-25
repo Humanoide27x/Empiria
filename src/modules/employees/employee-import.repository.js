@@ -1,7 +1,6 @@
 "use strict";
 
 const crypto = require("crypto");
-const XLSX = require("xlsx");
 const pool = require("../../db/pool");
 const { createEmployee } = require("../../db/employees.repository");
 const { normalizeText } = require("../../utils/text");
@@ -62,37 +61,6 @@ const UPDATE_FIELD_COLUMNS = {
   arl: ["ARL"],
   ...Object.fromEntries(SIZE_FIELDS.map((field) => [field.key, field.columns])),
 };
-
-pool.query(
-  `ALTER TABLE employees
-     ADD COLUMN IF NOT EXISTS uniforme TEXT,
-     ADD COLUMN IF NOT EXISTS calzado TEXT,
-     ADD COLUMN IF NOT EXISTS talla_camisa TEXT,
-     ADD COLUMN IF NOT EXISTS talla_pantalon TEXT`
-).catch(err => console.warn("[migration] employee talla columns:", err.message));
-
-pool.query(
-  `ALTER TABLE employee_import_staging
-     ADD COLUMN IF NOT EXISTS existing_employee_id INTEGER,
-     ADD COLUMN IF NOT EXISTS conflicts JSONB NOT NULL DEFAULT '[]'::jsonb`
-).catch(err => console.warn("[migration] employee_import_staging existing/conflicts:", err.message));
-
-pool.query(
-  `DO $$
-   BEGIN
-     IF EXISTS (
-       SELECT 1 FROM pg_constraint WHERE conname = 'employee_import_staging_status_check'
-     ) THEN
-       ALTER TABLE employee_import_staging DROP CONSTRAINT employee_import_staging_status_check;
-     END IF;
-   END $$;
-   ALTER TABLE employee_import_staging
-     ADD CONSTRAINT employee_import_staging_status_check
-     CHECK (status IN (
-       'PENDING','VALID','ERROR','NEEDS_REVIEW','EXISTING_EMPLOYEE',
-       'HAS_CONFLICTS','IMPORTED','UPDATED','SKIPPED'
-     ))`
-).catch(err => console.warn("[migration] employee_import_staging status check:", err.message));
 
 function toInt(value) {
   const n = Number(value);
@@ -192,6 +160,7 @@ function parseExcelRows(fileBase64) {
     throw new Error("Debes enviar un archivo Excel valido.");
   }
 
+  const XLSX = require("xlsx");
   const base64Data = fileBase64.split("base64,")[1];
   if (!base64Data) throw new Error("Archivo Excel invalido.");
 

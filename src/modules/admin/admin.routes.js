@@ -5,9 +5,17 @@ const {
   handleAccessLogs,
 } = require("./admin.controller");
 
-const { handlePositionRoutes } = require("./positions/positions.routes");
-const { handleContractualRoutes } = require("./contractual/contractual.routes");
-const { handleClientsRoutes }  = require("../config/clients/clients.routes");
+function lazyRoute(modulePath, exportName) {
+  let mod = null;
+  return async (...args) => {
+    if (!mod) mod = require(modulePath);
+    return mod[exportName](...args);
+  };
+}
+
+const handlePositionRoutes = lazyRoute("./positions/positions.routes", "handlePositionRoutes");
+const handleContractualRoutes = lazyRoute("./contractual/contractual.routes", "handleContractualRoutes");
+const handleClientsRoutes = lazyRoute("../config/clients/clients.routes", "handleClientsRoutes");
 
 async function handleAdminRoutes(req, res, url) {
   // Configuración → Clientes / Contratos / Cargos / Documentos

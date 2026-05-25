@@ -327,8 +327,14 @@ function createDocumentsRouter() {
   // GET /documents y GET /documents?employeeId=xxx
   router.get("/", authMiddleware, (req, res) => {
     const employeeId = req.query.employeeId;
+    const employeeIds = String(req.query.employeeIds || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
     const data = employeeId
       ? legacyDocs.getDocumentsByEmployee(employeeId)
+      : employeeIds.length
+        ? legacyDocs.getDocumentsByEmployees(employeeIds)
       : legacyDocs.getAllDocuments();
     return sendJson(res, 200, { ok: true, data });
   });

@@ -44,11 +44,10 @@ process.on("uncaughtException", (err) => {
 async function start() {
   // 1. Verificar conexión a la base de datos
   log("info", { msg: "Conectando a PostgreSQL…" });
-  const { rows } = await pool.query("SELECT NOW() AS ts, version() AS pg_version");
+  const { rows } = await pool.query("SELECT NOW() AS ts");
   log("info", {
     msg:        "PostgreSQL conectado",
     server_time: rows[0].ts,
-    pg_version:  rows[0].pg_version.split(" ").slice(0, 2).join(" "),
   });
 
   // 2. Correr migraciones pendientes

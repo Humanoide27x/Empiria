@@ -18,6 +18,8 @@ const ui = {
   contractModalities: [],
   positionRules: [],
   documentMatrix: null,
+  documentMatrixLoaded: false,
+  documentMatrixLoading: false,
   documentRules: [],
   experienceRules: [],
   coverageRules: [],
@@ -32,6 +34,23 @@ const ui = {
   editingExperienceRuleId: null,
   editingCoverageRuleId: null,
 };
+
+const SESSION_CACHE_TTL = 5 * 60 * 1000;
+const sessionCache = new Map();
+
+async function cachedApiFetch(path, ttl = SESSION_CACHE_TTL) {
+  const cached = sessionCache.get(path);
+  if (cached && Date.now() - cached.ts < ttl) return cached.payload;
+  const payload = await apiFetch(path);
+  sessionCache.set(path, { ts: Date.now(), payload });
+  return payload;
+}
+
+function invalidateContractualCache(prefix = "") {
+  for (const key of sessionCache.keys()) {
+    if (!prefix || key.startsWith(prefix)) sessionCache.delete(key);
+  }
+}
 
 const POSITION_CATEGORIES = [
   "Operativo",
@@ -355,6 +374,10 @@ function renderDocumentMatrixHeader() {
 }
 
 function renderDocumentMatrixRows() {
+  if (!ui.documentMatrixLoaded) {
+    return `<tr><td colspan="2" class="ctc-empty-row">La matriz documental se carga bajo demanda para evitar consultas pesadas al abrir el contrato.</td></tr>`;
+  }
+
   const positions = getDocumentMatrixPositions();
   const rows = getFilteredDocumentMatrixRows();
 
@@ -706,20 +729,26 @@ function renderContractualPanel() {
         </div>
         <div class="ctc-doc-toolbar">
           <div class="ctc-doc-toolbar-left">
-            ${renderDocumentMatrixFilters()}
+            ${ui.documentMatrixLoaded ? renderDocumentMatrixFilters() : ""}
           </div>
           <div class="ctc-doc-toolbar-right">
             <span class="ctc-doc-pending ${getDocumentMatrixPendingEntries().length ? "ctc-doc-pending-active" : ""}">
               ${getDocumentMatrixPendingEntries().length} cambio(s) pendiente(s)
             </span>
-            <button type="button" class="btn btn-secondary" data-action="new-master-document">Agregar documento</button>
-            <button type="button" class="btn btn-primary" data-action="save-document-matrix" ${getDocumentMatrixPendingEntries().length ? "" : "disabled"}>
-              Guardar matriz documental
-            </button>
+            ${ui.documentMatrixLoaded
+              ? `
+                <button type="button" class="btn btn-secondary" data-action="new-master-document">Agregar documento</button>
+                <button type="button" class="btn btn-primary" data-action="save-document-matrix" ${getDocumentMatrixPendingEntries().length ? "" : "disabled"}>
+                  Guardar matriz documental
+                </button>
+              `
+              : `<button type="button" class="btn btn-primary" data-action="load-document-matrix" ${ui.documentMatrixLoading ? "disabled" : ""}>${ui.documentMatrixLoading ? "Cargando..." : "Cargar matriz documental"}</button>`}
           </div>
         </div>
         <div class="ctc-inline-note">
-          <span>Las filas son documentos maestros y las columnas son cargos del contrato. Los documentos globales base se muestran bloqueados porque siempre aplican.</span>
+          <span>${ui.documentMatrixLoaded
+            ? "Las filas son documentos maestros y las columnas son cargos del contrato. Los documentos globales base se muestran bloqueados porque siempre aplican."
+            : "La matriz documental se consulta solo cuando la necesitas para acelerar la apertura de Configuracion Contractual."}</span>
         </div>
         <div class="ctc-grid-2 ctc-grid-2-docs">
           <div class="ctc-card-surface">
@@ -737,7 +766,9 @@ function renderContractualPanel() {
             </div>
           </div>
           <div class="ctc-card-surface">
-            ${renderDocumentMasterForm()}
+            ${ui.documentMatrixLoaded
+              ? renderDocumentMasterForm()
+              : `<div class="ctc-empty-row">Carga la matriz para crear o editar documentos maestros desde esta vista.</div>`}
           </div>
         </div>
       </section>
@@ -983,6 +1014,11 @@ function wireRoot(host) {
       if (action === "set-document-matrix-filter") {
         ui.documentMatrixFilter = actionTarget.dataset.filter || "ALL";
         render(host);
+        return;
+      }
+
+      if (action === "load-document-matrix") {
+        await loadDocumentMatrix(host);
         return;
       }
 
@@ -1232,7 +1268,7 @@ function render(host) {
 
 async function fetchContractsForCompany(companyId) {
   if (!toId(companyId)) return [];
-  const payload = await apiFetch(`/contracts?companyId=${encodeURIComponent(companyId)}`);
+  const payload = await cachedApiFetch(`/contracts?companyId=${encodeURIComponent(companyId)}`);
   return listFromResponse(payload, "contracts");
 }
 
@@ -1246,7 +1282,6 @@ async function fetchCurrentContractData(contractId) {
     masterPositionsPayload,
     masterAreasPayload,
     masterDocumentsPayload,
-    documentMatrixPayload,
     masterExperiencePayload,
     masterModalitiesPayload,
     positionRulesPayload,
@@ -1256,14 +1291,13 @@ async function fetchCurrentContractData(contractId) {
     municipalitiesPayload,
     modalitiesPayload,
   ] = await Promise.all([
-    apiFetch("/admin/contractual/meta"),
-    apiFetch("/companies"),
-    apiFetch("/admin/contractual/master/positions?active=true"),
-    apiFetch("/admin/contractual/master/areas?active=true"),
-    apiFetch("/admin/contractual/master/document-types"),
-    apiFetch(`/admin/contractual/contracts/${contractId}/document-matrix`),
-    apiFetch("/admin/contractual/master/experience-types?active=true"),
-    apiFetch("/admin/contractual/master/modalities?active=true"),
+    cachedApiFetch("/admin/contractual/meta"),
+    cachedApiFetch("/companies"),
+    cachedApiFetch("/admin/contractual/master/positions?active=true"),
+    cachedApiFetch("/admin/contractual/master/areas?active=true"),
+    cachedApiFetch("/admin/contractual/master/document-types"),
+    cachedApiFetch("/admin/contractual/master/experience-types?active=true"),
+    cachedApiFetch("/admin/contractual/master/modalities?active=true"),
     apiFetch(`/admin/contractual/contracts/${contractId}/position-rules`),
     apiFetch(`/admin/contractual/contracts/${contractId}/document-rules`),
     apiFetch(`/admin/contractual/contracts/${contractId}/experience-rules`),
@@ -1284,7 +1318,9 @@ async function fetchCurrentContractData(contractId) {
   ui.masterPositions = listFromResponse(masterPositionsPayload);
   ui.masterAreas = listFromResponse(masterAreasPayload);
   ui.masterDocumentTypes = listFromResponse(masterDocumentsPayload);
-  ui.documentMatrix = documentMatrixPayload?.data || { positions: [], documents: [] };
+  ui.documentMatrix = { positions: [], documents: [] };
+  ui.documentMatrixLoaded = false;
+  ui.documentMatrixLoading = false;
   ui.documentMatrixPending = {};
   ui.masterExperienceTypes = listFromResponse(masterExperiencePayload);
   ui.masterModalities = listFromResponse(masterModalitiesPayload);
@@ -1311,8 +1347,31 @@ async function fetchCurrentContractData(contractId) {
   if (!ui.coverageRules.some((item) => item.id === ui.editingCoverageRuleId)) ui.editingCoverageRuleId = null;
 }
 
+async function loadDocumentMatrix(host) {
+  if (!ui.contractId || ui.documentMatrixLoading) return;
+  ui.documentMatrixLoading = true;
+  if (host) render(host);
+
+  try {
+    const payload = await apiFetch(`/admin/contractual/contracts/${ui.contractId}/document-matrix`);
+    ui.documentMatrix = payload?.data || { positions: [], documents: [] };
+    ui.documentMatrixLoaded = true;
+    ui.documentMatrixPending = {};
+    if (!getDocumentMatrixDocuments().some((item) => item.id === ui.editingMasterDocumentId)) {
+      ui.editingMasterDocumentId = null;
+    }
+  } finally {
+    ui.documentMatrixLoading = false;
+    if (host) render(host);
+  }
+}
+
 async function refreshCurrentContract(host) {
+  const wasMatrixLoaded = ui.documentMatrixLoaded;
   await fetchCurrentContractData(ui.contractId);
+  if (wasMatrixLoaded) {
+    await loadDocumentMatrix();
+  }
   render(host);
 }
 
@@ -1533,6 +1592,7 @@ async function submitMasterDocumentForm(form) {
       body: JSON.stringify(payload),
     });
   }
+  invalidateContractualCache("/admin/contractual/master/document-types");
 }
 
 async function submitDocumentForm(form) {

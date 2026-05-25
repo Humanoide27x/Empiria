@@ -187,6 +187,25 @@ function normalizeChipStatus(value) {
 }
 
 function getPersonnelDocumentMetrics(employee, allDocuments = []) {
+  if (!allDocuments.length && employee && employee.documentTotal !== undefined) {
+    const total = Number(employee.documentTotal || 0);
+    const validated = Number(employee.documentValidated || 0);
+    const pending = Number(employee.documentPending || 0);
+    const rejected = Number(employee.documentRejected || 0);
+    const expired = Number(employee.documentExpired || 0);
+    const missing = Math.max(0, total - validated - pending - rejected - expired);
+    return {
+      total,
+      validated,
+      pending,
+      rejected,
+      expired,
+      expiring: 0,
+      missing,
+      percent: total ? Math.round((validated / total) * 100) : 0,
+    };
+  }
+
   const hv = getPersonnelHvStatusFull(employee, allDocuments);
   const employeeDocs = allDocuments.filter((doc) => String(doc.employeeId) === String(employee.id));
   const requiredDocs = getRequiredDocumentsForEmployee(employee).filter((doc) => doc.required);
@@ -1862,7 +1881,13 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
   try {
     const needsCatalog = !state.educationalCatalog || Object.keys(state.educationalCatalog).length === 0;
-    payload = await apiFetch(needsCatalog ? "/personnel?withCatalog=1&limit=1" : "/personnel?limit=1");
+    payload = await apiFetch("/personnel?page=1&pageSize=1");
+    if (needsCatalog) {
+      const catalogPayload = await apiFetch("/personnel/catalog").catch(() => ({ educationalCatalog: {} }));
+      if (catalogPayload.educationalCatalog && Object.keys(catalogPayload.educationalCatalog).length > 0) {
+        state.educationalCatalog = catalogPayload.educationalCatalog;
+      }
+    }
 
     if (payload.educationalCatalog && Object.keys(payload.educationalCatalog).length > 0) {
       state.educationalCatalog = payload.educationalCatalog;
@@ -2376,6 +2401,11 @@ function _norm(v) {
 }
 
 function getPersonnelHvStatusFull(employee, allDocuments = []) {
+  if (!allDocuments.length && employee?.hvStatus) {
+    const label = employee.hvStatus;
+    return { label, className: normalizeChipStatus(label) };
+  }
+
   const employeeDocs = allDocuments.filter(
     (d) => String(d.employeeId) === String(employee.id)
   );
@@ -2597,7 +2627,33 @@ export async function renderPersonnelTableModule() {
     state.personnelFilters = { search: "", status: "", role: "", hvStatus: "", municipality: "",
       companyId: "", contractId: "", gestorZona: "", institution: "", site: "", modality: "", sort: "" };
   }
+  if (!state.personnelPagination) {
+    state.personnelPagination = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  }
   const f = state.personnelFilters;
+  const pg = state.personnelPagination;
+  const buildPersonnelListParams = ({ exportAll = false } = {}) => {
+    const params = new URLSearchParams();
+    params.set("page", exportAll ? "1" : String(pg.page || 1));
+    params.set("pageSize", exportAll ? "5000" : String(pg.pageSize || 25));
+    if (exportAll) params.set("export", "1");
+    if (f.search) params.set("search", f.search);
+    if (f.status) params.set("status", f.status);
+    if (f.role) params.set("position", f.role);
+    if (f.hvStatus) params.set("hvStatus", f.hvStatus);
+    if (f.companyId) params.set("companyId", f.companyId);
+    if (f.contractId) params.set("contractId", f.contractId);
+    if (f.municipality) {
+      const mun = META_MUNICIPALITIES.find((m) => String(m.name).toUpperCase() === String(f.municipality).toUpperCase());
+      if (mun?.id) params.set("municipalityId", String(mun.id));
+      else params.set("municipalityName", f.municipality);
+    }
+    if (f.gestorZona) params.set("gestorZona", f.gestorZona);
+    if (f.institution) params.set("institution", f.institution);
+    if (f.site) params.set("site", f.site);
+    if (f.modality) params.set("modality", f.modality);
+    return params;
+  };
 
   const hasAnyFilter = !!(f.search || f.status || f.role || f.hvStatus || f.municipality ||
     f.companyId || f.contractId || f.gestorZona || f.institution || f.site || f.modality);
@@ -2605,81 +2661,50 @@ export async function renderPersonnelTableModule() {
   let rows = [];
   let allDocuments = [];
 
-  // Solo nameSearch va al servidor (busca en full_name que siempre está completo).
-  // municipio, rol y estado se filtran en frontend para evitar exclusiones por
-  // diferencias entre columnas (real_position vs cargo, municipality_id vs educational).
-  const _listParams = new URLSearchParams({ limit: 5000 });
-  if (f.search) _listParams.set('nameSearch', f.search);
+  const _listParams = buildPersonnelListParams();
 
   let _total = 0;
+  let _totalPages = 0;
 
   try {
-    const [payload, docsPayload] = await Promise.all([
-      apiFetch(`/personnel?${_listParams}`),
-      apiFetch("/documents").catch(() => ({ data: [] })),
-    ]);
+    const payload = await apiFetch(`/personnel?${_listParams}`);
     if (payload.educationalCatalog && Object.keys(payload.educationalCatalog).length > 0) {
       state.educationalCatalog = payload.educationalCatalog;
     }
     rows = Array.isArray(payload.data) ? payload.data
       : Array.isArray(payload.personnel) ? payload.personnel : [];
-    allDocuments = Array.isArray(docsPayload.data) ? docsPayload.data : [];
-    _total = Number(payload.total || rows.length);
+    allDocuments = [];
+    const payloadPagination = payload.pagination || {};
+    _total = Number(payloadPagination.total || payload.total || rows.length);
+    _totalPages = Number(payloadPagination.totalPages || Math.ceil(_total / (pg.pageSize || 25)) || 0);
+    state.personnelPagination = {
+      page: Number(payloadPagination.page || pg.page || 1),
+      pageSize: Number(payloadPagination.pageSize || payload.pageSize || payload.limit || pg.pageSize || 25),
+      total: _total,
+      totalPages: _totalPages,
+    };
   } catch (error) {
     return `<article class="info-card"><h3>Error en Gestión del Personal</h3><p>${escapeHtml(error.message)}</p></article>`;
   }
 
+  if (!state.personnelDetailCache) state.personnelDetailCache = new Map();
+  const getFullEmployee = async (id) => {
+    const key = String(id || "");
+    const local = rows.find((r) => String(r.id) === key);
+    if (!key) return null;
+    if (state.personnelDetailCache.has(key)) return state.personnelDetailCache.get(key);
+    if (local && local._listOnly !== true) {
+      state.personnelDetailCache.set(key, local);
+      return local;
+    }
+    const payload = await apiFetch(`/personnel/${encodeURIComponent(key)}`);
+    const full = payload?.data || local || null;
+    if (full) state.personnelDetailCache.set(key, full);
+    return full;
+  };
+
   // ── Filtrar ───────────────────────────────────────────────────────────────
-  const filteredRows = rows.filter((item) => {
-    if (f.search) {
-      const txt = _norm([
-        getPersonnelFullName(item), getPersonnelDocument(item),
-        getPersonnelRole(item), getPersonnelWorkStatus(item),
-        getPersonnelMunicipality(item), getPersonnelCompanyLabel(item),
-        getPersonnelContractLabel(item), getPersonnelInstitution(item),
-        getPersonnelSite(item), getPersonnelModality(item),
-        item.email || "", item.phone || "",
-      ].join(" "));
-      if (!txt.includes(_norm(f.search))) return false;
-    }
-    if (f.status && _norm(getPersonnelWorkStatus(item)) !== _norm(f.status)) return false;
-    if (f.role && _norm(getPersonnelRole(item)) !== _norm(f.role)) return false;
-    if (f.hvStatus) {
-      if (_norm(getPersonnelHvStatusFull(item, allDocuments).label) !== _norm(f.hvStatus)) return false;
-    }
-    if (f.companyId && String(item.companyId || item.company_id || "") !== String(f.companyId)) return false;
-    if (f.contractId && String(item.contractId || item.contract_id || "") !== String(f.contractId)) return false;
-    if (f.municipality) {
-      const target           = _norm(f.municipality);
-      const munOperacional   = _norm(item.municipalityName || item.municipality_name || item.municipality || "");
-      const munResidencia    = _norm(item.residenceMunicipality || item.municipio_residencia || item.residence_municipality || "");
-      const munInstitucional = _norm(item.educationalMunicipality || item.educational_municipality || item.municipio_institucional || "");
-      const munFallback      = _norm(getPersonnelMunicipality(item));
-      const fullName         = _norm(item.fullName || item.full_name || item.nombre || "");
-      if (fullName.includes("YENNY") || fullName.includes("MORA LOPEZ")) {
-        console.log("[MUN-DEBUG] yenny:", {
-          target,
-          munOperacional,
-          munResidencia,
-          munInstitucional,
-          munFallback,
-          municipalityId:        item.municipalityId,
-          municipalityName:      item.municipalityName,
-          municipality:          item.municipality,
-          residenceMunicipality: item.residenceMunicipality,
-          educationalMunicipality: item.educationalMunicipality,
-          raw_municipality_id:   item.municipality_id,
-          raw_municipality_name: item.municipality_name,
-        });
-      }
-      if (munOperacional !== target && munResidencia !== target && munInstitucional !== target && munFallback !== target) return false;
-    }
-    if (f.gestorZona && _norm(item.gestorZona || item.gestor_zona || "") !== _norm(f.gestorZona)) return false;
-    if (f.institution && _norm(item.institution || item.institucion_educativa || item.institutionName || "") !== _norm(f.institution)) return false;
-    if (f.site      && _norm(item.site || item.sede_educativa || item.siteName || "") !== _norm(f.site)) return false;
-    if (f.modality  && _norm(item.educationalModality || item.modalidad || item.modality || "") !== _norm(f.modality)) return false;
-    return true;
-  });
+  const filteredRows = rows;
 
   // ── Ordenar ───────────────────────────────────────────────────────────────
   if (f.sort) {
@@ -2699,11 +2724,11 @@ export async function renderPersonnelTableModule() {
   // ── Opciones de filtros ───────────────────────────────────────────────────
   const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
   const municipalityOptions  = META_MUNICIPALITIES.map((m) => m.name);
-  const roleOptions          = uniq(rows.map((r) => getPersonnelRole(r).trim()));
-  const gestorZonaOptions    = uniq(rows.map((r) => (r.gestorZona || r.gestor_zona || "").trim()));
-  const institutionOptions   = uniq(rows.map((r) => (r.institution || r.institucion_educativa || r.institutionName || "").trim()));
-  const siteOptions          = uniq(rows.map((r) => (r.site || r.sede_educativa || r.siteName || "").trim()));
-  const modalityOptions      = uniq(rows.map((r) => (r.educationalModality || r.modalidad || r.modality || "").trim()));
+  const roleOptions          = uniq([f.role, ...rows.map((r) => getPersonnelRole(r).trim())]);
+  const gestorZonaOptions    = uniq([f.gestorZona, ...rows.map((r) => (r.gestorZona || r.gestor_zona || "").trim())]);
+  const institutionOptions   = uniq([f.institution, ...rows.map((r) => (r.institution || r.institucion_educativa || r.institutionName || "").trim())]);
+  const siteOptions          = uniq([f.site, ...rows.map((r) => (r.site || r.sede_educativa || r.siteName || "").trim())]);
+  const modalityOptions      = uniq([f.modality, ...rows.map((r) => (r.educationalModality || r.modalidad || r.modality || "").trim())]);
   const companyOptions       = Array.from(new Map(
     rows
       .filter((r) => r.companyId || r.company_id)
@@ -2811,6 +2836,7 @@ export async function renderPersonnelTableModule() {
         modality:     document.getElementById("personnelFilterModality")?.value    || "",
         sort:         document.getElementById("personnelSort")?.value              || "",
       };
+      state.personnelPagination = { ...(state.personnelPagination || {}), page: 1 };
       await openModule("gestion_personal");
     };
 
@@ -2831,6 +2857,7 @@ export async function renderPersonnelTableModule() {
     document.getElementById("clearPersonnelFilters")?.addEventListener("click", async () => {
       state.personnelFilters = { search:"", status:"", role:"", hvStatus:"", municipality:"",
         companyId:"", contractId:"", gestorZona:"", institution:"", site:"", modality:"", sort:"" };
+      state.personnelPagination = { page: 1, pageSize: state.personnelPagination?.pageSize || 25, total: 0, totalPages: 0 };
       state.personnelSelectedId = null;
       await openModule("gestion_personal");
     });
@@ -2845,8 +2872,42 @@ export async function renderPersonnelTableModule() {
       await openModule("gestion_personal");
     });
 
-    document.getElementById("btnExportPersonnel")?.addEventListener("click", () => {
-      openExportPersonnelModal(filteredRows);
+    document.getElementById("btnExportPersonnel")?.addEventListener("click", async () => {
+      try {
+        const exportParams = buildPersonnelListParams({ exportAll: true });
+        const payload = await apiFetch(`/personnel?${exportParams}`);
+        const exportRows = Array.isArray(payload.data) ? payload.data : filteredRows;
+        openExportPersonnelModal(exportRows);
+      } catch (error) {
+        showError(error.message || "No fue posible preparar la exportación.");
+      }
+    });
+
+    document.getElementById("personnelPrevPage")?.addEventListener("click", async () => {
+      const current = state.personnelPagination?.page || 1;
+      if (current <= 1) return;
+      state.personnelPagination = { ...(state.personnelPagination || {}), page: current - 1 };
+      state.personnelSelectedId = null;
+      await openModule("gestion_personal");
+    });
+
+    document.getElementById("personnelNextPage")?.addEventListener("click", async () => {
+      const current = state.personnelPagination?.page || 1;
+      const totalPages = state.personnelPagination?.totalPages || 0;
+      if (totalPages && current >= totalPages) return;
+      state.personnelPagination = { ...(state.personnelPagination || {}), page: current + 1 };
+      state.personnelSelectedId = null;
+      await openModule("gestion_personal");
+    });
+
+    document.getElementById("personnelPageSize")?.addEventListener("change", async (event) => {
+      state.personnelPagination = {
+        ...(state.personnelPagination || {}),
+        page: 1,
+        pageSize: Number(event.target.value) || 25,
+      };
+      state.personnelSelectedId = null;
+      await openModule("gestion_personal");
     });
 
     document.getElementById("btnImportPersonnel")?.addEventListener("click", () => {
@@ -2855,7 +2916,7 @@ export async function renderPersonnelTableModule() {
 
     document.querySelectorAll("[data-cv-personnel-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const found = rows.find((r) => String(r.id) === String(btn.dataset.cvPersonnelId));
+        const found = await getFullEmployee(btn.dataset.cvPersonnelId);
         if (!found) return;
         state.personnelDraft    = hydratePersonnelDraft(found);
         state.personnelViewMode = "cv";
@@ -2867,7 +2928,7 @@ export async function renderPersonnelTableModule() {
 
     document.querySelectorAll("[data-edit-personnel-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const found = rows.find((r) => String(r.id) === String(btn.dataset.editPersonnelId));
+        const found = await getFullEmployee(btn.dataset.editPersonnelId);
         if (!found) return;
         state.personnelDraft             = hydratePersonnelDraft(found);
         state.personnelCreateTab         = "identificacion";
@@ -2882,7 +2943,7 @@ export async function renderPersonnelTableModule() {
 
     document.querySelectorAll("[data-documents-personnel-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const found = rows.find((r) => String(r.id) === String(btn.dataset.documentsPersonnelId));
+        const found = await getFullEmployee(btn.dataset.documentsPersonnelId);
         if (!found) return;
         state.personnelDraft          = hydratePersonnelDraft(found);
         state.personnelViewMode       = "documents";
@@ -2946,7 +3007,7 @@ export async function renderPersonnelTableModule() {
       });
       container.querySelectorAll("[data-edit-personnel-id]").forEach(btn => {
         btn.addEventListener("click", async () => {
-          const found = rows.find(r => String(r.id) === String(btn.dataset.editPersonnelId));
+          const found = await getFullEmployee(btn.dataset.editPersonnelId);
           if (!found) return;
           state.personnelDraft             = hydratePersonnelDraft(found);
           state.personnelCreateTab         = "identificacion";
@@ -2959,7 +3020,7 @@ export async function renderPersonnelTableModule() {
       });
       container.querySelectorAll("[data-documents-personnel-id]").forEach(btn => {
         btn.addEventListener("click", async () => {
-          const found = rows.find(r => String(r.id) === String(btn.dataset.documentsPersonnelId));
+          const found = await getFullEmployee(btn.dataset.documentsPersonnelId);
           if (!found) return;
           state.personnelDraft = hydratePersonnelDraft(found);
           state.personnelViewMode = "documents";
@@ -2971,7 +3032,7 @@ export async function renderPersonnelTableModule() {
       });
       container.querySelectorAll("[data-cv-personnel-id]").forEach(btn => {
         btn.addEventListener("click", async () => {
-          const found = rows.find(r => String(r.id) === String(btn.dataset.cvPersonnelId));
+          const found = await getFullEmployee(btn.dataset.cvPersonnelId);
           if (!found) return;
           state.personnelDraft = hydratePersonnelDraft(found);
           state.personnelViewMode = "cv";
@@ -2994,10 +3055,10 @@ export async function renderPersonnelTableModule() {
     };
 
     document.querySelectorAll("[data-open-cv-id]").forEach((nameEl) => {
-      nameEl.addEventListener("click", (event) => {
+      nameEl.addEventListener("click", async (event) => {
         event.stopPropagation();
         const empId = nameEl.dataset.openCvId;
-        const found = filteredRows.find(r => String(r.id) === String(empId)) || null;
+        const found = await getFullEmployee(empId);
         state.personnelSelectedId = empId;
         document.querySelectorAll("[data-select-personnel-id]").forEach(r => r.classList.remove("selected"));
         nameEl.closest("[data-select-personnel-id]")?.classList.add("selected");
@@ -3031,6 +3092,13 @@ export async function renderPersonnelTableModule() {
       ${ctLabel ? `<span class="personnel-ctx-sep">|</span><span class="personnel-ctx-item"><span class="personnel-ctx-lbl">Contrato</span>${escapeHtml(ctLabel)}</span>` : ""}
     </div>`;
   }
+
+  const currentPagination = state.personnelPagination || {};
+  const currentPage = Number(currentPagination.page || 1);
+  const currentPageSize = Number(currentPagination.pageSize || 25);
+  const totalPages = Number(currentPagination.totalPages || _totalPages || 0);
+  const pageStart = _total ? ((currentPage - 1) * currentPageSize) + 1 : 0;
+  const pageEnd = _total ? Math.min(_total, pageStart + rows.length - 1) : 0;
 
   // ── HTML ──────────────────────────────────────────────────────────────────
   return `
@@ -3134,6 +3202,15 @@ export async function renderPersonnelTableModule() {
               </thead>
               <tbody>${tableRows}</tbody>
             </table>
+          </div>
+          <div class="personnel-pagination" style="display:flex;gap:.75rem;align-items:center;justify-content:flex-end;padding:.75rem 1rem;border-top:1px solid var(--border);font-size:13px">
+            <span>${pageStart}-${pageEnd} de ${_total || 0}</span>
+            <select id="personnelPageSize" style="width:auto">
+              ${[25, 50, 100].map((size) => `<option value="${size}" ${currentPageSize === size ? "selected" : ""}>${size}</option>`).join("")}
+            </select>
+            <button type="button" id="personnelPrevPage" class="btn btn-secondary" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
+            <span>Página ${currentPage} de ${totalPages || 1}</span>
+            <button type="button" id="personnelNextPage" class="btn btn-secondary" ${totalPages && currentPage >= totalPages ? "disabled" : ""}>Siguiente</button>
           </div>
         </div>
       </section>
@@ -3415,7 +3492,7 @@ async function openBulkDocumentUploadModal() {
 
   let personnelPayload = {};
   try {
-    personnelPayload = await apiFetch("/personnel");
+    personnelPayload = await apiFetch("/personnel?export=1&pageSize=5000");
   } catch {
     personnelPayload = {};
   }

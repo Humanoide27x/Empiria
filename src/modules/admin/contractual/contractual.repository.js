@@ -14,6 +14,17 @@ function toInt(value) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+function toLimit(value, fallback = 500, max = 1000) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) return fallback;
+  return Math.min(n, max);
+}
+
+function toOffset(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
 function toBool(value, fallback = null) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
@@ -588,8 +599,9 @@ const MASTER_KIND_CONFIG = {
         description,
         phase,
         is_global_base AS "isGlobalBase",
-        default_expires AS "defaultExpires",
-        default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
+        COALESCE(default_expires, false) AS "defaultExpires",
+        COALESCE(default_alert_days_before_expiration, 30) AS "defaultAlertDaysBeforeExpiration",
+        COALESCE(validation_required, true) AS "validationRequired",
         visible_to_auditor AS "visibleToAuditor",
         active,
         created_at AS "createdAt",
@@ -604,8 +616,9 @@ const MASTER_KIND_CONFIG = {
         description,
         phase,
         is_global_base AS "isGlobalBase",
-        default_expires AS "defaultExpires",
-        default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
+        COALESCE(default_expires, false) AS "defaultExpires",
+        COALESCE(default_alert_days_before_expiration, 30) AS "defaultAlertDaysBeforeExpiration",
+        COALESCE(validation_required, true) AS "validationRequired",
         visible_to_auditor AS "visibleToAuditor",
         active,
         created_at AS "createdAt",
@@ -708,8 +721,14 @@ async function listMasterCatalog(kind, filters = {}) {
   const orderBy = kind === "positions"
     ? ` ORDER BY active DESC, code ASC`
     : ` ORDER BY active DESC, code ASC`;
+  const limit = toLimit(filters.limit ?? filters.pageSize, 500, 1000);
+  const offset = toOffset(filters.offset);
+  values.push(limit, offset);
 
-  const result = await pool.query(`${config.listQuery}${where}${orderBy}`, values);
+  const result = await pool.query(
+    `${config.listQuery}${where}${orderBy} LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values
+  );
   return result.rows;
 }
 
@@ -790,6 +809,7 @@ async function createMasterCatalogRecord(kind, payload = {}) {
       const name = safe(payload.name);
       const isGlobalBase = toBool(payload.isGlobalBase ?? payload.is_global_base, false);
       const defaultExpires = toBool(payload.defaultExpires ?? payload.default_expires, false);
+      const validationRequired = toBool(payload.validationRequired ?? payload.validation_required, true);
       const active = isGlobalBase ? true : toBool(payload.active, true);
       if (!code) throw new Error("El código es obligatorio");
       if (!name) throw new Error("El nombre es obligatorio");
@@ -797,10 +817,10 @@ async function createMasterCatalogRecord(kind, payload = {}) {
       const result = await client.query(
         `INSERT INTO master_document_types (
            code, name, description, phase, is_global_base,
-           default_expires, default_alert_days_before_expiration,
+           default_expires, default_alert_days_before_expiration, validation_required,
            visible_to_auditor, active
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           code,
@@ -811,7 +831,8 @@ async function createMasterCatalogRecord(kind, payload = {}) {
           defaultExpires,
           defaultExpires
             ? toInt(payload.defaultAlertDaysBeforeExpiration || payload.default_alert_days_before_expiration)
-            : null,
+            : 30,
+          validationRequired,
           toBool(payload.visibleToAuditor ?? payload.visible_to_auditor, false),
           active,
         ]
@@ -946,6 +967,10 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
         payload.defaultExpires !== undefined || payload.default_expires !== undefined
           ? toBool(payload.defaultExpires ?? payload.default_expires, false)
           : current.defaultExpires;
+      const requestedValidationRequired =
+        payload.validationRequired !== undefined || payload.validation_required !== undefined
+          ? toBool(payload.validationRequired ?? payload.validation_required, true)
+          : current.validationRequired;
 
       if (current.isGlobalBase && requestedIsGlobalBase === false) {
         throw new Error("No se puede quitar la marca global base a un documento global base.");
@@ -966,8 +991,9 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
              is_global_base = $6,
              default_expires = $7,
              default_alert_days_before_expiration = $8,
-             visible_to_auditor = $9,
-             active = $10
+             validation_required = $9,
+             visible_to_auditor = $10,
+             active = $11
          WHERE id = $1`,
         [
           toInt(id),
@@ -983,7 +1009,8 @@ async function updateMasterCatalogRecord(kind, id, payload = {}) {
                 ? toInt(payload.defaultAlertDaysBeforeExpiration || payload.default_alert_days_before_expiration)
                 : current.defaultAlertDaysBeforeExpiration
             )
-            : null,
+            : 30,
+          requestedValidationRequired,
           payload.visibleToAuditor !== undefined || payload.visible_to_auditor !== undefined
             ? toBool(payload.visibleToAuditor ?? payload.visible_to_auditor, false)
             : current.visibleToAuditor,
@@ -1123,8 +1150,9 @@ async function listContractDocumentMatrix(contractId) {
          mdt.description,
          mdt.phase,
          mdt.is_global_base AS "isGlobalBase",
-         mdt.default_expires AS "defaultExpires",
-         mdt.default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration",
+         COALESCE(mdt.default_expires, false) AS "defaultExpires",
+         COALESCE(mdt.default_alert_days_before_expiration, 30) AS "defaultAlertDaysBeforeExpiration",
+         COALESCE(mdt.validation_required, true) AS "validationRequired",
          mdt.visible_to_auditor AS "visibleToAuditor",
          mdt.active,
          mdt.created_at AS "createdAt",
@@ -1245,8 +1273,9 @@ async function applyContractDocumentMatrixChange(client, scope, change = {}) {
          id,
          name,
          is_global_base AS "isGlobalBase",
-         default_expires AS "defaultExpires",
-         default_alert_days_before_expiration AS "defaultAlertDaysBeforeExpiration"
+         COALESCE(default_expires, false) AS "defaultExpires",
+         COALESCE(default_alert_days_before_expiration, 30) AS "defaultAlertDaysBeforeExpiration",
+         COALESCE(validation_required, true) AS "validationRequired"
        FROM master_document_types
        WHERE id = $1
        LIMIT 1`,
@@ -1413,6 +1442,10 @@ async function listContractPositionRules(contractId, filters = {}) {
     )`);
   }
 
+  const limit = toLimit(filters.limit ?? filters.pageSize, 500, 1000);
+  const offset = toOffset(filters.offset);
+  values.push(limit, offset);
+
   const result = await pool.query(
     `SELECT
        cpr.id,
@@ -1445,7 +1478,8 @@ async function listContractPositionRules(contractId, filters = {}) {
      LEFT JOIN master_positions mp ON mp.id = cpr.master_position_id
      LEFT JOIN master_areas ma ON ma.code = cpr.area_code
      WHERE ${conditions.join(" AND ")}
-     ORDER BY cpr.active DESC, cpr.code ASC`,
+     ORDER BY cpr.active DESC, cpr.code ASC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values
   );
   return result.rows;
@@ -1705,6 +1739,10 @@ async function listContractDocumentRules(contractId, filters = {}) {
     conditions.push(`cdr.contract_position_rule_id = $${values.length}`);
   }
 
+  const limit = toLimit(filters.limit ?? filters.pageSize, 500, 1000);
+  const offset = toOffset(filters.offset);
+  values.push(limit, offset);
+
   const result = await pool.query(
     `SELECT
        cdr.id,
@@ -1744,7 +1782,8 @@ async function listContractDocumentRules(contractId, filters = {}) {
      LEFT JOIN institutions i ON i.id = cdr.institution_id
      LEFT JOIN educational_sites es ON es.id = cdr.site_id
      WHERE ${conditions.join(" AND ")}
-     ORDER BY cdr.active DESC, cpr.code NULLS FIRST, mdt.code ASC`,
+     ORDER BY cdr.active DESC, cpr.code NULLS FIRST, mdt.code ASC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values
   );
   return result.rows;

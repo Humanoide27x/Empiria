@@ -4,6 +4,7 @@ const { withModuleProtection, isDemoUser } = require("../../http/protection");
 
 const {
   getEmployees,
+  getEmployeeById,
   createEmployee,
   updateEmployee,
   updateEmployeePhoto,
@@ -21,6 +22,18 @@ function toTitleCase(value) {
 let _catalogCache = null;
 let _catalogCacheTs = 0;
 const CATALOG_TTL = 5 * 60 * 1000;
+
+async function measureEndpoint(label, fn) {
+  const startedAt = process.hrtime.bigint();
+  try {
+    return await fn();
+  } finally {
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    if (elapsedMs >= 500) {
+      console.warn(`[perf] ${label} ${elapsedMs.toFixed(1)}ms`);
+    }
+  }
+}
 
 async function getEducationalCatalog() {
   if (_catalogCache && Date.now() - _catalogCacheTs < CATALOG_TTL) {
@@ -133,12 +146,49 @@ function handlePersonnel(req, res) {
   // GET PERSONAL
   // ==============================
   if (req.method === "GET") {
+    const requestUrl = new URL(req.url, 'http://localhost');
     return withModuleProtection(
       "gestion_personal",
       "view",
       async (req, res, url, user, resource) => {
+        const parsedUrl = url || requestUrl;
+        if (parsedUrl.pathname === "/personnel/catalog") {
+          const educationalCatalog = await measureEndpoint("GET /personnel/catalog educationalCatalog", () => getEducationalCatalog())
+            .catch(err => { console.error("ERROR CATALOGO EDUCATIVO:", err); return {}; });
+          return sendJson(res, 200, { ok: true, educationalCatalog });
+        }
+
+        const detailMatch = parsedUrl.pathname.match(/^\/personnel\/(\d+)$/);
+        if (detailMatch) {
+          const employee = await measureEndpoint("GET /personnel/:id getEmployeeById", () => getEmployeeById(Number(detailMatch[1])));
+          if (!employee) {
+            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+          }
+          if (resource?.companyId && Number(employee.companyId || employee.company_id) !== Number(resource.companyId)) {
+            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+          }
+          if (resource?.contractId && Number(employee.contractId || employee.contract_id) !== Number(resource.contractId)) {
+            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+          }
+          if (Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0) {
+            const allowedMunicipality = resource.municipalityIds.map(String).includes(String(employee.municipalityId || employee.municipality_id));
+            if (!allowedMunicipality) {
+              return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+            }
+          }
+          return sendJson(res, 200, { ok: true, data: employee });
+        }
+
         if (isDemoUser(user)) {
-          return sendJson(res, 200, { data: [], educationalCatalog: {} });
+          return sendJson(res, 200, {
+            data: [],
+            pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 },
+            total: 0,
+            page: 1,
+            limit: 25,
+            pageSize: 25,
+            educationalCatalog: {},
+          });
         }
 
         const filters = {};
@@ -149,42 +199,111 @@ function handlePersonnel(req, res) {
           filters.municipalityIds = resource.municipalityIds;
         }
 
-        const parsedUrl = new URL(req.url, 'http://localhost');
+        const toPositiveInt = (value, fallback, max) => {
+          const n = Number(value);
+          return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), max) : fallback;
+        };
         const qMunicipalityName = parsedUrl.searchParams.get('municipalityName') || '';
+        const qMunicipalityId   = parsedUrl.searchParams.get('municipalityId')   || '';
+        const qCompanyId        = parsedUrl.searchParams.get('companyId')        || '';
+        const qContractId       = parsedUrl.searchParams.get('contractId')       || '';
+        const qSearch           = parsedUrl.searchParams.get('search')           || '';
         const qNameSearch       = parsedUrl.searchParams.get('nameSearch')       || '';
         const qDocumentNumber   = parsedUrl.searchParams.get('documentNumber')   || '';
         const qStatus           = parsedUrl.searchParams.get('status')           || '';
-        const qRole             = parsedUrl.searchParams.get('role')             || '';
-        const qPage             = Math.max(1, Number(parsedUrl.searchParams.get('page')  || 1));
-        const qLimit            = Math.min(Math.max(1, Number(parsedUrl.searchParams.get('limit') || 60)), 5000);
-        const withCatalog       = parsedUrl.searchParams.get('withCatalog') === '1';
+        const qActive           = parsedUrl.searchParams.get('active')           || '';
+        const qCoverage         = parsedUrl.searchParams.get('coverage')         || parsedUrl.searchParams.get('coverageStatus') || '';
+        const qPersonnelType    = parsedUrl.searchParams.get('personnelType')    || parsedUrl.searchParams.get('type') || '';
+        const qRole             = parsedUrl.searchParams.get('role') || parsedUrl.searchParams.get('position') || '';
+        const qDocumentStatus   = parsedUrl.searchParams.get('documentStatus')   || '';
+        const qHvStatus         = parsedUrl.searchParams.get('hvStatus')         || parsedUrl.searchParams.get('documentaryStatus') || '';
+        const qGestorZona       = parsedUrl.searchParams.get('gestorZona')       || '';
+        const qInstitution      = parsedUrl.searchParams.get('institution')      || '';
+        const qSite             = parsedUrl.searchParams.get('site')             || '';
+        const qModality         = parsedUrl.searchParams.get('modality')         || '';
+        const qPage             = toPositiveInt(parsedUrl.searchParams.get('page'), 1, 1000000);
+        const qPageSize         = toPositiveInt(
+          parsedUrl.searchParams.get('pageSize') || parsedUrl.searchParams.get('limit'),
+          25,
+          5000
+        );
+        const exportAll         = parsedUrl.searchParams.get('export') === '1' || parsedUrl.searchParams.get('all') === '1';
 
+        if (qSearch)           filters.search           = qSearch;
         if (qMunicipalityName) filters.municipalityName = qMunicipalityName;
+        if (qCompanyId && (!resource?.companyId || String(resource.companyId) === String(qCompanyId))) {
+          filters.companyId = qCompanyId;
+        }
+        if (qMunicipalityId) {
+          const allowed = !Array.isArray(resource?.municipalityIds)
+            || resource.municipalityIds.length === 0
+            || resource.municipalityIds.map(String).includes(String(qMunicipalityId));
+          if (allowed) filters.municipalityId = qMunicipalityId;
+        }
+        if (qContractId && (!resource?.contractId || String(resource.contractId) === String(qContractId))) {
+          filters.contractId = qContractId;
+        }
         if (qNameSearch)       filters.nameSearch       = qNameSearch;
         if (qDocumentNumber)   filters.documentNumber   = qDocumentNumber;
         if (qStatus)           filters.status           = qStatus;
+        if (qActive)           filters.active           = qActive;
+        if (qCoverage)         filters.coverage         = qCoverage;
+        if (qPersonnelType)    filters.personnelType    = qPersonnelType;
         if (qRole)             filters.role             = qRole;
+        if (qDocumentStatus)   filters.documentStatus   = qDocumentStatus;
+        if (qHvStatus)         filters.hvStatus         = qHvStatus;
+        if (qGestorZona)       filters.gestorZona       = qGestorZona;
+        if (qInstitution)      filters.institution      = qInstitution;
+        if (qSite)             filters.site             = qSite;
+        if (qModality)         filters.modality         = qModality;
         filters.page  = qPage;
-        filters.limit = qLimit;
+        filters.pageSize = qPageSize;
+        filters.exportAll = exportAll;
 
-        const hasUserFilter = !!(qMunicipalityName || qNameSearch || qDocumentNumber || qStatus || qRole);
+        const hasUserFilter = !!(
+          qSearch || qMunicipalityName || qMunicipalityId || qContractId || qNameSearch ||
+          qCompanyId || qDocumentNumber || qStatus || qActive || qCoverage || qPersonnelType ||
+          qRole || qDocumentStatus || qHvStatus || qGestorZona ||
+          qInstitution || qSite || qModality
+        );
 
-        const [result, educationalCatalog] = await Promise.all([
-          getEmployees(filters),
-          withCatalog && !hasUserFilter
-            ? getEducationalCatalog().catch(err => { console.error("ERROR CATALOGO EDUCATIVO:", err); return {}; })
-            : Promise.resolve({}),
-        ]);
+        const result = await measureEndpoint("GET /personnel getEmployees", () => getEmployees(filters));
+
+        const pagination = {
+          page: result.page,
+          pageSize: result.pageSize,
+          total: result.total,
+          totalPages: result.totalPages,
+        };
 
         return sendJson(res, 200, {
           data:  result.rows,
+          pagination,
           total: result.total,
           page:  result.page,
           limit: result.limit,
-          educationalCatalog,
+          pageSize: result.pageSize,
+          appliedFilters: {
+            search: filters.search || "",
+            companyId: filters.companyId || "",
+            contractId: filters.contractId || "",
+            municipalityId: filters.municipalityId || "",
+            municipalityName: filters.municipalityName || "",
+            status: filters.status || "",
+            active: filters.active || "",
+            coverage: filters.coverage || "",
+            personnelType: filters.personnelType || "",
+            position: filters.role || filters.position || "",
+            documentStatus: filters.documentStatus || "",
+            hvStatus: filters.hvStatus || "",
+            gestorZona: filters.gestorZona || "",
+            institution: filters.institution || "",
+            site: filters.site || "",
+            modality: filters.modality || "",
+          },
         });
       }
-    )(req, res);
+    )(req, res, requestUrl);
   }
 
   // ==============================

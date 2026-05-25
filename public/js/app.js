@@ -66,6 +66,9 @@ if (elements.loginForm) {
       resetMfaState();
       showLoginMessage("Inicio de sesión correcto", false);
       await renderDashboard(payload.user, payload.access);
+      await loadModulesCatalog().catch((error) => {
+        console.warn("[bootstrap] No fue posible cargar catalogo de modulos:", error.message);
+      });
       startNotificationLoop();
     } catch (error) {
       showLoginMessage(error.message, true);
@@ -148,6 +151,16 @@ elements.refreshUsersButton?.addEventListener("click", async () => {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-Promise.all([loadModulesCatalog(), tryRestoreSession()]).catch(() => {
-  showLoginMessage("No fue posible cargar la pantalla", true);
-});
+(async function bootstrap() {
+  try {
+    await tryRestoreSession();
+    if (state.token) {
+      await loadModulesCatalog().catch((error) => {
+        console.warn("[bootstrap] No fue posible cargar catalogo de modulos:", error.message);
+      });
+    }
+  } catch (error) {
+    console.error("[bootstrap] Error cargando pantalla:", error);
+    showLoginMessage("No fue posible cargar la pantalla", true);
+  }
+})();

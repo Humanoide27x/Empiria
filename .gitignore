@@ -11,6 +11,7 @@ node_modules/
 
 # ── Backups y dumps de base de datos ─────────────────────────────────────────
 *.sql
+!src/db/migrations/*.sql
 *.sql.gz
 *.dump
 *.backup

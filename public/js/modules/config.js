@@ -2,7 +2,13 @@ import { state }                 from '../state.js';
 import { apiFetch }               from '../api.js';
 import { escapeHtml, escapeAttr } from '../utils.js';
 import { showError, showSuccess } from '../toast.js';
-import { loadContractualAdminPanel } from './contractual-config.js';
+
+const _iv = (mod) => `${mod}?v=${window.APP_VERSION || "0"}`;
+
+async function loadContractualPanel(contractId) {
+  const { loadContractualAdminPanel } = await import(_iv("./contractual-config.js"));
+  return loadContractualAdminPanel(contractId);
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -972,7 +978,7 @@ export function wireContractConfigEvents() {
         document.querySelectorAll(".ccp-panel").forEach(p => p.classList.remove("ccp-panel-active"));
         tab.classList.add("pnl-tab-active");
         document.querySelector(`.ccp-panel[data-ccp-panel="${key}"]`)?.classList.add("ccp-panel-active");
-        if (key === "contractual") loadContractualAdminPanel(state.cfgContractConfigId);
+        if (key === "contractual") loadContractualPanel(state.cfgContractConfigId);
         if (key === "usuarios")    _loadUsersTab(state.cfgContractConfigId);
         if (key === "modulos")     { _loadWidgets(); _loadFields(_ccpActiveFieldSlug); }
         if (key === "calculadora") SALARY_MODALITIES.forEach(m => _renderModAdics(m.key));
@@ -988,7 +994,7 @@ export function wireContractConfigEvents() {
     });
 
     if ((state.cfgContractConfigTab || "contractual") === "contractual") {
-      loadContractualAdminPanel(state.cfgContractConfigId);
+      loadContractualPanel(state.cfgContractConfigId);
     }
 
     // ── Sección 1: Guardar info ──────────────────────────────────────────────

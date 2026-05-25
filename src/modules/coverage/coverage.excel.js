@@ -32,11 +32,6 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function isActiveStatus(status) {
-  const value = normalize(status);
-  return !["RETIRADO", "RETIRADA", "INACTIVO", "INACTIVA"].includes(value);
-}
-
 function calculateRequiredPersonnel(cupos, modalidad) {
   const seats = Number(cupos);
   const mode = normalize(modalidad);
@@ -537,10 +532,12 @@ async function getPreviousUpload(currentUpload) {
   return result.rows[0] || null;
 }
 
-async function getActiveEmployeesForCoverage(currentUpload) {
+const SQL_NORMALIZE_TEXT = (expr) =>
+  `REGEXP_REPLACE(translate(UPPER(TRIM(COALESCE(${expr}, ''))),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')`;
+
+async function getActiveEmployeeCoverageCounts(currentUpload) {
   const conditions = [
-    "e.status IS NOT NULL",
-    "e.status NOT IN ('retirado', 'retirada', 'inactivo', 'inactiva')",
+    "UPPER(TRIM(COALESCE(e.status, ''))) NOT IN ('RETIRADO', 'RETIRADA', 'INACTIVO', 'INACTIVA')",
   ];
 
   const values = [];
@@ -558,56 +555,47 @@ async function getActiveEmployeesForCoverage(currentUpload) {
   const result = await pool.query(
     `
     SELECT
-      e.id,
-      e.full_name,
-      e.status,
-      e.real_position,
-      e.workday_type,
-      e.modality,
-      m.name AS municipality_name,
-      i.name AS institution_name,
-      s.name AS site_name
+      ${SQL_NORMALIZE_TEXT("m.name")} AS municipality_key,
+      ${SQL_NORMALIZE_TEXT("i.name")} AS institution_key,
+      ${SQL_NORMALIZE_TEXT("s.name")} AS site_key,
+      ${SQL_NORMALIZE_TEXT("e.modality")} AS modality_key,
+      COUNT(*)::int AS active_personnel,
+      COUNT(*) FILTER (
+        WHERE ${SQL_NORMALIZE_TEXT("e.workday_type")} = 'MT'
+           OR ${SQL_NORMALIZE_TEXT("e.workday_type")} LIKE '%MEDIO%'
+      )::int AS contracted_mt,
+      COUNT(*) FILTER (
+        WHERE NOT (
+          ${SQL_NORMALIZE_TEXT("e.workday_type")} = 'MT'
+          OR ${SQL_NORMALIZE_TEXT("e.workday_type")} LIKE '%MEDIO%'
+        )
+      )::int AS contracted_tc
     FROM employees e
     LEFT JOIN municipalities m ON m.id = e.municipality_id
     LEFT JOIN institutions i ON i.id = e.institution_id
     LEFT JOIN educational_sites s ON s.id = e.site_id
     WHERE ${conditions.join(" AND ")}
+      AND ${SQL_NORMALIZE_TEXT("e.real_position")} LIKE '%OPERARIO MANIPULADOR DE ALIMENTOS%'
+    GROUP BY 1, 2, 3, 4
     `,
     values
   );
 
-  return result.rows.filter((row) => isActiveStatus(row.status));
-}
-
-function buildEmployeeCoverageMap(employees = []) {
   const map = new Map();
 
-  employees.forEach((employee) => {
+  result.rows.forEach((row) => {
     const key = [
-      normalize(employee.municipality_name),
-      normalize(employee.institution_name),
-      normalize(employee.site_name),
-      normalize(employee.modality),
+      row.municipality_key,
+      row.institution_key,
+      row.site_key,
+      row.modality_key,
     ].join("|");
 
-    if (!map.has(key)) {
-      map.set(key, {
-        activePersonnel: 0,
-        contractedTc: 0,
-        contractedMt: 0,
-      });
-    }
-
-    const item = map.get(key);
-    item.activePersonnel += 1;
-
-    const workdayType = normalize(employee.workday_type);
-
-    if (workdayType === "MT" || workdayType.includes("MEDIO")) {
-      item.contractedMt += 1;
-    } else {
-      item.contractedTc += 1;
-    }
+    map.set(key, {
+      activePersonnel: Number(row.active_personnel || 0),
+      contractedTc: Number(row.contracted_tc || 0),
+      contractedMt: Number(row.contracted_mt || 0),
+    });
   });
 
   return map;
@@ -690,8 +678,7 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
     previousMap.set(key, row);
   });
 
-  const employees = await getActiveEmployeesForCoverage(currentUpload);
-  const employeeCoverageMap = buildEmployeeCoverageMap(employees);
+  const employeeCoverageMap = await getActiveEmployeeCoverageCounts(currentUpload);
 
   return currentRowsResult.rows.map((row) => {
     const key = buildRowHash({

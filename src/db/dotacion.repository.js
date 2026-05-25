@@ -1,13 +1,5 @@
 const pool = require("./pool");
 
-// Auto-migrations: nuevas columnas de seguimiento
-[
-  `ALTER TABLE dotacion_remisiones ADD COLUMN IF NOT EXISTS fecha_enviado   DATE`,
-  `ALTER TABLE dotacion_remisiones ADD COLUMN IF NOT EXISTS fecha_recibido  DATE`,
-  `ALTER TABLE dotacion_remisiones ADD COLUMN IF NOT EXISTS comprobante_enviado  TEXT`,
-  `ALTER TABLE dotacion_remisiones ADD COLUMN IF NOT EXISTS comprobante_recibido TEXT`,
-].forEach(q => pool.query(q).catch(err => console.warn("[dotacion migration]", err.message)));
-
 // ── Catálogo ──────────────────────────────────────────────────────────────────
 
 async function getCatalogo(filters = {}) {

@@ -62,6 +62,18 @@ function canView(user) {
   return role === "administrador" || role === "talento_humano";
 }
 
+async function measureEndpoint(label, fn) {
+  const startedAt = process.hrtime.bigint();
+  try {
+    return await fn();
+  } finally {
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    if (elapsedMs >= 500) {
+      console.warn(`[perf] ${label} ${elapsedMs.toFixed(1)}ms`);
+    }
+  }
+}
+
 function guardView(req, res) {
   const user = getUser(req, res);
   if (!user) return null;
@@ -107,10 +119,29 @@ function parseBooleanParam(value) {
   return undefined;
 }
 
+function parsePositiveIntParam(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function buildPaginationFilters(url) {
+  const page = parsePositiveIntParam(url.searchParams.get("page")) || 1;
+  const limit =
+    parsePositiveIntParam(url.searchParams.get("limit"))
+    || parsePositiveIntParam(url.searchParams.get("pageSize"))
+    || parsePositiveIntParam(url.searchParams.get("page_size"));
+  return {
+    page,
+    limit,
+    offset: limit ? (page - 1) * limit : undefined,
+  };
+}
+
 function buildMasterFilters(url) {
   return {
     active: parseBooleanParam(url.searchParams.get("active")),
     search: url.searchParams.get("search") || "",
+    ...buildPaginationFilters(url),
   };
 }
 
@@ -119,6 +150,7 @@ function buildPositionRuleFilters(url) {
     active: parseBooleanParam(url.searchParams.get("active")),
     search: url.searchParams.get("search") || "",
     staffingType: url.searchParams.get("staffingType") || url.searchParams.get("staffing_type") || "",
+    ...buildPaginationFilters(url),
   };
 }
 
@@ -129,6 +161,7 @@ function buildDocumentRuleFilters(url) {
       url.searchParams.get("contractPositionRuleId")
       || url.searchParams.get("contract_position_rule_id")
       || "",
+    ...buildPaginationFilters(url),
   };
 }
 
@@ -168,7 +201,10 @@ async function handleMasterCatalog(req, res, url) {
     if (!user) return;
 
     try {
-      const data = await listMasterCatalog(kind, buildMasterFilters(url));
+      const data = await measureEndpoint(
+        `GET ${url.pathname}`,
+        () => listMasterCatalog(kind, buildMasterFilters(url))
+      );
       sendJson(res, 200, { ok: true, data, total: data.length });
     } catch (error) {
       sendJson(res, 400, { ok: false, message: error.message });
@@ -273,7 +309,10 @@ async function handleContractDocumentMatrix(req, res, url) {
     if (!user) return;
 
     try {
-      const data = await listContractDocumentMatrix(contractId);
+      const data = await measureEndpoint(
+        `GET ${url.pathname}`,
+        () => listContractDocumentMatrix(contractId)
+      );
       sendJson(res, 200, { ok: true, data });
     } catch (error) {
       sendJson(res, 400, { ok: false, message: error.message });
@@ -346,7 +385,10 @@ async function handleContractSummary(req, res, url) {
   }
 
   try {
-    const data = await listContractConfigurationSummary(contractId);
+    const data = await measureEndpoint(
+      `GET ${url.pathname}`,
+      () => listContractConfigurationSummary(contractId)
+    );
     sendJson(res, 200, { ok: true, data });
   } catch (error) {
     sendJson(res, 400, { ok: false, message: error.message });
@@ -365,7 +407,10 @@ async function handleContractPositionRules(req, res, url) {
     if (!user) return;
 
     try {
-      const data = await listContractPositionRules(contractId, buildPositionRuleFilters(url));
+      const data = await measureEndpoint(
+        `GET ${url.pathname}`,
+        () => listContractPositionRules(contractId, buildPositionRuleFilters(url))
+      );
       sendJson(res, 200, { ok: true, data, total: data.length });
     } catch (error) {
       sendJson(res, 400, { ok: false, message: error.message });
@@ -468,7 +513,10 @@ async function handleContractDocumentRules(req, res, url) {
     if (!user) return;
 
     try {
-      const data = await listContractDocumentRules(contractId, buildDocumentRuleFilters(url));
+      const data = await measureEndpoint(
+        `GET ${url.pathname}`,
+        () => listContractDocumentRules(contractId, buildDocumentRuleFilters(url))
+      );
       sendJson(res, 200, { ok: true, data, total: data.length });
     } catch (error) {
       sendJson(res, 400, { ok: false, message: error.message });

@@ -1,16 +1,6 @@
 "use strict";
 
 const pool = require("../../db/pool");
-const XLSX = require("xlsx");
-
-// Auto-migration
-pool.query(`
-  ALTER TABLE payroll_results
-    ADD COLUMN IF NOT EXISTS dias_no_clase       INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS novedades_detalle   JSONB   NOT NULL DEFAULT '[]',
-    ADD COLUMN IF NOT EXISTS adicionales_detalle JSONB   NOT NULL DEFAULT '[]',
-    ADD COLUMN IF NOT EXISTS salary_snapshot     JSONB   NOT NULL DEFAULT '{}'
-`).catch(err => console.warn("[migration] nomina_pae cols:", err.message));
 
 // ── Tipos de novedad PAE (misma lógica que la calculadora) ───────────────────
 
@@ -291,6 +281,7 @@ async function closePeriod(periodId) {
 // ── Exportar Excel ────────────────────────────────────────────────────────────
 
 async function generateExcelBuffer(periodId) {
+  const XLSX = require("xlsx");
   const period  = await getPeriodById(periodId);
   if (!period) throw new Error("Período no encontrado");
   const results = await getPeriodResults(periodId);

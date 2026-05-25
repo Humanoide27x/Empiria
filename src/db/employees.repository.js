@@ -1,30 +1,17 @@
 const pool = require("./pool");
-const XLSX = require("xlsx");
 const { normalizeText } = require("../utils/text");
-
-// Auto-migration: add municipios_a_cargo column if it doesn't exist yet
-pool.query(
-  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS municipios_a_cargo TEXT DEFAULT ''`
-).catch(err => console.warn("[migration] municipios_a_cargo:", err.message));
-
-pool.query(
-  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS normalized_full_name TEXT`
-).catch(err => console.warn("[migration] normalized_full_name:", err.message));
-
-pool.query(`
-  ALTER TABLE employees
-    ADD COLUMN IF NOT EXISTS account_type         TEXT DEFAULT '',
-    ADD COLUMN IF NOT EXISTS bank_name            TEXT DEFAULT '',
-    ADD COLUMN IF NOT EXISTS account_number       TEXT DEFAULT '',
-    ADD COLUMN IF NOT EXISTS auxiliar_gestor_zona TEXT DEFAULT '',
-    ADD COLUMN IF NOT EXISTS contract_type        TEXT DEFAULT ''
-`).catch(err => console.warn("[migration] bank/auxiliar columns:", err.message));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toNumberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function toPositiveInt(value, fallback, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(Math.floor(n), max);
 }
 
 function firstNonEmpty(...values) {
@@ -399,11 +386,97 @@ const _BASE_JOINS = `
 
 const BASE_SELECT = `SELECT ${_BASE_COLS} ${_BASE_JOINS}`;
 
+const _LIST_COLS = `
+    e.id,
+    e.full_name,
+    e.document_type,
+    e.document_number,
+    e.real_position,
+    e.offered_position,
+    e.presented_in_offer,
+    e.status,
+    e.workday_type,
+    e.company_id,
+    e.contract_id,
+    e.municipality_id,
+    e.modality,
+    e.gestor_zona,
+    e.coverage_start_date,
+    m.name AS municipality_name,
+    c.name AS contract_name,
+    COALESCE(doc_stats.total_docs, 0)::int AS document_total,
+    COALESCE(doc_stats.validated_docs, 0)::int AS document_validated,
+    COALESCE(doc_stats.pending_docs, 0)::int AS document_pending,
+    COALESCE(doc_stats.rejected_docs, 0)::int AS document_rejected,
+    COALESCE(doc_stats.expired_docs, 0)::int AS document_expired,
+    CASE
+      WHEN COALESCE(doc_stats.rejected_docs, 0) > 0 OR COALESCE(doc_stats.expired_docs, 0) > 0 THEN 'No apto documental'
+      WHEN COALESCE(doc_stats.total_docs, 0) = 0 THEN 'Incompleta'
+      WHEN COALESCE(doc_stats.pending_docs, 0) > 0 THEN 'En revisión'
+      ELSE 'Completa'
+    END AS hv_status,
+    (COALESCE(doc_stats.rejected_docs, 0) + COALESCE(doc_stats.expired_docs, 0) + COALESCE(doc_stats.pending_docs, 0))::int AS alerts_count
+`;
+
+const _LIST_JOINS = `
+  FROM employees e
+  LEFT JOIN municipalities    m ON m.id = e.municipality_id
+  LEFT JOIN contracts         c ON c.id = e.contract_id
+  LEFT JOIN institutions      i ON i.id = e.institution_id
+  LEFT JOIN educational_sites s ON s.id = e.site_id
+  LEFT JOIN LATERAL (
+    SELECT
+      COUNT(*) AS total_docs,
+      COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(ed.status, ''))) = 'VALIDADO'
+        AND (ed.expiration_date IS NULL OR ed.expiration_date >= CURRENT_DATE)) AS validated_docs,
+      COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(ed.status, ''))) NOT IN ('VALIDADO', 'RECHAZADO')
+        AND (ed.expiration_date IS NULL OR ed.expiration_date >= CURRENT_DATE)) AS pending_docs,
+      COUNT(*) FILTER (WHERE UPPER(TRIM(COALESCE(ed.status, ''))) = 'RECHAZADO') AS rejected_docs,
+      COUNT(*) FILTER (WHERE ed.expiration_date IS NOT NULL AND ed.expiration_date < CURRENT_DATE) AS expired_docs
+    FROM employee_documents ed
+    WHERE ed.employee_id = e.id
+  ) doc_stats ON true
+`;
+
+function mapEmployeeList(row) {
+  const fullName = row.full_name || "";
+  const position = row.real_position || "";
+  return {
+    id: row.id,
+    fullName,
+    documentType: row.document_type || "",
+    documentNumber: row.document_number || "",
+    cargo_real: position,
+    position,
+    offeredPosition: row.offered_position || "",
+    presentedInOffer: Boolean(row.presented_in_offer),
+    status: row.status || "",
+    workdayType: row.workday_type || "",
+    companyId: row.company_id || null,
+    contractId: row.contract_id || null,
+    contractName: row.contract_name || "",
+    municipalityId: row.municipality_id || null,
+    municipalityName: row.municipality_name || "",
+    modality: row.modality || "",
+    gestorZona: row.gestor_zona || "",
+    coverageStartDate: row.coverage_start_date || "",
+    hvStatus: row.hv_status || "Incompleta",
+    alertsCount: Number(row.alerts_count || 0),
+    documentTotal: Number(row.document_total || 0),
+    documentValidated: Number(row.document_validated || 0),
+    documentPending: Number(row.document_pending || 0),
+    documentRejected: Number(row.document_rejected || 0),
+    documentExpired: Number(row.document_expired || 0),
+    _listOnly: true,
+  };
+}
+
 // ─── Funciones públicas ───────────────────────────────────────────────────────
 
-async function getEmployees(filters = {}) {
+function buildEmployeeListWhere(filters = {}) {
   const values = [];
   const conditions = [];
+  const countJoins = new Set();
 
   if (filters.tenantId)      { values.push(filters.tenantId);      conditions.push(`e.tenant_id    = $${values.length}`); }
   if (filters.companyId)     { values.push(filters.companyId);     conditions.push(`e.company_id   = $${values.length}`); }
@@ -420,40 +493,173 @@ async function getEmployees(filters = {}) {
     values.push(filters.status.toUpperCase().trim());
     conditions.push(`UPPER(TRIM(e.status)) = $${values.length}`);
   }
-  if (filters.role) {
-    values.push(`%${filters.role}%`);
+  if (filters.active !== undefined && filters.active !== null && String(filters.active).trim() !== "") {
+    const active = ["1", "true", "activo", "active"].includes(String(filters.active).toLowerCase().trim());
+    conditions.push(active
+      ? `UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'`
+      : `UPPER(TRIM(COALESCE(e.status, ''))) <> 'ACTIVO'`);
+  }
+  if (filters.coverage) {
+    const coverage = normalize(filters.coverage);
+    if (["CON COBERTURA", "CUBIERTO", "SI", "TRUE", "1"].includes(coverage)) {
+      conditions.push(`e.coverage_start_date IS NOT NULL`);
+    } else if (["SIN COBERTURA", "NO", "FALSE", "0"].includes(coverage)) {
+      conditions.push(`e.coverage_start_date IS NULL`);
+    }
+  }
+  if (filters.personnelType) {
+    const type = normalize(filters.personnelType);
+    if (type === "OPERARIO") {
+      values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+      conditions.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) = $${values.length}`);
+    } else if (type === "EQUIPO") {
+      values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
+      conditions.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) <> $${values.length}`);
+    }
+  }
+  if (filters.role || filters.position) {
+    values.push(`%${filters.role || filters.position}%`);
     conditions.push(`e.real_position ILIKE $${values.length}`);
   }
   if (filters.nameSearch) {
     values.push(`%${filters.nameSearch}%`);
     conditions.push(`e.full_name ILIKE $${values.length}`);
   }
+  if (filters.search) {
+    countJoins.add("municipality");
+    countJoins.add("institution");
+    countJoins.add("site");
+    values.push(`%${filters.search}%`);
+    conditions.push(`(
+      e.full_name ILIKE $${values.length}
+      OR e.document_number ILIKE $${values.length}
+      OR e.real_position ILIKE $${values.length}
+      OR e.status ILIKE $${values.length}
+      OR m.name ILIKE $${values.length}
+      OR i.name ILIKE $${values.length}
+      OR s.name ILIKE $${values.length}
+    )`);
+  }
   if (filters.municipalityName) {
-    values.push(filters.municipalityName);
+    countJoins.add("municipality");
+    values.push(`%${filters.municipalityName}%`);
     conditions.push(`m.name ILIKE $${values.length}`);
+  }
+  if (filters.gestorZona) {
+    values.push(`%${filters.gestorZona}%`);
+    conditions.push(`e.gestor_zona ILIKE $${values.length}`);
+  }
+  if (filters.institution) {
+    countJoins.add("institution");
+    values.push(`%${filters.institution}%`);
+    conditions.push(`i.name ILIKE $${values.length}`);
+  }
+  if (filters.site) {
+    countJoins.add("site");
+    values.push(`%${filters.site}%`);
+    conditions.push(`s.name ILIKE $${values.length}`);
+  }
+  if (filters.modality) {
+    values.push(filters.modality.toUpperCase().trim());
+    conditions.push(`UPPER(TRIM(e.modality)) = $${values.length}`);
+  }
+  if (filters.documentStatus) {
+    values.push(filters.documentStatus.toUpperCase().trim());
+    conditions.push(`EXISTS (
+      SELECT 1
+      FROM employee_documents ed
+      WHERE ed.employee_id = e.id
+        AND UPPER(TRIM(COALESCE(ed.status, ''))) = $${values.length}
+    )`);
+  }
+  if (filters.hvStatus) {
+    const hvStatus = normalize(filters.hvStatus);
+    if (hvStatus === "NO APTO DOCUMENTAL") {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM employee_documents ed
+        WHERE ed.employee_id = e.id
+          AND (
+            UPPER(TRIM(COALESCE(ed.status, ''))) = 'RECHAZADO'
+            OR (ed.expiration_date IS NOT NULL AND ed.expiration_date < CURRENT_DATE)
+          )
+      )`);
+    } else if (hvStatus === "EN REVISION") {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM employee_documents ed
+        WHERE ed.employee_id = e.id
+          AND UPPER(TRIM(COALESCE(ed.status, ''))) NOT IN ('VALIDADO', 'RECHAZADO')
+          AND (ed.expiration_date IS NULL OR ed.expiration_date >= CURRENT_DATE)
+      )`);
+    } else if (hvStatus === "COMPLETA") {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM employee_documents ed WHERE ed.employee_id = e.id
+      ) AND NOT EXISTS (
+        SELECT 1 FROM employee_documents ed
+        WHERE ed.employee_id = e.id
+          AND (
+            UPPER(TRIM(COALESCE(ed.status, ''))) <> 'VALIDADO'
+            OR (ed.expiration_date IS NOT NULL AND ed.expiration_date < CURRENT_DATE)
+          )
+      )`);
+    } else if (hvStatus === "INCOMPLETA") {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM employee_documents ed WHERE ed.employee_id = e.id
+      )`);
+    }
   }
 
   const where  = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limit  = Math.min(Number(filters.limit)  || 60, 5000);
-  const page   = Math.max(1, Number(filters.page) || 1);
-  const offset = (page - 1) * limit;
+  const countJoinSql = [
+    "FROM employees e",
+    countJoins.has("municipality") ? "LEFT JOIN municipalities m ON m.id = e.municipality_id" : "",
+    countJoins.has("institution") ? "LEFT JOIN institutions i ON i.id = e.institution_id" : "",
+    countJoins.has("site") ? "LEFT JOIN educational_sites s ON s.id = e.site_id" : "",
+  ].filter(Boolean).join("\n  ");
+  return { where, values, countJoinSql };
+}
 
-  // COUNT(*) OVER() gives total matching rows without a second query
-  const query = `
-    SELECT ${_BASE_COLS},
-           COUNT(*) OVER() AS _total_count
-    ${_BASE_JOINS}
+async function getEmployees(filters = {}) {
+  const { where, values, countJoinSql } = buildEmployeeListWhere(filters);
+  const pageSize = toPositiveInt(filters.pageSize || filters.limit, 25, filters.exportAll ? 5000 : 200);
+  const page = toPositiveInt(filters.page, 1, 1000000);
+  const offset = (page - 1) * pageSize;
+
+  const countQuery = `
+    SELECT COUNT(*)::int AS total
+    ${countJoinSql}
+    ${where}
+  `;
+  const countResult = await pool.query(countQuery, values);
+  const total = Number(countResult.rows[0]?.total || 0);
+
+  const selectCols = filters.exportAll || filters.full ? _BASE_COLS : _LIST_COLS;
+  const joins = filters.exportAll || filters.full ? _BASE_JOINS : _LIST_JOINS;
+  const mapper = filters.exportAll || filters.full ? mapEmployee : mapEmployeeList;
+
+  const query = filters.exportAll ? `
+    SELECT ${selectCols}
+    ${joins}
+    ${where}
+    ORDER BY e.full_name ASC
+  ` : `
+    SELECT ${selectCols}
+    ${joins}
     ${where}
     ORDER BY e.full_name ASC
     LIMIT $${values.length + 1} OFFSET $${values.length + 2}
   `;
 
-  const result = await pool.query(query, [...values, limit, offset]);
+  const result = await pool.query(
+    query,
+    filters.exportAll ? values : [...values, pageSize, offset]
+  );
   return {
-    rows:  result.rows.map(mapEmployee),
-    total: Number(result.rows[0]?._total_count || 0),
+    rows:  result.rows.map(mapper),
+    total,
     page,
-    limit,
+    pageSize,
+    limit: pageSize,
+    totalPages: Math.ceil(total / pageSize),
   };
 }
 
@@ -945,6 +1151,7 @@ async function importEmployeesFromExcel({ fileBase64, fileName, defaults = {} })
     throw new Error("Debes enviar un archivo Excel válido.");
   }
 
+  const XLSX = require("xlsx");
   const base64Data = fileBase64.split("base64,")[1];
   if (!base64Data) throw new Error("Archivo Excel inválido.");
 

@@ -59,6 +59,9 @@ function resolveCoverageStatus(percent, hasOperation = true) {
 }
 
 async function getTablePresence() {
+  const cached = _ttlGet(_dashboardMetaCache, "table-presence", DASHBOARD_META_TTL);
+  if (cached) return cached;
+
   const { rows } = await pool.query(`
     SELECT
       to_regclass('public.coverage_uploads')     IS NOT NULL AS has_coverage_uploads,
@@ -67,10 +70,15 @@ async function getTablePresence() {
       to_regclass('public.positions')            IS NOT NULL AS has_positions
   `);
 
-  return rows[0] || {};
+  const data = rows[0] || {};
+  _ttlSet(_dashboardMetaCache, "table-presence", data);
+  return data;
 }
 
 async function getEmployeeColumnSet() {
+  const cached = _ttlGet(_dashboardMetaCache, "employee-columns", DASHBOARD_META_TTL);
+  if (cached) return new Set(cached);
+
   const { rows } = await pool.query(`
     SELECT column_name
     FROM information_schema.columns
@@ -78,7 +86,9 @@ async function getEmployeeColumnSet() {
       AND table_name = 'employees'
   `);
 
-  return new Set(rows.map((row) => String(row.column_name || "").trim()));
+  const columns = rows.map((row) => String(row.column_name || "").trim());
+  _ttlSet(_dashboardMetaCache, "employee-columns", columns);
+  return new Set(columns);
 }
 
 function buildEmployeeExpressions(employeeColumns) {
@@ -492,6 +502,17 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const refEnd       = `${refYear}-${refMonthStr}-${new Date(refYear, refMonth, 0).getDate()}`;
       const currentDay   = now.getDate();
       const isCurrentMonth = refMonth === (now.getMonth() + 1) && refYear === now.getFullYear();
+
+      const summaryKey = _cacheKey(
+        `${user.companyId ?? ""}|${resource?.contractId ?? ""}|${personnelType}`,
+        selectedMunicipalityId || "",
+        `${refYear}-${refMonth}`
+      );
+      const summaryHit = _ttlGet(_summaryCache, summaryKey, SUMMARY_TTL);
+      if (summaryHit) {
+        sendJson(innerRes, 200, { ok: true, cached: true, data: summaryHit });
+        return;
+      }
 
       const [
         presence,
@@ -995,59 +1016,58 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ? Math.round((totalContracted / totalRequired) * 100)
         : 0;
 
-      sendJson(innerRes, 200, {
-        ok: true,
-        data: {
-          activeEmployees: Number(employeeSummary.active_employees || 0),
-          requiredTc,
-          contractedTc,
-          requiredMt,
-          contractedMt,
-          required20PercentTc: Math.ceil(requiredTc * 0.2),
-          coveragePercent,
-          coverageStatus: resolveCoverageStatus(coveragePercent, totalRequired > 0),
-          coverageByMunicipality,
-          employeesByGender: buildDistribution(genderRows, ["#8B5CF6", "#0B7CFF", "#CBD5E1"]),
-          employeesByModality: buildDistribution(modalityRows, ["#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6"]),
-          employeesByAgeRange: buildDistribution(ageRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F", "#CBD5E1"]),
-          employeesByArea: buildDistribution(areaRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#8B5CF6", "#F7C948", "#FF4D4F"]),
-          birthdaysThisMonth: birthdayRows.map((row) => ({
-            id: row.id,
-            name: row.full_name,
-            day: Number(row.birth_day || 0),
-            month: Number(row.birth_month || 0),
-            position: row.position_name || "Sin cargo",
-            municipality: row.municipality_name || "Sin municipio",
-          })),
-          upcomingEvents,
-          sisbenStats: {
-            vigente:    Number(sisbenRow.vigente    || 0),
-            proximo:    Number(sisbenRow.proximo    || 0),
-            vencido:    Number(sisbenRow.vencido    || 0),
-            sinSisben:  Number(sisbenRow.sin_sisben  || 0),
-            inactivos:  Number(sisbenRow.inactivos   || 0),
-            categorias: sisbenCatRows.map(r => ({ letra: r.letra, value: Number(r.value || 0) })),
-          },
-          residenceCertStats: {
-            vigente:        Number(certRow.vigente         || 0),
-            proximo:        Number(certRow.proximo         || 0),
-            vencido:        Number(certRow.vencido         || 0),
-            sinCertificado: Number(certRow.sin_certificado || 0),
-            inactivos:      Number(certRow.inactivos       || 0),
-          },
-          employeesByCargoLicitacion: buildDistribution(cargoLicitRows, ["#8B5CF6","#A78BFA","#7C3AED","#6D28D9","#5B21B6","#C4B5FD","#4C1D95","#DDD6FE","#9333EA","#6366F1"]),
-          employeesByCargoOperativo:  buildDistribution(cargoOpRows,   ["#0B7CFF","#2ECF9A","#F7C948","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75","#EF9F27","#CBD5E1"]),
-          employeesByEducation: buildDistribution(educRows, ["#64748B","#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#CBD5E1"]),
-          experienceDistribution: expRows.map(r => ({ label: r.label, value: Number(r.value || 0) })),
-          foodHandlingStats: {
-            vigente:   Number(foodRow.vigente   || 0),
-            proximo:   Number(foodRow.proximo   || 0),
-            vencido:   Number(foodRow.vencido   || 0),
-            sinDoc:    Number(foodRow.sin_doc   || 0),
-            inactivos: Number(foodRow.inactivos  || 0),
-          },
+      const data = {
+        activeEmployees: Number(employeeSummary.active_employees || 0),
+        requiredTc,
+        contractedTc,
+        requiredMt,
+        contractedMt,
+        required20PercentTc: Math.ceil(requiredTc * 0.2),
+        coveragePercent,
+        coverageStatus: resolveCoverageStatus(coveragePercent, totalRequired > 0),
+        coverageByMunicipality,
+        employeesByGender: buildDistribution(genderRows, ["#8B5CF6", "#0B7CFF", "#CBD5E1"]),
+        employeesByModality: buildDistribution(modalityRows, ["#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6"]),
+        employeesByAgeRange: buildDistribution(ageRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#F7C948", "#8B5CF6", "#FF4D4F", "#CBD5E1"]),
+        employeesByArea: buildDistribution(areaRows, ["#071B4D", "#0B7CFF", "#2ECF9A", "#8B5CF6", "#F7C948", "#FF4D4F"]),
+        birthdaysThisMonth: birthdayRows.map((row) => ({
+          id: row.id,
+          name: row.full_name,
+          day: Number(row.birth_day || 0),
+          month: Number(row.birth_month || 0),
+          position: row.position_name || "Sin cargo",
+          municipality: row.municipality_name || "Sin municipio",
+        })),
+        upcomingEvents,
+        sisbenStats: {
+          vigente:    Number(sisbenRow.vigente    || 0),
+          proximo:    Number(sisbenRow.proximo    || 0),
+          vencido:    Number(sisbenRow.vencido    || 0),
+          sinSisben:  Number(sisbenRow.sin_sisben  || 0),
+          inactivos:  Number(sisbenRow.inactivos   || 0),
+          categorias: sisbenCatRows.map(r => ({ letra: r.letra, value: Number(r.value || 0) })),
         },
-      });
+        residenceCertStats: {
+          vigente:        Number(certRow.vigente         || 0),
+          proximo:        Number(certRow.proximo         || 0),
+          vencido:        Number(certRow.vencido         || 0),
+          sinCertificado: Number(certRow.sin_certificado || 0),
+          inactivos:      Number(certRow.inactivos       || 0),
+        },
+        employeesByCargoLicitacion: buildDistribution(cargoLicitRows, ["#8B5CF6","#A78BFA","#7C3AED","#6D28D9","#5B21B6","#C4B5FD","#4C1D95","#DDD6FE","#9333EA","#6366F1"]),
+        employeesByCargoOperativo:  buildDistribution(cargoOpRows,   ["#0B7CFF","#2ECF9A","#F7C948","#FF4D4F","#378ADD","#D85A30","#071B4D","#1D9E75","#EF9F27","#CBD5E1"]),
+        employeesByEducation: buildDistribution(educRows, ["#64748B","#0B7CFF","#2ECF9A","#F7C948","#8B5CF6","#FF4D4F","#CBD5E1"]),
+        experienceDistribution: expRows.map(r => ({ label: r.label, value: Number(r.value || 0) })),
+        foodHandlingStats: {
+          vigente:   Number(foodRow.vigente   || 0),
+          proximo:   Number(foodRow.proximo   || 0),
+          vencido:   Number(foodRow.vencido   || 0),
+          sinDoc:    Number(foodRow.sin_doc   || 0),
+          inactivos: Number(foodRow.inactivos  || 0),
+        },
+      };
+      _ttlSet(_summaryCache, summaryKey, data);
+      sendJson(innerRes, 200, { ok: true, cached: false, data });
     }
   )(req, res, url);
 }
@@ -1058,7 +1078,11 @@ function handleDashboardWorkspaceSummary(req, res, url) {
 
 // ── 5-minute KPI cache (keyed by companyId|contractId|municipalityId) ─────────
 const _kpiCache = new Map();
+const _summaryCache = new Map();
+const _dashboardMetaCache = new Map();
 const KPI_TTL = 5 * 60 * 1000;
+const SUMMARY_TTL = 5 * 60 * 1000;
+const DASHBOARD_META_TTL = 10 * 60 * 1000;
 
 function _cacheKey(a, b, c) { return `${a ?? ""}|${b ?? ""}|${c ?? ""}`; }
 function _cacheGet(k) {
@@ -1068,6 +1092,14 @@ function _cacheGet(k) {
   return e.data;
 }
 function _cacheSet(k, data) { _kpiCache.set(k, { data, ts: Date.now() }); }
+
+function _ttlGet(cache, k, ttl) {
+  const e = cache.get(k);
+  if (!e) return null;
+  if (Date.now() - e.ts > ttl) { cache.delete(k); return null; }
+  return e.data;
+}
+function _ttlSet(cache, k, data) { cache.set(k, { data, ts: Date.now() }); }
 
 // ── 60-second cache for alerts and recent-activity ────────────────────────────
 const _alertsCache = new Map();

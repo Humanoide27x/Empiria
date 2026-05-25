@@ -40,6 +40,7 @@ let _selectedMonth    = new Date().getMonth() + 1;
 let _selectedYear     = new Date().getFullYear();
 let _availablePeriods = []; // YYYY-MM strings, newest first
 let _sisbenItems      = []; // items for sisben donut face
+const _summarySessionCache = new Map();
 
 function _clearDashboardHrTimers() {
   if (_timer) { clearInterval(_timer); _timer = null; }
@@ -116,11 +117,28 @@ async function fetchAll(munId) {
   });
   if (munId) params.set("municipality_id", munId);
   const qs = "?" + params.toString();
-  const [sumRes, kpiRes] = await Promise.all([
-    apiFetch(`/dashboard/summary${qs}`),
-    apiFetch(`/dashboard/kpis${qs}`),
-  ]);
-  return { summary: sumRes, kpis: kpiRes };
+  const summaryUrl = `/dashboard/summary${qs}`;
+  const cachedSummary = _summarySessionCache.get(summaryUrl);
+  if (cachedSummary && Date.now() - cachedSummary.ts < REFRESH_MS) {
+    return { summary: cachedSummary.payload, kpis: { data: {} } };
+  }
+
+  try {
+    const summary = await apiFetch(summaryUrl);
+    _summarySessionCache.set(summaryUrl, { ts: Date.now(), payload: summary });
+    return { summary, kpis: { data: {} } };
+  } catch (summaryError) {
+    console.warn("[dashboard-hr] Fallo /dashboard/summary:", summaryError?.message || summaryError);
+    try {
+      return {
+        summary: { data: {} },
+        kpis: await apiFetch(`/dashboard/kpis${qs}`),
+      };
+    } catch (kpiError) {
+      console.warn("[dashboard-hr] Fallo /dashboard/kpis:", kpiError?.message || kpiError);
+      throw summaryError || kpiError;
+    }
+  }
 }
 
 async function fetchPeriods() {
@@ -132,7 +150,8 @@ async function fetchPeriods() {
       const now = new Date();
       _availablePeriods = [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
     }
-  } catch {
+  } catch (error) {
+    console.warn("[dashboard-hr] Fallo /dashboard/periods; usando periodo local:", error?.message || error);
     const now = new Date();
     _availablePeriods = [`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
   }
@@ -207,6 +226,14 @@ function normalize({ summary, kpis }) {
 
   const foodHandlingStats = s.foodHandlingStats || { vigente: 0, proximo: 0, vencido: 0, sinDoc: 0, inactivos: 0 };
 
+  const municipiosFromSummary = Array.isArray(s.municipalitiesList)
+    ? s.municipalitiesList
+    : (Array.isArray(s.coverageByMunicipality)
+        ? s.coverageByMunicipality
+            .filter(m => m.municipalityId && m.municipalityName)
+            .map(m => ({ id: m.municipalityId, name: m.municipalityName }))
+        : []);
+
   return {
     activos:          Number(s.activeEmployees    != null ? s.activeEmployees    : k.active      || 0),
     tcCont:           Number(s.contractedTc       != null ? s.contractedTc       : k.tc_count    || 0),
@@ -224,7 +251,7 @@ function normalize({ summary, kpis }) {
     upcomingEvents:     Array.isArray(s.upcomingEvents)     ? s.upcomingEvents     : [],
     sisbenStats:        s.sisbenStats        || { vigente: 0, proximo: 0, vencido: 0, sinSisben: 0,      inactivos: 0 },
     residenceCertStats: s.residenceCertStats || { vigente: 0, proximo: 0, vencido: 0, sinCertificado: 0, inactivos: 0 },
-    municipiosList: Array.isArray(k.municipalities_list) ? k.municipalities_list : [],
+    municipiosList: Array.isArray(k.municipalities_list) && k.municipalities_list.length ? k.municipalities_list : municipiosFromSummary,
     coverageByMunicipality: Array.isArray(s.coverageByMunicipality) ? s.coverageByMunicipality : [],
     cargoLicitacionItems, cargoOperativoItems, licitacionCount, operativoCount, educItems,
     experienceItems, foodHandlingStats,

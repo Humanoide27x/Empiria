@@ -1,10 +1,6 @@
 const pool = require("./pool");
 const { normalizeText } = require("../utils/text");
 
-pool.query(
-  `ALTER TABLE employees ADD COLUMN IF NOT EXISTS normalized_full_name TEXT`
-).catch(err => console.warn("[migration] normalized_full_name:", err.message));
-
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 // Columnas reales de employee_documents:
 //   id, employee_id, document_type_id, employee_contract_id,

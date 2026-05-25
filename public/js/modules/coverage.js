@@ -16,25 +16,21 @@ function fileToBase64(file) {
 export async function loadCoverageModule() {
   const activeMun = (state.coverageFilters || {}).coverageFilterMunicipality || "";
 
-  // Lanzar history y personnel en paralelo — son independientes entre sí
+  // La cobertura viva llega calculada desde backend; no se carga personal masivo.
   const knownUploadId = state.coverageSelectedUploadId || "";
 
   let historyPayload;
-  let personnelPayload = { data: [] };
   let earlyRowsPayload = { data: [] };
 
   try {
     const parallelFetches = [
       apiFetch("/coverage/history"),
-      // Traer SIEMPRE todo el personal — sin filtro de municipio para que el
-      // _empMap tenga todos los OPERARIOS MANIPULADORES sin importar dónde viven.
-      apiFetch("/personnel?limit=5000"),
       knownUploadId
         ? apiFetch(`/coverage/upload/${knownUploadId}`).catch(() => ({ data: [] }))
         : Promise.resolve({ data: [] }),
     ];
 
-    [historyPayload, personnelPayload, earlyRowsPayload] = await Promise.all(parallelFetches);
+    [historyPayload, earlyRowsPayload] = await Promise.all(parallelFetches);
   } catch (error) {
     return `
       <article class="info-card">
@@ -45,26 +41,6 @@ export async function loadCoverageModule() {
   }
 
   const history = Array.isArray(historyPayload.data) ? historyPayload.data : [];
-  const personnelRows = Array.isArray(personnelPayload.data) ? personnelPayload.data : [];
-
-  // Precompute employee lookup for O(1) per coverage row
-  const normalize0 = (value) =>
-    String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-
-  const _empMap = new Map();
-  for (const emp of personnelRows) {
-    const isActive = normalize0(emp.status || emp.estado) === "ACTIVO";
-    const isManip  = normalize0(emp.cargo_real || emp.real_position || emp.position).includes("OPERARIO MANIPULADOR DE ALIMENTOS");
-    if (!isActive || !isManip) continue;
-    const k = [
-      normalize0(emp.educationalMunicipality || emp.educational_municipality || emp.municipio_institucional || getPersonnelMunicipality(emp)),
-      normalize0(emp.institution || emp.institucion_educativa || emp.educational_institution || emp.institutionName || ""),
-      normalize0(emp.site || emp.sede_educativa || emp.educational_site || emp.siteName || ""),
-      normalize0(emp.educationalModality || emp.modalidad || emp.modality || emp.modalidad_educativa || ""),
-    ].join("|");
-    if (!_empMap.has(k)) _empMap.set(k, []);
-    _empMap.get(k).push(emp);
-  }
 
   const selectedUploadId =
     state.coverageSelectedUploadId || (history[0]?.id ? String(history[0].id) : "");
@@ -92,40 +68,6 @@ export async function loadCoverageModule() {
   const normalize = (value) =>
     String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 
-  const getCoveragePersonnelForRow = (row) => {
-    const k = [
-      normalize(row.municipality),
-      normalize(row.institution),
-      normalize(row.site),
-      normalize(row.modality),
-    ].join("|");
-    return _empMap.get(k) || [];
-  };
-
-  const getEmployeeWorkTimeType = (employee = {}) => {
-    const value = normalize(`
-      ${employee.workTimeType || ""}
-      ${employee.work_time_type || ""}
-      ${employee.tipo_tiempo || ""}
-      ${employee.jornada || ""}
-      ${employee.tipo_jornada || ""}
-      ${employee.contractTime || ""}
-      ${employee.contractType || ""}
-      ${employee.tipo_contrato || ""}
-    `);
-
-    if (
-      value.includes("MT") ||
-      value.includes("MEDIO") ||
-      value.includes("MEDIA JORNADA") ||
-      value.includes("MEDIO TIEMPO")
-    ) {
-      return "MT";
-    }
-
-    return "TC";
-  };
-
   const getCoverageRisk = (tcDifference, mtDifference) => {
     if (tcDifference < 0 || mtDifference < 0) {
       const totalMissing = Math.abs(Math.min(tcDifference, 0)) + Math.abs(Math.min(mtDifference, 0));
@@ -136,11 +78,8 @@ export async function loadCoverageModule() {
   };
 
   const getLiveCoverageCounts = (row) => {
-    const linkedPersonnel = getCoveragePersonnelForRow(row);
-
-    const contractedTc = linkedPersonnel.filter((e) => getEmployeeWorkTimeType(e) === "TC").length;
-    const contractedMt = linkedPersonnel.filter((e) => getEmployeeWorkTimeType(e) === "MT").length;
-
+    const contractedTc = Number(row.contracted_tc || row.contractedTc || 0);
+    const contractedMt = Number(row.contracted_mt || row.contractedMt || 0);
     const requiredTc = Number(row.required_tc || 0);
     const requiredMt = Number(row.required_mt || 0);
 
@@ -625,7 +564,7 @@ export async function loadNovedadesPersonalModule() {
   let personnelRows = [];
   let novedadesData = [];
   try {
-    const pp = await apiFetch("/personnel?limit=5000");
+    const pp = await apiFetch("/personnel?page=1&pageSize=200&status=ACTIVO");
     personnelRows = Array.isArray(pp.data) ? pp.data : [];
   } catch { personnelRows = []; }
   try {

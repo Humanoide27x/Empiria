@@ -151,10 +151,23 @@ export async function loadTopbarNotifications() {
 
   _inFlight = true;
   try {
-    const [alertsRes, actRes] = await Promise.all([
+    const [alertsResult, activityResult] = await Promise.allSettled([
       apiFetch('/dashboard/alerts'),
       apiFetch('/dashboard/recent-activity?limit=15'),
     ]);
+
+    if (alertsResult.status === "rejected") {
+      console.warn("[notifications] Fallo /dashboard/alerts:", alertsResult.reason?.message || alertsResult.reason);
+      if (alertsResult.reason?.status === 401 || alertsResult.reason?.status === 403) stopNotificationLoop();
+    }
+
+    if (activityResult.status === "rejected") {
+      console.warn("[notifications] Fallo /dashboard/recent-activity:", activityResult.reason?.message || activityResult.reason);
+      if (activityResult.reason?.status === 401 || activityResult.reason?.status === 403) stopNotificationLoop();
+    }
+
+    const alertsRes = alertsResult.status === "fulfilled" ? alertsResult.value : { data: [] };
+    const actRes = activityResult.status === "fulfilled" ? activityResult.value : { data: [] };
 
     // Acumular alertas nuevas (por mensaje único)
     const existingAlertIds = new Set(_alertLog.map(a => alertId(a)));
