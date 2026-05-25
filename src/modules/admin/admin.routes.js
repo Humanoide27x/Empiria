@@ -6,6 +6,7 @@ const {
 } = require("./admin.controller");
 
 const { handlePositionRoutes } = require("./positions/positions.routes");
+const { handleContractualRoutes } = require("./contractual/contractual.routes");
 const { handleClientsRoutes }  = require("../config/clients/clients.routes");
 
 async function handleAdminRoutes(req, res, url) {
@@ -21,6 +22,11 @@ async function handleAdminRoutes(req, res, url) {
       url.pathname.startsWith("/admin/position-document-requirements") ||
       url.pathname === "/admin/document-types") {
     const handled = await handlePositionRoutes(req, res, url);
+    if (handled) return true;
+  }
+
+  if (url.pathname.startsWith("/admin/contractual")) {
+    const handled = await handleContractualRoutes(req, res, url);
     if (handled) return true;
   }
 
