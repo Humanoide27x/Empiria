@@ -23,6 +23,8 @@ const {
   getPaySlip,
 } = require("./payroll.repository");
 
+const operational = require("./payroll.operational.repository");
+
 function getIdFromPath(pathname, prefix) {
   const raw = String(pathname || "").replace(prefix, "").split("/").filter(Boolean)[0];
   const n = Number(raw);
@@ -32,6 +34,221 @@ function getIdFromPath(pathname, prefix) {
 function isAdminOrTH(user) {
   const r = String(user.role || "").toLowerCase();
   return r === ROLES.ADMINISTRATOR || r === ROLES.HUMAN_RESOURCES;
+}
+
+function parseNumericPart(pathname, index) {
+  const parts = String(pathname || "").split("/").filter(Boolean);
+  const n = Number(parts[index]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function handleOperationalPeriods(req, res, url) {
+  if (req.method === "GET") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.VIEW,
+      async (innerReq, innerRes, innerUrl, user, resource) => {
+        const filters = {
+          companyId: innerUrl.searchParams.get("companyId") || resource.companyId,
+          contractId: innerUrl.searchParams.get("contractId") || resource.contractId,
+        };
+        const data = await operational.listOperationalPeriods(filters);
+        sendJson(innerRes, 200, { ok: true, data });
+      }
+    )(req, res, url);
+  }
+
+  if (req.method === "POST") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.CREATE,
+      async (innerReq, innerRes, innerUrl, user) => {
+        if (!isAdminOrTH(user)) {
+          sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede crear periodos" });
+          return;
+        }
+        const body = await readJsonBody(innerReq);
+        if (user.companyId && !body.companyId && !body.company_id) body.companyId = user.companyId;
+        if (user.contractId && !body.contractId && !body.contract_id) body.contractId = user.contractId;
+        try {
+          const data = await operational.createOperationalPeriod(body, user.id);
+          sendJson(innerRes, 201, { ok: true, data, message: "Periodo creado correctamente" });
+        } catch (err) {
+          sendJson(innerRes, 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+
+  sendMethodNotAllowed(res);
+}
+
+async function handleOperationalGroups(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const periodId = parseNumericPart(url.pathname, 1);
+  if (!periodId) { sendJson(res, 400, { ok: false, message: "ID de periodo invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const data = await operational.listPayrollGroups(periodId);
+        sendJson(innerRes, 200, { ok: true, data });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalGroupById(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const periodId = parseNumericPart(url.pathname, 1);
+  const groupId = parseNumericPart(url.pathname, 3);
+  if (!periodId || !groupId) { sendJson(res, 400, { ok: false, message: "ID de grupo invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const data = await operational.getPayrollGroupDetail(periodId, groupId);
+        sendJson(innerRes, 200, { ok: true, data });
+      } catch (err) {
+        sendJson(innerRes, 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalGroupCalculate(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const groupId = parseNumericPart(url.pathname, 2);
+  if (!groupId) { sendJson(res, 400, { ok: false, message: "ID de grupo invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, innerUrl, user) => {
+      if (!isAdminOrTH(user)) {
+        sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede calcular la nomina" });
+        return;
+      }
+      try {
+        const data = await operational.calculatePayrollGroup(groupId);
+        sendJson(innerRes, 200, { ok: true, data, message: "Grupo calculado correctamente" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalItemNovelties(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const itemId = parseNumericPart(url.pathname, 2);
+  if (!itemId) { sendJson(res, 400, { ok: false, message: "ID de item invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.REGISTER,
+    async (innerReq, innerRes, innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.createNoveltyForItem(itemId, body, user.id);
+        sendJson(innerRes, 201, { ok: true, data, message: "Novedad registrada correctamente" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalNoveltyPatch(req, res, url) {
+  if (req.method !== "PATCH" && req.method !== "PUT") { sendMethodNotAllowed(res); return; }
+  const noveltyId = parseNumericPart(url.pathname, 2);
+  if (!noveltyId) { sendJson(res, 400, { ok: false, message: "ID de novedad invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.patchNovelty(noveltyId, body, user.id);
+        sendJson(innerRes, 200, { ok: true, data, message: "Novedad actualizada" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalNoveltyReviewed(req, res, url) {
+  if (req.method !== "PATCH" && req.method !== "PUT") { sendMethodNotAllowed(res); return; }
+  const noveltyId = parseNumericPart(url.pathname, 2);
+  if (!noveltyId) { sendJson(res, 400, { ok: false, message: "ID de novedad invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.setNoveltyReviewed(noveltyId, body.reviewed !== false, body, user);
+        sendJson(innerRes, 200, { ok: true, data, message: "Revision actualizada" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalNoveltyCover(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const noveltyId = parseNumericPart(url.pathname, 2);
+  if (!noveltyId) { sendJson(res, 400, { ok: false, message: "ID de novedad invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.REGISTER,
+    async (innerReq, innerRes, innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.createTurnCover(noveltyId, body, user.id);
+        sendJson(innerRes, 201, { ok: true, data, message: "Cobertura registrada" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleOperationalSupports(req, res, url) {
+  if (req.method === "GET") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.VIEW,
+      async (innerReq, innerRes, innerUrl) => {
+        const data = await operational.listSupports({
+          periodId: innerUrl.searchParams.get("periodId"),
+          municipalityId: innerUrl.searchParams.get("municipalityId"),
+          status: innerUrl.searchParams.get("status"),
+        });
+        sendJson(innerRes, 200, { ok: true, data });
+      }
+    )(req, res, url);
+  }
+  if (req.method === "POST") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.REGISTER,
+      async (innerReq, innerRes, innerUrl, user) => {
+        try {
+          const body = await readJsonBody(innerReq);
+          const data = await operational.createSupport(body, user.id);
+          sendJson(innerRes, 201, { ok: true, data, message: "Soporte actualizado" });
+        } catch (err) {
+          sendJson(innerRes, 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+  sendMethodNotAllowed(res);
 }
 
 // ─────────────────────────────────────────────
@@ -763,4 +980,13 @@ module.exports = {
   handleMunicipalityStatus,
   handleConfirmAndSend,
   handlePaySlip,
+  handleOperationalPeriods,
+  handleOperationalGroups,
+  handleOperationalGroupById,
+  handleOperationalGroupCalculate,
+  handleOperationalItemNovelties,
+  handleOperationalNoveltyPatch,
+  handleOperationalNoveltyReviewed,
+  handleOperationalNoveltyCover,
+  handleOperationalSupports,
 };

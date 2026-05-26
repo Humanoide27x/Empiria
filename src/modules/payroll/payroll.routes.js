@@ -17,10 +17,47 @@ const {
   handleMunicipalityStatus,
   handleConfirmAndSend,
   handlePaySlip,
+  handleOperationalPeriods,
+  handleOperationalGroups,
+  handleOperationalGroupById,
+  handleOperationalGroupCalculate,
+  handleOperationalItemNovelties,
+  handleOperationalNoveltyPatch,
+  handleOperationalNoveltyReviewed,
+  handleOperationalNoveltyCover,
+  handleOperationalSupports,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
   const { pathname } = url;
+
+  if (pathname === "/payroll/periods") {
+    await handleOperationalPeriods(req, res, url); return true;
+  }
+  if (/^\/payroll\/\d+\/groups\/\d+$/.test(pathname)) {
+    await handleOperationalGroupById(req, res, url); return true;
+  }
+  if (/^\/payroll\/\d+\/groups$/.test(pathname)) {
+    await handleOperationalGroups(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/calculate$/.test(pathname)) {
+    await handleOperationalGroupCalculate(req, res, url); return true;
+  }
+  if (/^\/payroll\/items\/\d+\/novelties$/.test(pathname)) {
+    await handleOperationalItemNovelties(req, res, url); return true;
+  }
+  if (/^\/payroll\/novelties\/\d+\/reviewed$/.test(pathname)) {
+    await handleOperationalNoveltyReviewed(req, res, url); return true;
+  }
+  if (/^\/payroll\/novelties\/\d+\/cover$/.test(pathname)) {
+    await handleOperationalNoveltyCover(req, res, url); return true;
+  }
+  if (/^\/payroll\/novelties\/\d+$/.test(pathname) && (req.method === "PATCH" || req.method === "PUT")) {
+    await handleOperationalNoveltyPatch(req, res, url); return true;
+  }
+  if (pathname === "/payroll/supports") {
+    await handleOperationalSupports(req, res, url); return true;
+  }
 
   // ── Rutas de períodos (más específicas primero) ─────────────────────────────
   // POST /payroll/periods/:id/calculate

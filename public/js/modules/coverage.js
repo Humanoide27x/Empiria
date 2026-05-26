@@ -86,7 +86,7 @@ export async function loadCoverageModule() {
     const tcDifference = contractedTc - requiredTc;
     const mtDifference = contractedMt - requiredMt;
 
-    let coverageStatus = "EXACTO";
+    let coverageStatus = "CUMPLE";
     const totalContracted = contractedTc + contractedMt;
     const totalRequired   = requiredTc   + requiredMt;
     if (totalContracted === totalRequired && (tcDifference !== 0 || mtDifference !== 0)) {
@@ -191,7 +191,7 @@ export async function loadCoverageModule() {
 
   const getCoverageStatusClass = (value) => {
     const s = normalize(value);
-    if (s === "EXACTO")          return "coverage-exacto";
+    if (s === "EXACTO" || s === "CUMPLE") return "coverage-exacto";
     if (s === "FALTANTE")        return "coverage-faltante";
     if (s === "SOBRANTE")        return "coverage-sobrante";
     if (s === "MAL_CONTRATADO")  return "coverage-mal-contratado";
@@ -209,7 +209,7 @@ export async function loadCoverageModule() {
     const s = normalize(value);
     if (s === "FALTANTE")       return "FALTANTE";
     if (s === "SOBRANTE")       return "SOBRANTE";
-    if (s === "EXACTO")         return "EXACTO";
+    if (s === "EXACTO" || s === "CUMPLE") return "CUMPLE";
     if (s === "MAL_CONTRATADO") return "MAL CONTRATADO";
     return "SIN ESTADO";
   };
@@ -493,7 +493,7 @@ export async function loadCoverageModule() {
             <select id="coverageFilterStatus">
               <option value="">Estado cobertura</option>
               <option value="FALTANTE"${normalize(coverageStatus) === "FALTANTE" ? " selected" : ""}>Faltante</option>
-              <option value="EXACTO"${normalize(coverageStatus) === "EXACTO" ? " selected" : ""}>Exacto</option>
+              <option value="CUMPLE"${["EXACTO", "CUMPLE"].includes(normalize(coverageStatus)) ? " selected" : ""}>Cumple</option>
               <option value="SOBRANTE"${normalize(coverageStatus) === "SOBRANTE" ? " selected" : ""}>Sobrante</option>
               <option value="MAL_CONTRATADO"${normalize(coverageStatus) === "MAL_CONTRATADO" ? " selected" : ""}>Mal contratado</option>
             </select>
@@ -516,7 +516,7 @@ export async function loadCoverageModule() {
                   <th>Cupos</th><th>TC Req.</th><th>MT Req.</th>
                   <th>TC Cont.</th><th>MT Cont.</th>
                   <th>Dif. TC</th><th>Dif. MT</th>
-                  <th>Cobertura</th><th>Δ Cupos</th><th>Cambio</th><th>Act.</th>
+                  <th>Cobertura</th><th>Δ Cupos</th><th>Cambio</th>
                 </tr>
               </thead>
               <tbody>
@@ -543,10 +543,9 @@ export async function loadCoverageModule() {
                           <td><span class="coverage-badge ${rowCoverageClass}">${escapeHtml(getCoverageStatusLabel(live.coverageStatus))}</span></td>
                           <td class="num">${cuposDelta === null ? "—" : formatNumber(cuposDelta)}</td>
                           <td class="change-cell">${getChangeIcon(row.change_status)}</td>
-                          <td class="act-cell">${row.update_origin !== "HEREDADO" ? `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ""}</td>
                         </tr>`;
                     }).join("")
-                  : `<tr><td colspan="15" class="empty">${
+                  : `<tr><td colspan="14" class="empty">${
                       activeMun
                         ? "Sin registros para mostrar."
                         : "Escoge un municipio en los filtros para ver la cobertura de personal."

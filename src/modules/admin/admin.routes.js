@@ -3,6 +3,7 @@ const {
   handleUsers,
   handleUserUpdate,
   handleAccessLogs,
+  handleMunicipalityIntegrity,
 } = require("./admin.controller");
 
 function lazyRoute(modulePath, exportName) {
@@ -36,6 +37,11 @@ async function handleAdminRoutes(req, res, url) {
   if (url.pathname.startsWith("/admin/contractual")) {
     const handled = await handleContractualRoutes(req, res, url);
     if (handled) return true;
+  }
+
+  if (url.pathname === "/admin/municipality-integrity") {
+    await handleMunicipalityIntegrity(req, res);
+    return true;
   }
 
   if (url.pathname === "/admin/reset-mfa") {

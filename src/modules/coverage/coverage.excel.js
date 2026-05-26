@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const XLSX = require("xlsx");
 const pool = require("../../db/pool");
+const { normalizeMunicipalityName } = require("../../utils/municipality");
 
 const uploadsDir = path.join(__dirname, "../../../uploads/coverage");
 
@@ -14,13 +15,78 @@ function normalize(value) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
     .toUpperCase()
     .trim();
 }
 
 // Matches the PostgreSQL SQL_NORMALIZE_TEXT used in getActiveEmployeeCoverageCounts
 function normalizeSql(value) {
-  return normalize(value).replace(/[^A-Z0-9 ]/g, "");
+  return normalize(value).replace(/[^A-Z0-9 ]/g, "").replace(/\s+/g, " ");
+}
+
+function normalizeWorkTime(value) {
+  const normalized = normalize(value);
+  if (!normalized) return "";
+  if (
+    normalized === "MT" ||
+    normalized.includes("MEDIO") ||
+    normalized.includes("MEDIA") ||
+    normalized.includes("HALF") ||
+    normalized.includes("PART TIME")
+  ) {
+    return "MT";
+  }
+  if (
+    normalized === "TC" ||
+    normalized.includes("COMPLETO") ||
+    normalized.includes("FULL") ||
+    normalized.includes("TIEMPO COMPLETO")
+  ) {
+    return "TC";
+  }
+  return normalized;
+}
+
+
+function makeCoverageIdKey({ contract_id, municipality_id, institution_id, site_id, modality }) {
+  if (!contract_id || !municipality_id || !institution_id || !site_id || !normalizeSql(modality)) return "";
+  return [
+    String(contract_id),
+    String(municipality_id),
+    String(institution_id),
+    String(site_id),
+    normalizeSql(modality),
+  ].join("|");
+}
+
+function makeCoverageTextKey({ contract_id, municipality, institution, site, modality }) {
+  return [
+    String(contract_id || ""),
+    normalizeSql(municipality),
+    normalizeSql(institution),
+    normalizeSql(site),
+    normalizeSql(modality),
+  ].join("|");
+}
+
+function makeCoverageSiteIdKey({ contract_id, municipality_id, institution_id, site_id }) {
+  if (!contract_id || !municipality_id || !institution_id || !site_id) return "";
+  return [
+    String(contract_id),
+    String(municipality_id),
+    String(institution_id),
+    String(site_id),
+  ].join("|");
+}
+
+function makeCoverageSiteTextKey({ contract_id, municipality, institution, site }) {
+  return [
+    String(contract_id || ""),
+    normalizeSql(municipality),
+    normalizeSql(institution),
+    normalizeSql(site),
+  ].join("|");
 }
 
 function cleanText(value) {
@@ -222,6 +288,21 @@ async function saveCoverageUpload({
       ADD COLUMN IF NOT EXISTS update_origin VARCHAR(20) DEFAULT 'ACTUALIZADO'
     `);
 
+    await client.query(`
+      ALTER TABLE coverage_upload_rows
+      ADD COLUMN IF NOT EXISTS municipality_id INTEGER REFERENCES municipalities(id) ON DELETE SET NULL
+    `).catch(() => {});
+
+    // Construir mapa normalizado de nombre → municipality_id para resolver durante la importación.
+    const munCatalogResult = await client.query(
+      `SELECT id, name FROM municipalities ORDER BY id`
+    );
+    const munNameToId = new Map();
+    for (const r of munCatalogResult.rows) {
+      const key = normalizeMunicipalityName(r.name);
+      if (key && !munNameToId.has(key)) munNameToId.set(key, r.id);
+    }
+
     const previousConditions = ["TRUE"];
     const previousValues = [];
 
@@ -285,6 +366,7 @@ async function saveCoverageUpload({
     previousRows.forEach((prevRow) => {
       const key = buildKey(prevRow);
       const newRow = newRowsMap.get(key);
+      const prevMunId = prevRow.municipality_id ? Number(prevRow.municipality_id) : null;
 
       if (!newRow) {
         finalRows.push({
@@ -299,6 +381,7 @@ async function saveCoverageUpload({
           rawRequired: Number(prevRow.raw_required || 0),
           rowHash: key,
           updateOrigin: "HEREDADO",
+          _prevMunicipalityId: prevMunId,
         });
 
         return;
@@ -330,6 +413,7 @@ async function saveCoverageUpload({
           rawRequired: Number(prevRow.raw_required || 0),
           rowHash: key,
           updateOrigin: "HEREDADO",
+          _prevMunicipalityId: prevMunId,
         });
 
         newRowsMap.delete(key);
@@ -345,6 +429,7 @@ async function saveCoverageUpload({
         ...newRow,
         rowHash: key,
         updateOrigin: hasChanges ? "ACTUALIZADO" : "HEREDADO",
+        _prevMunicipalityId: hasChanges ? null : prevMunId,
       });
 
       newRowsMap.delete(key);
@@ -420,6 +505,26 @@ async function saveCoverageUpload({
     const upload = uploadResult.rows[0];
 
     for (const row of mergedRows) {
+      // For inherited rows carry the previously stored municipality_id to avoid
+      // losing the FK when the catalog name and the stored text diverge.
+      const resolvedMunicipalityId =
+        (row._prevMunicipalityId > 0 ? row._prevMunicipalityId : null) ||
+        munNameToId.get(normalizeMunicipalityName(row.municipality)) ||
+        null;
+
+      // New rows from the Excel must resolve to a known municipality — skip them
+      // if the municipality name is not in the catalog (item 8 hardening).
+      if (!resolvedMunicipalityId && row.updateOrigin === "ACTUALIZADO") {
+        ignoredSuspiciousRows.push({
+          municipality: row.municipality,
+          institution: row.institution,
+          site: row.site,
+          modality: row.modality,
+          reason: "MUNICIPIO_NO_RESUELTO",
+        });
+        continue;
+      }
+
       await client.query(
         `
         INSERT INTO coverage_upload_rows (
@@ -434,9 +539,10 @@ async function saveCoverageUpload({
           required_mt,
           raw_required,
           row_hash,
-          update_origin
+          update_origin,
+          municipality_id
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         `,
         [
           upload.id,
@@ -451,6 +557,7 @@ async function saveCoverageUpload({
           row.rawRequired,
           row.rowHash,
           row.updateOrigin,
+          resolvedMunicipalityId,
         ]
       );
     }
@@ -538,11 +645,74 @@ async function getPreviousUpload(currentUpload) {
 }
 
 const SQL_NORMALIZE_TEXT = (expr) =>
-  `REGEXP_REPLACE(translate(UPPER(TRIM(COALESCE(${expr}, ''))),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')`;
+  `REGEXP_REPLACE(REGEXP_REPLACE(translate(UPPER(TRIM(COALESCE(${expr}, ''))),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g'),'[[:space:]]+',' ','g')`;
 
-async function getActiveEmployeeCoverageCounts(currentUpload) {
+function buildAssignedPersonnelSummary(employees = []) {
+  const warnings = [];
+  let tcContratado = 0;
+  let mtContratado = 0;
+
+  const uniqueEmployees = new Map();
+  for (const employee of employees) {
+    if (!employee?.id || uniqueEmployees.has(String(employee.id))) continue;
+    uniqueEmployees.set(String(employee.id), employee);
+
+    const workTime = normalizeWorkTime(employee.work_time_type || employee.contract_type || "");
+    if (workTime === "MT") {
+      mtContratado += 1;
+    } else {
+      tcContratado += 1;
+      if (!workTime) {
+        warnings.push(`Empleado sin tipo de jornada: ${employee.full_name || employee.document_number || employee.id}`);
+      }
+    }
+  }
+
+  return {
+    total_contratado: uniqueEmployees.size,
+    tc_contratado: tcContratado,
+    mt_contratado: mtContratado,
+    empleados: Array.from(uniqueEmployees.values()),
+    warnings,
+  };
+}
+
+function getCoverageAssignedPersonnel({
+  contract_id,
+  municipality_id,
+  institution_id,
+  site_id,
+  modality,
+  municipality,
+  institution,
+  site,
+}, employeeIndex = { byIdKey: new Map(), byTextKey: new Map() }) {
+  const idKey = makeCoverageIdKey({
+    contract_id,
+    municipality_id,
+    institution_id,
+    site_id,
+    modality,
+  });
+  const textKey = makeCoverageTextKey({
+    contract_id,
+    municipality,
+    institution,
+    site,
+    modality,
+  });
+
+  const employees = idKey && employeeIndex.byIdKey.has(idKey)
+    ? employeeIndex.byIdKey.get(idKey)
+    : employeeIndex.byTextKey.get(textKey) || [];
+
+  return buildAssignedPersonnelSummary(employees);
+}
+
+async function getActiveEmployeeCoverageIndex(currentUpload) {
   const conditions = [
-    "UPPER(TRIM(COALESCE(e.status, ''))) NOT IN ('RETIRADO', 'RETIRADA', 'INACTIVO', 'INACTIVA')",
+    `${SQL_NORMALIZE_TEXT("e.status")} IN ('ACTIVO', 'VINCULADO', 'EN CONTRATO')`,
+    "e.site_id IS NOT NULL",
   ];
 
   const values = [];
@@ -560,50 +730,91 @@ async function getActiveEmployeeCoverageCounts(currentUpload) {
   const result = await pool.query(
     `
     SELECT
-      ${SQL_NORMALIZE_TEXT("m.name")} AS municipality_key,
-      ${SQL_NORMALIZE_TEXT("i.name")} AS institution_key,
-      ${SQL_NORMALIZE_TEXT("s.name")} AS site_key,
-      ${SQL_NORMALIZE_TEXT("e.modality")} AS modality_key,
-      COUNT(*)::int AS active_personnel,
-      COUNT(*) FILTER (
-        WHERE ${SQL_NORMALIZE_TEXT("e.workday_type")} = 'MT'
-           OR ${SQL_NORMALIZE_TEXT("e.workday_type")} LIKE '%MEDIO%'
-      )::int AS contracted_mt,
-      COUNT(*) FILTER (
-        WHERE NOT (
-          ${SQL_NORMALIZE_TEXT("e.workday_type")} = 'MT'
-          OR ${SQL_NORMALIZE_TEXT("e.workday_type")} LIKE '%MEDIO%'
-        )
-      )::int AS contracted_tc
+      e.id,
+      e.full_name,
+      e.document_number,
+      e.real_position,
+      e.workday_type AS work_time_type,
+      e.contract_type,
+      e.contract_id,
+      e.municipality_id,
+      e.institution_id,
+      e.site_id,
+      e.modality,
+      m.name AS municipality_name,
+      i.name AS institution_name,
+      s.name AS site_name
     FROM employees e
     LEFT JOIN municipalities m ON m.id = e.municipality_id
     LEFT JOIN institutions i ON i.id = e.institution_id
     LEFT JOIN educational_sites s ON s.id = e.site_id
+    LEFT JOIN contract_positions cp
+      ON cp.contract_id = e.contract_id
+     AND (cp.company_id = e.company_id OR cp.company_id IS NULL OR e.company_id IS NULL)
+     AND cp.active = true
+     AND ${SQL_NORMALIZE_TEXT("cp.name")} = ${SQL_NORMALIZE_TEXT("e.real_position")}
     WHERE ${conditions.join(" AND ")}
-      AND ${SQL_NORMALIZE_TEXT("e.real_position")} LIKE '%OPERARIO MANIPULADOR DE ALIMENTOS%'
-    GROUP BY 1, 2, 3, 4
+      AND (
+        COALESCE(cp.counts_for_coverage, false) = true
+        OR (cp.id IS NULL AND ${SQL_NORMALIZE_TEXT("e.real_position")} = 'OPERARIO MANIPULADOR DE ALIMENTOS')
+      )
+    ORDER BY e.id
     `,
     values
   );
 
-  const map = new Map();
+  const index = {
+    byIdKey: new Map(),
+    byTextKey: new Map(),
+    bySiteIdKey: new Map(),
+    bySiteTextKey: new Map(),
+  };
 
   result.rows.forEach((row) => {
-    const key = [
-      row.municipality_key,
-      row.institution_key,
-      row.site_key,
-      row.modality_key,
-    ].join("|");
+    const employee = {
+      id: row.id,
+      full_name: row.full_name || "",
+      document_number: row.document_number || "",
+      real_position: row.real_position || "",
+      work_time_type: row.work_time_type || "",
+      municipality_id: row.municipality_id || null,
+      municipality_name: row.municipality_name || "",
+      institution_id: row.institution_id || null,
+      institution_name: row.institution_name || "",
+      site_id: row.site_id || null,
+      site_name: row.site_name || "",
+      modality: row.modality || "",
+    };
 
-    map.set(key, {
-      activePersonnel: Number(row.active_personnel || 0),
-      contractedTc: Number(row.contracted_tc || 0),
-      contractedMt: Number(row.contracted_mt || 0),
+    const idKey = makeCoverageIdKey(row);
+    const textKey = makeCoverageTextKey({
+      contract_id: row.contract_id,
+      municipality: row.municipality_name,
+      institution: row.institution_name,
+      site: row.site_name,
+      modality: row.modality,
     });
+    const siteIdKey = makeCoverageSiteIdKey(row);
+    const siteTextKey = makeCoverageSiteTextKey({
+      contract_id: row.contract_id,
+      municipality: row.municipality_name,
+      institution: row.institution_name,
+      site: row.site_name,
+    });
+
+    for (const [map, key] of [
+      [index.byIdKey, idKey],
+      [index.byTextKey, textKey],
+      [index.bySiteIdKey, siteIdKey],
+      [index.bySiteTextKey, siteTextKey],
+    ]) {
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(employee);
+    }
   });
 
-  return map;
+  return index;
 }
 
 function getCoverageStatus({ requiredTc, requiredMt, contractedTc, contractedMt }) {
@@ -653,6 +864,33 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
     rowParams
   );
 
+  const currentRows = currentRowsResult.rows;
+  const currentRowIds = currentRows.map((row) => Number(row.id)).filter(Boolean);
+  const rowMetadata = new Map();
+  if (currentRowIds.length) {
+    const metadataResult = await pool.query(
+      `
+      SELECT
+        r.id AS row_id,
+        m.id AS municipality_id,
+        i.id AS institution_id,
+        s.id AS site_id
+      FROM coverage_upload_rows r
+      LEFT JOIN municipalities m
+        ON ${SQL_NORMALIZE_TEXT("m.name")} = ${SQL_NORMALIZE_TEXT("r.municipality")}
+      LEFT JOIN institutions i
+        ON ${SQL_NORMALIZE_TEXT("i.name")} = ${SQL_NORMALIZE_TEXT("r.institution")}
+       AND (m.id IS NULL OR i.municipality_id = m.id)
+      LEFT JOIN educational_sites s
+        ON ${SQL_NORMALIZE_TEXT("s.name")} = ${SQL_NORMALIZE_TEXT("r.site")}
+       AND (i.id IS NULL OR s.institution_id = i.id)
+      WHERE r.id = ANY($1::int[])
+      `,
+      [currentRowIds]
+    );
+    metadataResult.rows.forEach((row) => rowMetadata.set(Number(row.row_id), row));
+  }
+
   const previousUpload = await getPreviousUpload(currentUpload);
   let previousRows = [];
 
@@ -683,9 +921,9 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
     previousMap.set(key, row);
   });
 
-  const employeeCoverageMap = await getActiveEmployeeCoverageCounts(currentUpload);
+  const employeeCoverageIndex = await getActiveEmployeeCoverageIndex(currentUpload);
 
-  return currentRowsResult.rows.map((row) => {
+  return currentRows.map((row) => {
     const key = buildRowHash({
       uniqueCode: row.unique_code || "",
       municipality: row.municipality,
@@ -728,30 +966,53 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
       }
     }
 
-    const employeeKey = [
-      normalizeSql(row.municipality),
-      normalizeSql(row.institution),
-      normalizeSql(row.site),
-      normalizeSql(row.modality),
-    ].join("|");
+    const metadata = rowMetadata.get(Number(row.id)) || {};
+    // Preferir municipality_id almacenado en la fila (resuelto al importar) sobre el del JOIN de texto.
+    const resolvedMunId = row.municipality_id ?? metadata.municipality_id ?? null;
+    const employeeCoverage = getCoverageAssignedPersonnel({
+      contract_id: currentUpload.contract_id,
+      municipality_id: resolvedMunId,
+      institution_id: metadata.institution_id,
+      site_id: metadata.site_id,
+      modality: row.modality,
+      municipality: row.municipality,
+      institution: row.institution,
+      site: row.site,
+    }, employeeCoverageIndex);
 
-    const employeeCoverage = employeeCoverageMap.get(employeeKey) || {
-      activePersonnel: 0,
-      contractedTc: 0,
-      contractedMt: 0,
-    };
+    const rowSiteIdKey = makeCoverageSiteIdKey({
+      contract_id: currentUpload.contract_id,
+      municipality_id: resolvedMunId,
+      institution_id: metadata.institution_id,
+      site_id: metadata.site_id,
+    });
+    const rowSiteTextKey = makeCoverageSiteTextKey({
+      contract_id: currentUpload.contract_id,
+      municipality: row.municipality,
+      institution: row.institution,
+      site: row.site,
+    });
+    const possibleSameSiteEmployees = rowSiteIdKey && employeeCoverageIndex.bySiteIdKey.has(rowSiteIdKey)
+      ? employeeCoverageIndex.bySiteIdKey.get(rowSiteIdKey)
+      : employeeCoverageIndex.bySiteTextKey.get(rowSiteTextKey) || [];
+    const technicalWarnings = [...employeeCoverage.warnings];
+    if (employeeCoverage.total_contratado === 0 && possibleSameSiteEmployees.length > 0) {
+      technicalWarnings.push(
+        "Hay empleados asignados, pero no coinciden los IDs de municipio/institución/sede/modalidad. Revisar datos institucionales."
+      );
+    }
 
     const tcDifference =
-      Number(employeeCoverage.contractedTc || 0) - Number(row.required_tc || 0);
+      Number(employeeCoverage.tc_contratado || 0) - Number(row.required_tc || 0);
 
     const mtDifference =
-      Number(employeeCoverage.contractedMt || 0) - Number(row.required_mt || 0);
+      Number(employeeCoverage.mt_contratado || 0) - Number(row.required_mt || 0);
 
     const coverageStatus = getCoverageStatus({
       requiredTc: row.required_tc,
       requiredMt: row.required_mt,
-      contractedTc: employeeCoverage.contractedTc,
-      contractedMt: employeeCoverage.contractedMt,
+      contractedTc: employeeCoverage.tc_contratado,
+      contractedMt: employeeCoverage.mt_contratado,
     });
 
     return {
@@ -765,9 +1026,18 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
       required_mt_delta: requiredMtDelta,
       change_status: changeStatus,
 
-      active_personnel: employeeCoverage.activePersonnel,
-      contracted_tc: employeeCoverage.contractedTc,
-      contracted_mt: employeeCoverage.contractedMt,
+      municipality_id: resolvedMunId,
+      institution_id: metadata.institution_id || null,
+      site_id: metadata.site_id || null,
+      active_personnel: employeeCoverage.total_contratado,
+      contracted_tc: employeeCoverage.tc_contratado,
+      contracted_mt: employeeCoverage.mt_contratado,
+      tc_contratado: employeeCoverage.tc_contratado,
+      mt_contratado: employeeCoverage.mt_contratado,
+      total_contratado: employeeCoverage.total_contratado,
+      estado_cobertura: coverageStatus,
+      coverage_employees: employeeCoverage.empleados,
+      coverage_warnings: technicalWarnings,
       tc_difference: tcDifference,
       mt_difference: mtDifference,
       coverage_status: coverageStatus,
@@ -780,4 +1050,5 @@ module.exports = {
   saveCoverageUpload,
   getCoverageHistory,
   getCoverageRowsByUpload,
+  getCoverageAssignedPersonnel,
 };

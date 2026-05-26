@@ -97,6 +97,15 @@ function getCoverageStatus(personalActual, personalRequerido) {
 }
 
 function decorateCoverageRow(row = {}) {
+  if (
+    row.required_tc !== undefined ||
+    row.required_mt !== undefined ||
+    row.contracted_tc !== undefined ||
+    row.contracted_mt !== undefined
+  ) {
+    return row;
+  }
+
   const personalRequerido = firstValue(row, [
     "personal_requerido",
     "required_personnel",

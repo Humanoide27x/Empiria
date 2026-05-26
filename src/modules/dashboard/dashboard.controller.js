@@ -54,6 +54,11 @@ function normalizeDashboardText(value) {
     .toUpperCase();
 }
 
+// Expresi\u00f3n SQL que normaliza un nombre de municipio: sin tildes, sin caracteres especiales,
+// may\u00fasculas, espacios colapsados. Debe coincidir con normalizeMunicipalityName() de coverage.excel.js.
+const SQL_NORM_MUN = (expr) =>
+  `REGEXP_REPLACE(REGEXP_REPLACE(translate(UPPER(TRIM(COALESCE(${expr},''))),'\u00c0\u00c1\u00c2\u00c3\u00c4\u00c5\u00c8\u00c9\u00ca\u00cb\u00cc\u00cd\u00ce\u00cf\u00d2\u00d3\u00d4\u00d5\u00d6\u00d9\u00da\u00db\u00dc\u00dd\u00d1\u00c7','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g'),'[[:space:]]+',' ','g')`;
+
 function resolveDashboardAudienceCacheKey(user = {}) {
   return [
     user.id || "",
@@ -360,7 +365,7 @@ function handleDashboardSummary(req, res, url) {
     const municipalitiesList = [...new Set(allPersonnel.map(getMunicipality).filter(Boolean))].sort();
 
     const personnel = filterMunicipality
-      ? allPersonnel.filter(p => getMunicipality(p).toLowerCase() === filterMunicipality.toLowerCase())
+      ? allPersonnel.filter(p => normalizeDashboardText(getMunicipality(p)) === normalizeDashboardText(filterMunicipality))
       : allPersonnel;
 
     const contractedTc = personnel.filter(p => norm(p.workTimeType || p.work_time_type || p.tipo_tiempo) === "TC").length;
@@ -424,7 +429,9 @@ function handleDashboardSummary(req, res, url) {
             `SELECT COALESCE(SUM(required_tc),0) AS req_tc,
                     COALESCE(SUM(required_mt),0) AS req_mt,
                     COALESCE(SUM(cupos),0) AS cupos
-             FROM coverage_upload_rows WHERE upload_id = $1 AND LOWER(municipality) = LOWER($2)`,
+             FROM coverage_upload_rows
+             WHERE upload_id = $1
+               AND ${SQL_NORM_MUN("municipality")} = ${SQL_NORM_MUN("$2")}`,
             [upId, filterMunicipality]
           );
           requiredTc = Number(totals.rows[0]?.req_tc || 0);
@@ -434,7 +441,9 @@ function handleDashboardSummary(req, res, url) {
           const sedesQ = await pool.query(
             `SELECT COUNT(*) AS total,
                     SUM(CASE WHEN required_tc > 0 OR required_mt > 0 THEN 1 ELSE 0 END) AS con_personal
-             FROM coverage_upload_rows WHERE upload_id = $1 AND LOWER(municipality) = LOWER($2)`,
+             FROM coverage_upload_rows
+             WHERE upload_id = $1
+               AND ${SQL_NORM_MUN("municipality")} = ${SQL_NORM_MUN("$2")}`,
             [upId, filterMunicipality]
           );
           totalSedes           = Number(sedesQ.rows[0]?.total        || 0);
@@ -476,11 +485,15 @@ function handleDashboardSummary(req, res, url) {
            GROUP BY municipality ORDER BY municipality`,
           [upId]
         );
+        // Índice por nombre normalizado (sin tildes, mayúsculas) para tolerar variaciones
+        // entre el texto del Excel de cobertura y el texto del personal legacy.
+        const munNormIndex = new Map(); // normalizedKey → { entry, displayName }
         for (const row of munRows.rows) {
           const mun = String(row.municipality || "").trim();
           if (!mun) continue;
-          if (munNamesRestriction && !munNamesRestriction.has(normalizeDashboardText(mun))) continue;
-          coverageByMunicipality[mun] = {
+          const normKey = normalizeDashboardText(mun);
+          if (munNamesRestriction && !munNamesRestriction.has(normKey)) continue;
+          const entry = {
             requiredTc:   Number(row.req_tc || 0),
             requiredMt:   Number(row.req_mt || 0),
             cupos:        Number(row.cupos  || 0),
@@ -488,13 +501,18 @@ function handleDashboardSummary(req, res, url) {
             contractedTc: 0,
             contractedMt: 0,
           };
+          munNormIndex.set(normKey, { entry, displayName: mun });
+          coverageByMunicipality[mun] = entry;
         }
         for (const p of personnel) {
           const mun = getMunicipality(p);
-          if (!mun || !coverageByMunicipality[mun]) continue;
+          if (!mun) continue;
+          const normKey = normalizeDashboardText(mun);
+          const found = munNormIndex.get(normKey);
+          if (!found) continue;
           const wt = norm(p.workTimeType || p.work_time_type || p.tipo_tiempo);
-          if (wt === "TC") coverageByMunicipality[mun].contractedTc += 1;
-          if (wt === "MT") coverageByMunicipality[mun].contractedMt += 1;
+          if (wt === "TC") found.entry.contractedTc += 1;
+          if (wt === "MT") found.entry.contractedMt += 1;
         }
 
         // Recalculate totals from filtered coverage when municipality restriction is active
@@ -1021,7 +1039,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               COALESCE(SUM(r.required_mt), 0) AS required_mt
             FROM coverage_upload_rows r
             LEFT JOIN municipalities mun
-              ON LOWER(TRIM(mun.name)) = LOWER(TRIM(r.municipality))
+              ON ${SQL_NORM_MUN("mun.name")} = ${SQL_NORM_MUN("r.municipality")}
             WHERE ${rowConditions.join(" AND ")}
             GROUP BY mun.id, COALESCE(mun.name, TRIM(r.municipality))
           ),
@@ -1051,7 +1069,9 @@ function handleDashboardWorkspaceSummary(req, res, url) {
             COALESCE(emp.contracted_mt, 0) AS contracted_mt
           FROM coverage c
           FULL OUTER JOIN employees emp
-            ON LOWER(TRIM(COALESCE(emp.municipality_name, ''))) = LOWER(TRIM(COALESCE(c.municipality_name, '')))
+            ON c.municipality_id IS NOT NULL
+           AND emp.municipality_id IS NOT NULL
+           AND c.municipality_id = emp.municipality_id
           WHERE COALESCE(c.municipality_name, emp.municipality_name) IS NOT NULL
           ORDER BY (COALESCE(c.required_tc, 0) + COALESCE(c.required_mt, 0)) DESC,
                    COALESCE(c.municipality_name, emp.municipality_name) ASC
@@ -1285,8 +1305,8 @@ function handleDashboardKpis(req, res, url) {
     const covVals = [];
     if (municipalityId) {
       covVals.push(municipalityId);
-      covSql += ` AND LOWER(TRIM(municipality)) = (
-        SELECT LOWER(TRIM(name)) FROM municipalities WHERE id = $${covVals.length} LIMIT 1
+      covSql += ` AND ${SQL_NORM_MUN("municipality")} = (
+        SELECT ${SQL_NORM_MUN("name")} FROM municipalities WHERE id = $${covVals.length} LIMIT 1
       )`;
     }
 

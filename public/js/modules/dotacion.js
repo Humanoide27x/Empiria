@@ -969,14 +969,11 @@ function wireModalRemision(rem = null) {
     const municipioSel   = document.getElementById("remMunicipio");
     const institucionSel = document.getElementById("remInstitucion");
     const sedeSel        = document.getElementById("remSede");
-    const modalidadSel   = document.getElementById("remModalidad");
-    const tipo           = document.querySelector("input[name='tipoDotacion']:checked")?.value || "AMBOS";
 
     const params = new URLSearchParams();
     if (municipioSel?.value)   params.set("municipioId",   municipioSel.value);
     if (institucionSel?.value) params.set("institucionId", institucionSel.value);
     if (sedeSel?.value)        params.set("sedeId",        sedeSel.value);
-    // modalidad NO se usa para filtrar empleadas, solo para rotular la remisión
 
     try {
       const res = await apiFetch(`/dotacion/remisiones/empleadas?${params}`);
@@ -1003,6 +1000,16 @@ function wireModalRemision(rem = null) {
       .map(chk => chk.closest("tr")).filter(Boolean);
 
     if (!selectedRows.length) { showWarning("Selecciona al menos una empleada"); return; }
+
+    // Validar que empleadas seleccionadas tengan datos institucionales completos
+    const sinInstitucion = selectedRows.filter(row => !row.dataset.institutionId);
+    if (sinInstitucion.length > 0) {
+      const nombres = sinInstitucion.map(r => r.dataset.nombre).slice(0, 3).join(", ");
+      showWarning(
+        `Este empleado no tiene información institucional completa. Complete la pestaña Institucionalidad antes de generar la remisión. (${nombres})`
+      );
+      return;
+    }
 
     const items = selectedRows.map(row => {
       const tipRow = row.querySelector(".rem-tipo-row")?.value || "AMBOS";
@@ -1149,17 +1156,34 @@ function renderTablaEmpleadas(empleadas) {
 
   tbody.innerHTML = empleadas.map(e => {
     const noPant = sinPantalon(e.cargo);
+
+    // Datos institucionales por empleado (para visualización en la fila)
+    const munNombre  = e.municipio_nombre   || "Sin municipio";
+    const instNombre = e.institucion_nombre || "Sin institución";
+    const sedeInfo   = e.sede_nombre        ? ` · ${e.sede_nombre}` : "";
+    const modInfo    = e.modality           ? ` · ${e.modality}`    : "";
+    const infoInst   = `${munNombre} · ${instNombre}${sedeInfo}${modInfo}`;
+
+    // Alerta visual si faltan datos institucionales clave
+    const sinInst = !e.institution_id;
+    const instColor = sinInst ? "color:#f59e0b;" : "color:#64748b;";
+
     const pantCell = showPant
       ? (noPant
         ? `<td style="text-align:center;color:#94a3b8;vertical-align:middle">—</td>`
-        : `<td><input type="text" class="rem-inp rem-pantalon" value="${escapeAttr(e.pants_size || "")}" placeholder="—"></td>`)
+        : `<td><input type="text" class="rem-inp rem-pantalon" value="${escapeAttr(e.pants_size || "")}" placeholder="Sin registrar"></td>`)
       : "";
     return `
-    <tr data-nombre="${escapeAttr(e.full_name)}" data-doc="${escapeAttr(e.document_number || "")}" data-no-pant="${noPant ? "1" : ""}">
+    <tr data-nombre="${escapeAttr(e.full_name)}" data-doc="${escapeAttr(e.document_number || "")}"
+        data-no-pant="${noPant ? "1" : ""}"
+        data-municipality-id="${e.municipality_id || ""}"
+        data-institution-id="${e.institution_id || ""}"
+        data-site-id="${e.site_id || ""}">
       <td><input type="checkbox" class="rem-chk-emp" checked></td>
       <td style="font-size:12px;line-height:1.3">
         ${escapeHtml(e.full_name)}<br>
-        <span style="color:#94a3b8;font-size:11px">${escapeHtml(e.document_number || "")}</span>
+        <span style="color:#94a3b8;font-size:11px">${escapeHtml(e.document_number || "")}</span><br>
+        <span style="font-size:10px;${instColor}">${escapeHtml(infoInst)}</span>
       </td>
       <td>
         <select class="rem-tipo-row">
@@ -1168,9 +1192,9 @@ function renderTablaEmpleadas(empleadas) {
           <option value="CALZADO">Calzado</option>
         </select>
       </td>
-      <td><input type="text" class="rem-inp rem-camisa" value="${escapeAttr(e.shirt_size || "")}" placeholder="—"></td>
+      <td><input type="text" class="rem-inp rem-camisa" value="${escapeAttr(e.shirt_size || "")}" placeholder="Sin registrar"></td>
       ${pantCell}
-      <td><input type="text" class="rem-inp rem-zapato" value="${escapeAttr(e.shoe_size || "")}" placeholder="—"></td>
+      <td><input type="text" class="rem-inp rem-zapato" value="${escapeAttr(e.shoe_size || "")}" placeholder="Sin registrar"></td>
     </tr>`;
   }).join("");
 

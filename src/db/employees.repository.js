@@ -26,6 +26,17 @@ function firstNonEmpty(...values) {
   return "";
 }
 
+function hasOwnAny(object = {}, keys = []) {
+  return keys.some((key) => Object.prototype.hasOwnProperty.call(object, key));
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 function normalize(value) {
   return String(value || '')
     .normalize('NFD')
@@ -736,9 +747,12 @@ async function getEmployeeByDocument(docType, docNumber) {
 async function createEmployee(data) {
   const fullName = buildFullName(data);
 
-  const municipalityId = await resolveMunicipalityId(
-    data.municipalityId || data.municipality_id || data.municipality || data.municipio
-  );
+  const municipalityInput = data.municipalityId || data.municipality_id || data.municipality || data.municipio;
+  const municipalityId = await resolveMunicipalityId(municipalityInput);
+
+  if (!municipalityId && municipalityInput && String(municipalityInput).trim()) {
+    throw new Error("Debe seleccionar un municipio válido.");
+  }
 
   const institutionId =
     await resolveInstitutionId(
@@ -848,35 +862,68 @@ async function createEmployee(data) {
 }
 
 async function updateEmployee(id, data) {
+  const existing = await getEmployeeById(id);
+  if (!existing) return null;
+
+  data = Object.fromEntries(
+    Object.entries(data || {}).filter(([, value]) => value !== undefined)
+  );
+  data = { ...existing, ...data };
+
   const fullName = buildFullName(data);
 
-  const municipalityId = await resolveMunicipalityId(
-    data.municipalityId || data.municipality_id || data.municipality || data.municipio
+  const current = {
+    municipality_id: existing.municipality_id || existing.municipalityId || null,
+    institution_id: existing.institution_id || existing.institutionId || null,
+    site_id: existing.site_id || existing.siteId || null,
+    modality: existing.modality || "",
+  };
+
+  const municipalityInput = firstNonEmpty(
+    data.municipalityId,
+    data.municipality_id,
+    data.municipio_id,
+    data.municipality,
+    data.municipio
+  );
+  const municipalityId = municipalityInput
+    ? await resolveMunicipalityId(municipalityInput)
+    : (current.municipality_id || null);
+
+  if (!municipalityId && municipalityInput && String(municipalityInput).trim()) {
+    throw new Error("Debe seleccionar un municipio válido.");
+  }
+
+  const hasInstitutionInput = hasOwnAny(data, [
+    "institution", "institutionName", "institution_name", "institucion_educativa", "institutionId", "institution_id",
+  ]);
+  const institutionInput = firstDefined(
+    data.institution,
+    data.institutionName,
+    data.institution_name,
+    data.institucion_educativa
   );
 
-  // Educational municipality is separate from work municipality
-  const educationalMunicipalityId = (data.educationalMunicipality)
-    ? await resolveMunicipalityId(data.educationalMunicipality)
-    : null;
-
-  const institutionId =
-    await resolveInstitutionId(
-      data.institution || data.institutionName || data.institution_name || data.institucion_educativa,
-      educationalMunicipalityId || municipalityId
-    ) || toNumberOrNull(data.institutionId || data.institution_id);
+  const institutionId = hasInstitutionInput
+    ? (
+      await resolveInstitutionId(institutionInput, municipalityId)
+      || toNumberOrNull(firstDefined(data.institutionId, data.institution_id))
+    )
+    : (current.institution_id || null);
 
   // Resolve site by name first, then validate any raw numeric ID before using it.
-  const rawSiteName = data.site || data.siteName || data.site_name || data.sede_educativa;
-  let siteId = await resolveSiteId(rawSiteName, institutionId);
+  const hasSiteInput = hasOwnAny(data, ["site", "siteName", "site_name", "sede_educativa", "siteId", "site_id"]);
+  const rawSiteName = firstDefined(data.site, data.siteName, data.site_name, data.sede_educativa);
+  let siteId = hasSiteInput ? await resolveSiteId(rawSiteName, institutionId) : (current.site_id || null);
 
-  if (!siteId) {
+  if (hasSiteInput && !siteId) {
     // Try resolving without institution filter (catalog may be cross-municipality)
     siteId = await resolveSiteId(rawSiteName, null);
   }
 
-  if (!siteId) {
+  if (hasSiteInput && !siteId) {
     // data.site might itself be a numeric ID if site_name was missing at load time
-    const rawSiteId = toNumberOrNull(data.siteId || data.site_id || data.site);
+    const rawSiteId = toNumberOrNull(firstDefined(data.siteId, data.site_id, data.site));
     if (rawSiteId && await tableExists("educational_sites")) {
       const exists = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [rawSiteId]);
       siteId = exists.rows[0] ? rawSiteId : null;
@@ -891,10 +938,6 @@ async function updateEmployee(id, data) {
       siteId = null;
     }
   }
-
-  console.log(`[updateEmployee] id=${id} rawSite="${rawSiteName ? String(rawSiteName).slice(0,40) : '—'}" institutionId=${institutionId} resolvedSiteId=${siteId}`);
-  console.log(`[updateEmployee] sisben fields: sisben=${data.sisben} cat=${data.sisbenCategory} issue=${data.sisbenIssueDate} exp=${data.sisbenExpirationDate}`);
-  console.log(`[updateEmployee] residence cert: has=${data.hasResidenceCertificate} issue=${data.residenceCertificateIssueDate} exp=${data.residenceCertificateExpiration}`);
 
   const result = await pool.query(
     `UPDATE employees SET
@@ -964,7 +1007,9 @@ async function updateEmployee(id, data) {
       municipalityId,
       institutionId,
       siteId,
-      data.educationalModality || data.modality || data.modalidad || "",
+      hasOwnAny(data, ["educationalModality", "modality", "modalidad"])
+        ? firstDefined(data.educationalModality, data.modality, data.modalidad) || ""
+        : current.modality || "",
       data.eps || "",
       data.fondo_pensiones || data.pensionFund || data.pension_fund || "",
       data.caja_compensacion || data.compensationBox || "COFREM",
@@ -1013,7 +1058,7 @@ async function updateEmployee(id, data) {
     );
   }
 
-  return result.rows[0] ? mapEmployee(result.rows[0]) : null;
+  return result.rows[0] ? getEmployeeById(result.rows[0].id) : null;
 }
 
 async function updateEmployeeStatus(id, status) {

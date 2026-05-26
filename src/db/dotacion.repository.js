@@ -545,29 +545,38 @@ async function getModalidadesDisponibles(filters = {}) {
 }
 
 async function getEmpleadasParaRemision(filters = {}) {
+  // COALESCE maneja dos conjuntos de columnas: shirt_size/pants_size/shoe_size (migración 007)
+  // y talla_camisa/talla_pantalon/uniforme/calzado (migración 019 - empleados importados).
   let q = `
     SELECT e.id, e.full_name, e.document_number, e.modality,
-           e.shirt_size, e.pants_size, e.shoe_size,
+           COALESCE(NULLIF(TRIM(e.shirt_size),''), NULLIF(TRIM(e.talla_camisa),''), NULLIF(TRIM(e.uniforme),''))  AS shirt_size,
+           COALESCE(NULLIF(TRIM(e.pants_size),''), NULLIF(TRIM(e.talla_pantalon),''))                             AS pants_size,
+           COALESCE(NULLIF(TRIM(e.shoe_size),''),  NULLIF(TRIM(e.calzado),''))                                    AS shoe_size,
            e.real_position AS cargo,
-           m.name  AS municipio_nombre,
+           e.municipality_id,
+           e.institution_id,
+           e.site_id,
+           COALESCE(m.name, im.name) AS municipio_nombre,
            i.name  AS institucion_nombre,
            es.name AS sede_nombre
     FROM employees e
     LEFT JOIN municipalities    m  ON e.municipality_id = m.id
     LEFT JOIN institutions      i  ON e.institution_id  = i.id
     LEFT JOIN educational_sites es ON e.site_id         = es.id
+    LEFT JOIN municipalities    im ON i.municipality_id = im.id
     WHERE e.status = 'ACTIVO'
   `;
   const params = [];
   if (filters.companyId)   { params.push(filters.companyId);   q += ` AND e.company_id  = $${params.length}`; }
   if (filters.contractId)  { params.push(filters.contractId);  q += ` AND e.contract_id = $${params.length}`; }
-  // Filtrar por municipio solo cuando NO hay institución seleccionada
+  // Filtrar por municipio: incluye empleados cuyo municipio está en e.municipality_id
+  // o cuya institución pertenece al municipio seleccionado (i.municipality_id).
   if (Array.isArray(filters.municipalityIds) && filters.municipalityIds.length > 0) {
     params.push(filters.municipalityIds);
-    q += ` AND e.municipality_id = ANY($${params.length})`;
+    q += ` AND (e.municipality_id = ANY($${params.length}) OR i.municipality_id = ANY($${params.length}))`;
   } else if (filters.municipioId && !filters.institucionId) {
     params.push(filters.municipioId);
-    q += ` AND e.municipality_id = $${params.length}`;
+    q += ` AND (e.municipality_id = $${params.length} OR i.municipality_id = $${params.length})`;
   }
   if (filters.institucionId) {
     params.push(filters.institucionId);

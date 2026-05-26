@@ -1,1425 +1,711 @@
-import { state }     from '../state.js';
-import { apiFetch }  from '../api.js';
-import { escapeHtml } from '../utils.js';
-import { showSuccess, showError } from '../toast.js';
-
-// ── Constantes ────────────────────────────────────────────────────────────────
+import { state } from "../state.js";
+import { apiFetch } from "../api.js";
+import { escapeHtml } from "../utils.js";
+import { showSuccess, showError } from "../toast.js";
 
 const NOVELTY_TYPES = [
-  { id: "incapacidad_eps", label: "Incapacidad EPS",          paid: true,  coverage: "EPS" },
-  { id: "incapacidad_arl", label: "Incapacidad ARL",          paid: true,  coverage: "ARL" },
-  { id: "licencia_mat",    label: "Licencia de maternidad",   paid: true,  coverage: "EPS" },
-  { id: "licencia_nr",     label: "Licencia no remunerada",   paid: false, coverage: null  },
-  { id: "ausencia",        label: "Ausencia injustificada",   paid: false, coverage: null  },
-  { id: "suspension",      label: "Suspensión disciplinaria", paid: false, coverage: null  },
+  "incapacidad",
+  "ausencia",
+  "permiso",
+  "licencia",
+  "reemplazo",
+  "turno_adicional",
+  "descuento",
+  "bonificacion",
+  "recargo",
+  "suspension",
+  "ingreso",
+  "retiro",
+  "dias_no_laborados",
+  "otros",
 ];
 
-const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-                   "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+let periods = [];
+let activePeriod = null;
+let groupsState = { positions: [], groups: [] };
+let activePosition = "";
+let activeGroupId = null;
+let activeGroupDetail = null;
+let periodMonth = new Date().toISOString().slice(0, 7);
+let municipalitySearch = "";
 
-const MOD_COLOR = {
-  CAARES1: "caares", CAARES2: "caares", CAARES3: "caares", CAARES4: "caares",
-  CAA1: "caa", CAA2: "caa", RI: "ri",
-};
+function contractId() {
+  return state.currentUser?.contractId || state.currentUser?.contract_id || null;
+}
 
-const PAYROLL_GROUPS = [
-  { key: "todos",           label: "Todos"                       },
-  { key: "operarios",       label: "Operarios Manipuladores"     },
-  { key: "bodega_ri",       label: "Bodega RI"                   },
-  { key: "bodega_rp",       label: "Bodega RP"                   },
-  { key: "administrativos", label: "Administrativos"             },
-];
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+function companyId() {
+  return state.currentUser?.companyId || state.currentUser?.company_id || null;
+}
 
 function isTH() {
-  const r = String(state.currentUser?.role || "").toLowerCase();
-  return r === "administrador" || r === "talento_humano";
+  const role = String(state.currentUser?.role || "").toLowerCase();
+  return role === "administrador" || role === "talento_humano";
 }
 
-function fmtCOP(n) {
-  return Number(n).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-}
-
-function periodLabel(periodStr) {
-  const [y, m] = periodStr.split("-");
-  return `${MONTHS_ES[Number(m) - 1]} ${y}`;
+function fmtCOP(value) {
+  return Number(value || 0).toLocaleString("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  });
 }
 
 function statusBadge(status) {
-  const map = {
-    BORRADOR:  ["nm3-badge nm3-badge--draft",  "Borrador"],
-    CALCULADO: ["nm3-badge nm3-badge--calc",   "Liquidado"],
-    CERRADO:   ["nm3-badge nm3-badge--closed", "Cerrado"],
-  };
-  const [cls, lbl] = map[status] || ["nm3-badge", status];
-  return `<span class="${cls}">${lbl}</span>`;
+  const s = String(status || "pendiente");
+  const label = {
+    pendiente: "Pendiente",
+    en_revision: "En revision",
+    revisada: "Revisada",
+    cerrada: "Cerrada",
+    BORRADOR: "Borrador",
+    CALCULADO: "Calculado",
+    CERRADO: "Cerrado",
+  }[s] || s;
+  return `<span class="nm-pay-badge nm-pay-badge--${escapeHtml(s.toLowerCase())}">${escapeHtml(label)}</span>`;
 }
 
-// ── Motor de cálculo ──────────────────────────────────────────────────────────
+function pendingSupportBadge(count) {
+  const total = Number(count || 0);
+  return total
+    ? `<span class="nm-pay-doc">Soportes pendientes: ${total}</span>`
+    : `<span class="nm-pay-ok">Soportes al dia</span>`;
+}
 
-function calcEmployee(modalityClass, diasNoClase, novedades, salaryConfig, turnos = []) {
-  const modalities  = salaryConfig.modalities || {};
-  const modCfg      = modalities[modalityClass] || {};
-  const smlv        = salaryConfig.smlv           || 1_750_905;
-  const auxCfg      = salaryConfig.aux_transporte || 249_095;
-  const salaryBase  = modCfg.salary               || smlv;
-  const adicionales = (modCfg.adicionales || []).filter(
-    a => String(a.label || "").trim() && Number(a.value) > 0
+function currentPositionData() {
+  return groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0] || null;
+}
+
+function currentMunicipalityData() {
+  const position = currentPositionData();
+  return position?.municipalities?.find((m) => Number(m.id) === Number(activeGroupId)) || null;
+}
+
+function normalized(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+}
+
+function shell() {
+  return `
+<style>
+.nm-pay-shell{display:flex;flex-direction:column;min-height:0}
+.nm-pay-card-main{display:flex;flex-direction:column;min-height:0;overflow:hidden;max-height:calc(100vh - 180px);background:#fff;border:1px solid #E2E8F0;border-radius:8px}
+.nm-pay-panel{padding:12px}
+.nm-pay-head{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid #E2E8F0;background:#fff}
+.nm-pay-title{font-size:17px;font-weight:800;color:#0F172A;margin:0}
+.nm-pay-sub{font-size:12px;color:#64748B;margin-top:2px}
+.nm-pay-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nm-pay-input,.nm-pay-select,.nm-pay-textarea{border:1px solid #CBD5E1;border-radius:6px;padding:7px 9px;background:#fff;color:#0F172A;min-height:34px}
+.nm-pay-textarea{width:100%;min-height:70px;resize:vertical}
+.nm-pay-btn{border:1px solid #CBD5E1;background:#fff;border-radius:6px;padding:7px 10px;cursor:pointer;color:#0F172A;font-weight:700}
+.nm-pay-btn:hover{background:#F8FAFC}
+.nm-pay-btn--primary{background:#0F766E;color:#fff;border-color:#0F766E}
+.nm-pay-btn--danger{background:#B91C1C;color:#fff;border-color:#B91C1C}
+.nm-pay-btn--sm{padding:5px 8px;font-size:12px}
+.nm-pay-kpis{display:grid;grid-template-columns:repeat(6,minmax(100px,1fr));gap:0;border-bottom:1px solid #E2E8F0;background:#F8FAFC}
+.nm-pay-kpi{padding:7px 10px;border-right:1px solid #E2E8F0;min-width:0}
+.nm-pay-kpi:last-child{border-right:0}
+.nm-pay-kpi span{display:block;font-size:11px;color:#64748B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm-pay-kpi b{display:block;margin-top:2px;color:#0F172A;font-size:14px}
+.nm-pay-cargo-tabs{display:flex;gap:6px;overflow:auto;padding:8px 10px;border-bottom:1px solid #E2E8F0;background:#fff;flex:0 0 auto}
+.nm-pay-tab{border:1px solid #CBD5E1;background:#fff;border-radius:6px;padding:7px 9px;cursor:pointer;white-space:nowrap;text-align:left;font-size:12px}
+.nm-pay-tab.active{border-color:#0F766E;background:#ECFDF5;color:#0F766E}
+.nm-pay-count{display:inline-flex;min-width:19px;height:19px;align-items:center;justify-content:center;border-radius:999px;background:#E2E8F0;font-size:11px;margin-left:5px;color:#334155}
+.nm-pay-workspace{flex:1 1 auto;min-height:0;overflow:hidden;display:flex}
+.nm-pay-municipality-panel{width:260px;flex:0 0 260px;min-height:0;overflow:hidden;border-right:1px solid #E2E8F0;background:#F8FAFC;display:flex;flex-direction:column}
+.nm-pay-mun-head{padding:10px;border-bottom:1px solid #E2E8F0}
+.nm-pay-mun-title{font-size:12px;font-weight:800;color:#334155;text-transform:uppercase;margin-bottom:8px}
+.nm-pay-mun-search{width:100%;border:1px solid #CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;background:#fff}
+.nm-pay-mun-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px}
+.nm-pay-mun{width:100%;border:0;background:transparent;border-radius:6px;padding:8px;cursor:pointer;text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;color:#0F172A}
+.nm-pay-mun:hover{background:#EEF2F7}
+.nm-pay-mun.active{background:#ECFDF5;color:#0F766E;box-shadow:inset 3px 0 0 #0F766E}
+.nm-pay-mun-name{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm-pay-mun-meta{font-size:11px;color:#64748B}
+.nm-pay-mun-alert{font-size:11px;background:#FEF3C7;color:#92400E;border-radius:999px;padding:2px 6px;justify-self:end}
+.nm-pay-content{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:10px;background:#fff}
+.nm-pay-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;position:sticky;top:0;background:#fff;z-index:2;padding-bottom:8px;border-bottom:1px solid #E2E8F0;margin-bottom:8px}
+.nm-pay-section-title{font-size:15px;font-weight:800;color:#0F172A;margin:0}
+.nm-pay-section-meta{font-size:12px;color:#64748B;margin-top:2px}
+.nm-pay-table-wrap{overflow:auto;min-height:0;max-height:46vh;border:1px solid #E2E8F0;border-radius:8px}
+.nm-pay-table{width:100%;border-collapse:collapse;font-size:13px}
+.nm-pay-table th{background:#F1F5F9;color:#334155;text-align:left;padding:7px 8px;border-bottom:1px solid #CBD5E1;position:sticky;top:0;z-index:1}
+.nm-pay-table td{padding:7px 8px;border-bottom:1px solid #E2E8F0;vertical-align:middle}
+.nm-pay-table td.num,.nm-pay-table th.num{text-align:right}
+.nm-pay-badge,.nm-pay-doc,.nm-pay-ok{display:inline-flex;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:700}
+.nm-pay-badge{background:#E2E8F0;color:#334155}
+.nm-pay-doc{background:#FEF3C7;color:#92400E}
+.nm-pay-ok{background:#DCFCE7;color:#166534}
+.nm-pay-empty{padding:24px;text-align:center;color:#64748B;border:1px dashed #CBD5E1;border-radius:8px;background:#F8FAFC}
+.nm-pay-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nm-pay-novelties{margin-top:10px;border:1px solid #E2E8F0;border-radius:8px;overflow:hidden}
+.nm-pay-novelties-h{padding:8px 10px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;display:flex;align-items:center;justify-content:space-between}
+.nm-pay-novelties-b{max-height:25vh;overflow:auto}
+.nm-pay-modal{position:fixed;inset:0;background:rgba(15,23,42,.42);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.nm-pay-modal[hidden]{display:none}
+.nm-pay-dialog{width:min(760px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:8px;border:1px solid #CBD5E1}
+.nm-pay-dialog-h{padding:14px 16px;border-bottom:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center}
+.nm-pay-dialog-b{padding:16px;display:grid;gap:12px}
+.nm-pay-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.nm-pay-field label{display:block;font-size:12px;color:#475569;margin-bottom:4px;font-weight:700}
+.nm-pay-field input,.nm-pay-field select{width:100%}
+@media (max-width:900px){.nm-pay-card-main{max-height:none}.nm-pay-kpis,.nm-pay-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-head{align-items:stretch}.nm-pay-controls{width:100%}.nm-pay-workspace{flex-direction:column}.nm-pay-municipality-panel{width:auto;flex:0 0 210px;border-right:0;border-bottom:1px solid #E2E8F0}.nm-pay-table{font-size:12px}.nm-pay-table-wrap{max-height:45vh}}
+</style>
+<div class="nm-pay-shell">
+  <div id="nmPayRoot"></div>
+  <div class="nm-pay-modal" id="nmPayModal" hidden></div>
+</div>`;
+}
+
+async function loadPeriods() {
+  const cId = contractId();
+  if (!cId) {
+    periods = [];
+    return;
+  }
+  const response = await apiFetch(`/payroll/periods?contractId=${cId}`);
+  periods = Array.isArray(response.data) ? response.data : [];
+  if (!activePeriod && periods.length) activePeriod = periods[0];
+}
+
+async function loadGroups() {
+  if (!activePeriod) {
+    groupsState = { positions: [], groups: [] };
+    return;
+  }
+  const response = await apiFetch(`/payroll/${activePeriod.id}/groups`);
+  groupsState = response.data || { positions: [], groups: [] };
+  if (!activePosition && groupsState.positions.length) activePosition = groupsState.positions[0].position;
+  const currentPosition = groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0];
+  if (!activeGroupId && currentPosition?.municipalities?.length) activeGroupId = currentPosition.municipalities[0].id;
+}
+
+async function loadGroupDetail() {
+  if (!activePeriod || !activeGroupId) {
+    activeGroupDetail = null;
+    return;
+  }
+  const response = await apiFetch(`/payroll/${activePeriod.id}/groups/${activeGroupId}`);
+  activeGroupDetail = response.data || null;
+}
+
+function periodOptions() {
+  return periods.map((p) => `
+    <option value="${p.id}" ${activePeriod?.id === p.id ? "selected" : ""}>
+      ${escapeHtml(p.label || `${p.period_start} - ${p.period_end}`)}
+    </option>`).join("");
+}
+
+function summaryTotals() {
+  const positions = groupsState.positions || [];
+  return positions.reduce((acc, pos) => {
+    acc.employees += Number(pos.employees || 0);
+    acc.novelties += Number(pos.novelties || 0);
+    acc.reviewed += Number(pos.reviewed || 0);
+    acc.pending_supports += Number(pos.pending_supports || 0);
+    acc.total_devengado += Number(pos.total_devengado || 0);
+    acc.total_deducciones += Number(pos.total_deducciones || 0);
+    acc.neto += Number(pos.neto || 0);
+    return acc;
+  }, { employees: 0, novelties: 0, reviewed: 0, pending_supports: 0, total_devengado: 0, total_deducciones: 0, neto: 0 });
+}
+
+function render() {
+  const root = document.getElementById("nmPayRoot");
+  if (!root) return;
+  const totals = summaryTotals();
+  root.innerHTML = `
+<div class="nm-pay-card-main">
+<div class="nm-pay-head">
+  <div>
+    <h2 class="nm-pay-title">Nomina y novedades</h2>
+    <div class="nm-pay-sub">Flujo por cargo real, municipio, novedades, revision y soportes documentales.</div>
+  </div>
+  <div class="nm-pay-controls">
+    <input class="nm-pay-input" type="month" id="nmPayMonth" value="${escapeHtml(periodMonth)}">
+    <select class="nm-pay-select" id="nmPayPeriod">
+      ${periodOptions() || `<option value="">Sin periodos</option>`}
+    </select>
+    ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--primary" id="nmPayCreate">Crear periodo</button>` : ""}
+    <button class="nm-pay-btn" id="nmPaySupports">Control de soportes</button>
+  </div>
+</div>
+
+<div class="nm-pay-kpis">
+  <div class="nm-pay-kpi"><span>Empleados</span><b>${totals.employees}</b></div>
+  <div class="nm-pay-kpi"><span>Novedades</span><b>${totals.novelties}</b></div>
+  <div class="nm-pay-kpi"><span>Revisadas</span><b>${totals.reviewed}</b></div>
+  <div class="nm-pay-kpi"><span>Pendientes</span><b>${Math.max(0, totals.novelties - totals.reviewed)}</b></div>
+  <div class="nm-pay-kpi"><span>Devengado</span><b>${fmtCOP(totals.total_devengado)}</b></div>
+  <div class="nm-pay-kpi"><span>Neto</span><b>${fmtCOP(totals.neto)}</b></div>
+</div>
+
+${activePeriod ? renderOperationalBody() : `<div class="nm-pay-empty">Crea o selecciona un periodo de nomina.</div>`}
+</div>
+`;
+  wireStaticEvents();
+}
+
+function renderOperationalBody() {
+  if (!groupsState.positions.length) {
+    return `<div class="nm-pay-panel"><div class="nm-pay-empty">No hay cargos reales activos con empleados asignados a este contrato.</div></div>`;
+  }
+  const current = groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0];
+  return `
+<div class="nm-pay-cargo-tabs">
+    ${groupsState.positions.map((pos) => `
+      <button class="nm-pay-tab ${pos.position === current.position ? "active" : ""}" data-position="${escapeHtml(pos.position)}">
+        ${escapeHtml(pos.position)} <span class="nm-pay-count">${pos.employees}</span>
+      </button>
+    `).join("")}
+</div>
+<div class="nm-pay-workspace">
+  ${renderMunicipalityPanel(current)}
+  <div class="nm-pay-content">
+    ${renderGroupDetail()}
+  </div>
+</div>
+`;
+}
+
+function renderMunicipalityPanel(position) {
+  const municipalities = Array.isArray(position?.municipalities) ? position.municipalities : [];
+  const filtered = municipalities.filter((mun) =>
+    !municipalitySearch || normalized(mun.municipality_name).includes(normalized(municipalitySearch))
   );
-
-  const diasSinPago       = novedades.filter(n => !n.paid).reduce((s, n) => s + n.days, 0);
-  const diasCubiertos     = novedades.filter(n =>  n.paid).reduce((s, n) => s + n.days, 0);
-  const diasConSalario    = Math.max(0, 30 - diasSinPago);
-  const diasConTransporte = Math.max(0, 30 - diasNoClase - diasSinPago - diasCubiertos);
-  const dailySalary      = salaryBase / 30;
-  const workedDays       = diasConSalario;
-  const baseEarned       = Math.round(dailySalary * workedDays);
-  const turnosInfo       = (Array.isArray(turnos) ? turnos : []).map(t => {
-    const tCfg          = modalities[t.modalidad] || modCfg;
-    const salarioTurno  = tCfg.salary || smlv;
-    const diasTurno     = Math.max(0, Number(t.dias) || 0);
-    const valorUnitario = Math.round(salarioTurno / 30);
-    const totalTurno    = Math.round(valorUnitario * diasTurno);
-    return {
-      modalidad: t.modalidad,
-      dias: diasTurno,
-      salario: salarioTurno,
-      salarioMensual: salarioTurno,
-      valorUnitario,
-      total: totalTurno,
-      prop: totalTurno,
-    };
-  });
-  const extraShiftAmount = turnosInfo.reduce((s, t) => s + t.total, 0);
-
-  const auxTrans    = Math.round(auxCfg / 30 * diasConTransporte);
-  const adicsCalc   = adicionales.map(a => ({
-    label: a.label,
-    base:  Number(a.value),
-    prop:  Math.round(Number(a.value) / 30 * diasConTransporte),
-  }));
-  const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
-  const otherEarnings = auxTrans + totalAdics;
-  const totalDev   = baseEarned + extraShiftAmount + otherEarnings;
-  const salud      = Math.ceil(baseEarned * 0.04 / 100) * 100;
-  const pension    = salud;
-  const totalDed   = salud * 2;
-  const neto       = totalDev - totalDed;
-
-  return {
-    diasSinPago, diasCubiertos, diasConSalario, diasConTransporte,
-    salaryBase,
-    dailySalary,
-    workedDays,
-    salarioProp: baseEarned,
-    baseEarned,
-    extraShiftAmount,
-    auxTrans,
-    adicsCalc,
-    totalAdics,
-    otherEarnings,
-    totalDev,
-    grossEarned: totalDev,
-    salud, pension, totalDed, neto, turnosInfo,
-  };
+  return `
+<aside class="nm-pay-municipality-panel">
+  <div class="nm-pay-mun-head">
+    <div class="nm-pay-mun-title">Municipios</div>
+    <input class="nm-pay-mun-search" id="nmPayMunSearch" placeholder="Buscar municipio" value="${escapeHtml(municipalitySearch)}">
+  </div>
+  <div class="nm-pay-mun-list">
+    ${filtered.length ? filtered.map((mun) => `
+      <button class="nm-pay-mun ${Number(mun.id) === Number(activeGroupId) ? "active" : ""}" data-group-id="${mun.id}">
+        <span class="nm-pay-mun-name">${escapeHtml(mun.municipality_name)}</span>
+        <span class="nm-pay-count">${mun.employees}</span>
+        <span class="nm-pay-mun-meta">${statusBadge(mun.status)}</span>
+        ${Number(mun.pending_supports || 0) ? `<span class="nm-pay-mun-alert">${Number(mun.pending_supports)} doc</span>` : ""}
+      </button>
+    `).join("") : `<div class="nm-pay-empty" style="padding:16px">Sin municipios.</div>`}
+  </div>
+</aside>`;
 }
 
-// ── Estado del módulo ─────────────────────────────────────────────────────────
-
-let _view          = "list";
-let _periods       = [];
-let _currentPeriod = null;
-let _employees     = [];
-let _salaryConfig  = {};
-let _empState      = new Map();   // id → { diasNoClase, novedades, checked }
-let _searchText       = "";
-let _filterHasNov     = false;
-let _filterMunicipio  = "";
-let _filterModalidad  = "";
-let _filterInstitucion = "";
-let _filterSede       = "";
-let _sortBy           = "";
-let _sortDir          = "asc";
-let _activeGroup      = "todos";
-let _selectedMunicipalityId   = 0;   // 0 = no municipality selected
-let _selectedMunicipalityName = "";  // display name
-let _availableMunicipalities  = [];  // [{ id, name }] for the current contract
-let _periodMonth   = String(new Date().getMonth() + 1).padStart(2, "0");
-let _periodYear    = String(new Date().getFullYear());
-let _modalEmpId    = null;
-
-function getContractId() { return state.currentUser?.contractId || null; }
-function getCompanyId()  { return state.currentUser?.companyId  || null; }
-
-function _unique(key) {
-  return [...new Set(_employees.map(e => e[key] || "").filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
-}
-
-function _selectOpts(values, current, placeholder) {
-  return `<option value="">${placeholder}</option>` +
-    values.map(v => `<option value="${escapeHtml(v)}" ${v === current ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
-}
-
-function _getGroup(emp) {
-  const mc    = String(emp.modalityClass || "").toUpperCase();
-  const mod   = String(emp.modality      || "").toUpperCase().trim();
-  const cargo = String(emp.cargo         || "").toUpperCase();
-  if (mc.startsWith("CAA") || mod === "CAA" || mod === "CAARES") return "operarios";
-  if (mc === "RI" || mod === "RI") return "bodega_ri";
-  if (mod === "RP" || cargo.includes("BODEGA RP") || cargo.includes("RP")) return "bodega_rp";
-  return "administrativos";
-}
-
-function _groupTabsHtml() {
-  const counts = { todos: _employees.length };
-  for (const emp of _employees) {
-    const g = _getGroup(emp);
-    counts[g] = (counts[g] || 0) + 1;
-  }
-  return PAYROLL_GROUPS.map(g => `
-    <button class="nm3-gtab ${_activeGroup === g.key ? "nm3-gtab--active" : ""}" data-group="${g.key}">
-      ${escapeHtml(g.label)}
-      <span class="nm3-gtab-count">${counts[g.key] || 0}</span>
-    </button>`).join("");
-}
-
-function getEs(empId) {
-  let es = _empState.get(empId);
-  if (!es) { es = { diasNoClase: 0, novedades: [], horasDiarias: [], turnos: [], checked: false }; _empState.set(empId, es); }
-  if (!es.turnos) es.turnos = [];
-  return es;
-}
-
-function isHourBased(emp) {
-  const g = _getGroup(emp);
-  return g === "bodega_ri" || g === "bodega_rp" || g === "administrativos";
-}
-
-function calcHourEmployee(emp) {
-  const es         = getEs(emp.id);
-  const modCfg     = (_salaryConfig.modalities || {})[emp.modalityClass] || {};
-  const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
-  const valorHora  = Math.round(salaryBase / 240);
-  const totalHoras = es.horasDiarias.reduce((s, d) => s + (Number(d.horas) || 0), 0);
-  const devengado  = Math.round(valorHora * totalHoras);
-  const salud      = Math.ceil(devengado * 0.04 / 100) * 100;
-  const pension    = salud;
-  const totalDed   = salud * 2;
-  const neto       = devengado - totalDed;
-  return { valorHora, totalHoras, devengado, salud, pension, totalDed, neto };
-}
-
-function _groupEmployees() {
-  if (_activeGroup === "todos") return _employees;
-  return _employees.filter(e => _getGroup(e) === _activeGroup);
-}
-
-function _colCount() {
-  if (_activeGroup === "todos")     return 7;
-  if (_activeGroup === "operarios") return 12;
-  return 10;
-}
-
-function _tableHeaderHtml() {
-  if (_activeGroup === "todos") return `<tr>
-    <th class="nm3-th-n">#</th>
-    <th class="nm3-th-name">Nombre completo</th>
-    <th class="nm3-th-doc">Cédula</th>
-    <th class="nm3-th-inst">Institución / Sede</th>
-    <th>Grupo</th>
-    <th class="nm3-ar nm3-th-neto">Neto a pagar</th>
-    <th class="nm3-th-act">✓</th>
-  </tr>`;
-  if (_activeGroup === "operarios") return `<tr>
-    <th class="nm3-th-n">#</th>
-    <th class="nm3-th-doc">Cédula</th>
-    <th class="nm3-th-name">Nombre completo</th>
-    <th class="nm3-th-inst">Institución / Sede</th>
-    <th class="nm3-th-mod">Modalidad</th>
-    <th class="nm3-th-nc" title="Días de no clase">No clase</th>
-    <th class="nm3-th-nov">Novedades</th>
-    <th class="nm3-th-turnos">Turnos</th>
-    <th class="nm3-th-dev">Devengado</th>
-    <th class="nm3-th-ded">Deducciones</th>
-    <th class="nm3-th-neto">Neto a pagar</th>
-    <th class="nm3-th-act">Acciones</th>
-  </tr>`;
-  return `<tr>
-    <th class="nm3-th-n">#</th>
-    <th class="nm3-th-doc">Cédula</th>
-    <th class="nm3-th-name">Nombre completo</th>
-    <th class="nm3-th-cargo">Cargo</th>
-    <th class="nm3-th-horas">Horas</th>
-    <th class="nm3-th-vh">Valor/hora</th>
-    <th class="nm3-th-dev">Devengado</th>
-    <th class="nm3-th-ded">Deducciones</th>
-    <th class="nm3-th-neto">Neto a pagar</th>
-    <th class="nm3-th-act">Acciones</th>
-  </tr>`;
-}
-
-function _rowForEmp(emp, idx) {
-  if (_activeGroup === "todos")   return _rowHtmlSummary(emp, idx);
-  if (isHourBased(emp))          return _rowHtmlHours(emp, idx);
-  return _rowHtml(emp, idx);
-}
-
-// ── Vista lista (períodos) ────────────────────────────────────────────────────
-
-function _renderListView() {
-  const root = document.getElementById("nm3-root");
-  if (!root) return;
-
-  const curYear = new Date().getFullYear();
-  const years   = Array.from({ length: 5 }, (_, i) => curYear - 1 + i);
-
-  const munSelectHtml = _availableMunicipalities.length > 1 ? `
-  <div class="nm3-mun-selector" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;">
-    <span style="font-size:13px;color:var(--text-secondary,#64748B);white-space:nowrap;">Municipio:</span>
-    <select class="nm3-sel" id="nm3MunSel" style="min-width:200px;">
-      <option value="">— Todos los municipios —</option>
-      ${_availableMunicipalities.map(m =>
-        `<option value="${m.id}" ${Number(m.id) === _selectedMunicipalityId ? "selected" : ""}>${escapeHtml(m.name)}</option>`
-      ).join("")}
-    </select>
-    ${_selectedMunicipalityName ? `<span class="nm3-badge nm3-badge--calc" style="font-size:11px;">${escapeHtml(_selectedMunicipalityName)}</span>` : ""}
-  </div>` : "";
-
-  root.innerHTML = `
-<div class="nm3-card">
-  <div class="nm3-card-hdr">
+function renderGroupDetail() {
+  if (!activeGroupDetail) return `<div class="nm-pay-panel"><div class="nm-pay-empty">Selecciona un municipio para trabajar su nomina.</div></div>`;
+  const { group, items, novelties, totals } = activeGroupDetail;
+  const municipality = currentMunicipalityData();
+  const municipalityName = municipality?.municipality_name || group.municipality_name || "";
+  return `
+<div class="nm-pay-toolbar">
     <div>
-      <h2 class="nm3-title">Nómina PAE</h2>
-      <span class="nm3-subtitle">${_selectedMunicipalityName ? `Municipio: ${escapeHtml(_selectedMunicipalityName)}` : "Períodos de liquidación"}</span>
+      <h3 class="nm-pay-section-title">${escapeHtml(municipalityName || "Municipio")}</h3>
+      <div class="nm-pay-section-meta">${escapeHtml(group.operational_position || activePosition)} · ${statusBadge(group.status)} ${pendingSupportBadge(totals.pending_supports)}</div>
     </div>
-    ${isTH() ? `
-    <div class="nm3-hdr-right">
-      <select class="nm3-sel" id="nm3MonthSel">
-        ${MONTHS_ES.map((n, i) => {
-          const val = String(i + 1).padStart(2, "0");
-          return `<option value="${val}" ${val === _periodMonth ? "selected" : ""}>${n}</option>`;
-        }).join("")}
-      </select>
-      <select class="nm3-sel" id="nm3YearSel">
-        ${years.map(y => `<option value="${y}" ${String(y) === _periodYear ? "selected" : ""}>${y}</option>`).join("")}
-      </select>
-      <button class="nm3-btn nm3-btn--primary" id="nm3BtnNew">＋ Nueva nómina</button>
-    </div>` : ""}
-  </div>
+    <div class="nm-pay-actions">
+      <button class="nm-pay-btn nm-pay-btn--primary" id="nmPayCalculate">Calcular municipio</button>
+      <button class="nm-pay-btn" id="nmPayExport">Exportar municipio</button>
+    </div>
+</div>
 
-  <div class="nm3-card-body">
-    ${munSelectHtml}
-    ${_periods.length ? `
-    <table class="nm3-periods-tbl">
-      <thead>
-        <tr>
-          <th>Período</th>
-          <th>Estado</th>
-          <th class="nm3-ar">Empleados</th>
-          <th class="nm3-ar">Neto total</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${_periods.map(p => `
-        <tr class="nm3-period-row">
-          <td class="nm3-period-name">${escapeHtml(p.label)}</td>
-          <td>${statusBadge(p.status)}</td>
-          <td class="nm3-ar">${p.employee_count || 0}</td>
-          <td class="nm3-ar nm3-green">${fmtCOP(p.total_neto || 0)}</td>
-          <td class="nm3-ar"><button class="nm3-btn nm3-btn--sm nm3-btn--outline" data-open="${p.id}">Abrir →</button></td>
-        </tr>`).join("")}
-      </tbody>
-    </table>` : `
-    <div class="nm3-empty-state">
-      <span class="nm3-empty-icon">📋</span>
-      <p>No hay períodos registrados.</p>
-      ${isTH() ? `<p class="nm3-empty-hint">Selecciona mes y año y crea el primer período.</p>` : ""}
-    </div>`}
+<div>
+  ${items.length ? renderItemsTable(items) : `<div class="nm-pay-empty">Pulsa Calcular municipio para cargar los empleados activos de este municipio.</div>`}
+</div>
+
+<div class="nm-pay-novelties">
+  <div class="nm-pay-novelties-h">
+    <strong>Novedades</strong>
+    <span class="nm-pay-mun-meta">${novelties.length} registradas · ${totals.reviewed || 0} revisadas</span>
+  </div>
+  <div class="nm-pay-novelties-b">
+    ${novelties.length ? renderNoveltiesTable(novelties) : `<div class="nm-pay-empty" style="border:0;border-radius:0">Sin novedades registradas en este municipio.</div>`}
   </div>
 </div>`;
-
-  _wireListEvents();
 }
 
-// ── Vista detalle (tabla empleados) ──────────────────────────────────────────
+function renderItemsTable(items) {
+  return `
+<div class="nm-pay-table-wrap">
+<table class="nm-pay-table">
+  <thead>
+    <tr>
+      <th>Empleado</th><th>Documento</th><th>Municipio</th><th>Cargo</th><th class="num">Salario</th>
+      <th>Novedades</th><th>Revisada</th><th class="num">Devengado</th><th class="num">Deducciones</th><th class="num">Neto</th><th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${items.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.employee_name)}</td>
+        <td>${escapeHtml(item.document_number || "")}</td>
+        <td>${escapeHtml(item.municipality_name || "-")}</td>
+        <td>${escapeHtml(item.operational_position || "-")}<br><small>${escapeHtml(item.modality || "-")} · ${escapeHtml(item.work_time_type || "-")}</small></td>
+        <td class="num">${fmtCOP(item.base_salary)}</td>
+        <td>${Number(item.novelty_count || 0)}</td>
+        <td>${Number(item.novelty_count || 0) ? `${Number(item.reviewed_count || 0)}/${Number(item.novelty_count || 0)}` : "-"}</td>
+        <td class="num">${fmtCOP(item.total_devengado)}</td>
+        <td class="num">${fmtCOP(item.total_deducciones)}</td>
+        <td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td>
+        <td><button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">Novedad</button></td>
+      </tr>`).join("")}
+  </tbody>
+</table>
+</div>`;
+}
 
-function _filtered() {
-  let list = _employees.filter(e => {
-    if (_searchText) {
-      const hay = `${e.fullName} ${e.documentNumber} ${e.institutionName} ${e.siteName} ${e.municipalityName}`.toLowerCase();
-      if (!hay.includes(_searchText)) return false;
-    }
-    if (_activeGroup !== "todos" && _getGroup(e) !== _activeGroup) return false;
-    if (_filterHasNov     && !getEs(e.id).novedades.length)    return false;
-    if (_filterMunicipio  && e.municipalityName !== _filterMunicipio)  return false;
-    if (_filterModalidad  && e.modalityClass    !== _filterModalidad)   return false;
-    if (_filterInstitucion && e.institutionName !== _filterInstitucion) return false;
-    if (_filterSede       && e.siteName         !== _filterSede)        return false;
-    return true;
+function renderNoveltiesTable(novelties) {
+  return `
+<table class="nm-pay-table">
+  <thead>
+    <tr>
+      <th>Empleado</th><th>Novedad</th><th>Fechas</th><th class="num">Dias</th><th class="num">Valor</th><th>Soporte</th><th>Revisada</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    ${novelties.map((novelty) => `
+      <tr>
+        <td>${escapeHtml(novelty.employee_name || "")}<br><small>${escapeHtml(novelty.document_number || "")}</small></td>
+        <td>${escapeHtml(novelty.novelty_type || "")}<br><small>${escapeHtml(novelty.description || novelty.observations || "")}</small></td>
+        <td>${escapeHtml(novelty.start_date || "-")} / ${escapeHtml(novelty.end_date || "-")}</td>
+        <td class="num">${Number(novelty.days || 0)}</td>
+        <td class="num">${fmtCOP(novelty.value)}</td>
+        <td>${pendingSupportBadge(novelty.support_status === "pendiente" ? 1 : 0)}</td>
+        <td><input type="checkbox" data-reviewed="${novelty.id}" ${novelty.reviewed ? "checked" : ""}></td>
+        <td>
+          <button class="nm-pay-btn nm-pay-btn--sm" data-edit-novelty="${novelty.id}" ${novelty.reviewed ? "disabled" : ""}>Editar</button>
+          <button class="nm-pay-btn nm-pay-btn--sm" data-cover-novelty="${novelty.id}" ${novelty.reviewed ? "disabled" : ""}>Cubrio</button>
+        </td>
+      </tr>`).join("")}
+  </tbody>
+</table>`;
+}
+
+function wireStaticEvents() {
+  document.getElementById("nmPayMonth")?.addEventListener("change", (event) => { periodMonth = event.target.value; });
+  document.getElementById("nmPayPeriod")?.addEventListener("change", async (event) => {
+    activePeriod = periods.find((p) => String(p.id) === String(event.target.value)) || null;
+    activePosition = "";
+    activeGroupId = null;
+    municipalitySearch = "";
+    await reloadWorkArea();
   });
+  document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
+  document.getElementById("nmPaySupports")?.addEventListener("click", openSupportsModal);
+  document.getElementById("nmPayMunSearch")?.addEventListener("input", (event) => {
+    municipalitySearch = event.target.value || "";
+    render();
+    document.getElementById("nmPayMunSearch")?.focus();
+  });
+  document.querySelectorAll(".nm-pay-tab").forEach((button) => button.addEventListener("click", async () => {
+    activePosition = button.dataset.position || "";
+    const position = groupsState.positions.find((p) => p.position === activePosition);
+    activeGroupId = position?.municipalities?.[0]?.id || null;
+    municipalitySearch = "";
+    await reloadDetailOnly();
+  }));
+  document.querySelectorAll(".nm-pay-mun").forEach((button) => button.addEventListener("click", async () => {
+    activeGroupId = Number(button.dataset.groupId);
+    await reloadDetailOnly();
+  }));
+  document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
+  document.getElementById("nmPayExport")?.addEventListener("click", exportMunicipality);
+  document.querySelectorAll("[data-new-novelty]").forEach((button) => button.addEventListener("click", () => openNoveltyModal(Number(button.dataset.newNovelty))));
+  document.querySelectorAll("[data-edit-novelty]").forEach((button) => button.addEventListener("click", () => openEditNoveltyModal(Number(button.dataset.editNovelty))));
+  document.querySelectorAll("[data-cover-novelty]").forEach((button) => button.addEventListener("click", () => openCoverModal(Number(button.dataset.coverNovelty))));
+  document.querySelectorAll("[data-reviewed]").forEach((input) => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
+}
 
-  if (_sortBy) {
-    list = [...list].sort((a, b) => {
-      if (_sortBy === "neto") {
-        const aState = getEs(a.id);
-        const bState = getEs(b.id);
-        const na = calcEmployee(a.modalityClass, aState.diasNoClase, aState.novedades, _salaryConfig, aState.turnos).neto;
-        const nb = calcEmployee(b.modalityClass, bState.diasNoClase, bState.novedades, _salaryConfig, bState.turnos).neto;
-        return _sortDir === "asc" ? na - nb : nb - na;
-      }
-      const fieldMap = { nombre: "fullName", municipio: "municipalityName", institucion: "institutionName", sede: "siteName", modalidad: "modalityClass" };
-      const va = String(a[fieldMap[_sortBy]] || "").toLowerCase();
-      const vb = String(b[fieldMap[_sortBy]] || "").toLowerCase();
-      const cmp = va.localeCompare(vb, "es");
-      return _sortDir === "asc" ? cmp : -cmp;
+async function createPeriod() {
+  try {
+    const response = await apiFetch("/payroll/periods", {
+      method: "POST",
+      body: JSON.stringify({ companyId: companyId(), contractId: contractId(), period: periodMonth }),
     });
+    activePeriod = response.data;
+    activePosition = "";
+    activeGroupId = null;
+    municipalitySearch = "";
+    await loadPeriods();
+    await reloadWorkArea();
+    showSuccess("Periodo creado");
+  } catch (err) {
+    showError(err.message);
   }
-
-  return list;
 }
 
-function _rowHtml(emp, idx) {
-  const es       = getEs(emp.id);
-  const calc     = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
-  const modColor = MOD_COLOR[emp.modalityClass] || "caa";
-  const novCount = es.novedades.length;
-  const turnoCount = es.turnos.length;
-  const canEdit  = isTH() && _currentPeriod?.status !== "CERRADO";
-  const checkedCls = es.checked ? "nm3-row--done" : "";
-
-  const novCell = novCount > 0
-    ? `<button class="nm3-nov-pill nm3-nov-pill--has" data-emp="${emp.id}">⚠ ${novCount} nov.</button>`
-    : `<span class="nm3-nov-pill nm3-nov-pill--none">—</span>`;
-
-  const turnoCell = turnoCount > 0
-    ? `<button class="nm3-turno-pill nm3-turno-pill--has" data-emp="${emp.id}">🔄 ${turnoCount} turno${turnoCount !== 1 ? "s" : ""}</button>`
-    : (canEdit
-        ? `<button class="nm3-turno-pill nm3-turno-pill--add" data-emp="${emp.id}">＋ Turno</button>`
-        : `<span class="nm3-turno-pill nm3-turno-pill--none">—</span>`);
-
-  return `
-<tr class="nm3-tr ${checkedCls}" data-emp-id="${emp.id}">
-  <td class="nm3-td-n">${idx + 1}</td>
-  <td class="nm3-td-doc">
-    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
-    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
-  </td>
-  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
-  <td class="nm3-td-inst">
-    <div class="nm3-inst">${escapeHtml(emp.institutionName || "—")}</div>
-    <div class="nm3-sede">${escapeHtml(emp.siteName || "—")}</div>
-  </td>
-  <td class="nm3-td-mod">
-    <span class="nm3-mod nm3-mod--${modColor}">${escapeHtml(emp.modalityClass)}</span>
-  </td>
-  <td class="nm3-td-nc">
-    ${canEdit
-      ? `<input type="number" class="nm3-nc-inp" data-emp="${emp.id}" value="${es.diasNoClase}" min="0" max="30">`
-      : `<span class="nm3-nc-ro">${es.diasNoClase}</span>`}
-  </td>
-  <td class="nm3-td-nov">${novCell}</td>
-  <td class="nm3-td-turnos">${turnoCell}</td>
-  <td class="nm3-td-dev">${fmtCOP(calc.totalDev)}</td>
-  <td class="nm3-td-ded">
-    <div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div>
-    <div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>
-  </td>
-  <td class="nm3-td-neto">${fmtCOP(calc.neto)}</td>
-  <td class="nm3-td-act">
-    ${canEdit ? `<button class="nm3-act nm3-act-nov" data-emp="${emp.id}" title="Registrar novedad">＋ Nov</button>` : ""}
-    <button class="nm3-act nm3-act-calc" data-emp="${emp.id}" title="Ver cálculo detallado">🧾</button>
-    ${canEdit ? `<button class="nm3-act nm3-act-ok ${es.checked ? "nm3-act-ok--on" : ""}" data-emp="${emp.id}" title="${es.checked ? "Marcar pendiente" : "Marcar listo"}">
-      ${es.checked ? "✓" : "○"}
-    </button>` : ""}
-  </td>
-</tr>`;
+async function reloadWorkArea() {
+  await loadGroups();
+  await loadGroupDetail();
+  render();
 }
 
-function _rowHtmlSummary(emp, idx) {
-  const es    = getEs(emp.id);
-  const neto  = isHourBased(emp)
-    ? calcHourEmployee(emp).neto
-    : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos).neto;
-  const grp   = _getGroup(emp);
-  const grpLabel = { operarios:"Operarios", bodega_ri:"Bodega RI", bodega_rp:"Bodega RP", administrativos:"Admin." }[grp] || grp;
-  const grpColor = { operarios:"caa", bodega_ri:"ri", bodega_rp:"caares", administrativos:"ri" }[grp] || "caa";
-  return `
-<tr class="nm3-tr ${es.checked ? "nm3-row--done" : ""}" data-emp-id="${emp.id}">
-  <td class="nm3-td-n">${idx + 1}</td>
-  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
-  <td class="nm3-td-doc">
-    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
-    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
-  </td>
-  <td class="nm3-td-inst">
-    <div class="nm3-inst">${escapeHtml(emp.institutionName || "—")}</div>
-    <div class="nm3-sede">${escapeHtml(emp.siteName || "—")}</div>
-  </td>
-  <td><span class="nm3-mod nm3-mod--${grpColor}">${grpLabel}</span></td>
-  <td class="nm3-td-neto">${fmtCOP(neto)}</td>
-  <td class="nm3-td-act">${es.checked ? "✓" : "—"}</td>
-</tr>`;
+async function reloadDetailOnly() {
+  await loadGroupDetail();
+  render();
 }
 
-function _rowHtmlHours(emp, idx) {
-  const es      = getEs(emp.id);
-  const calc    = calcHourEmployee(emp);
-  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
-  return `
-<tr class="nm3-tr ${es.checked ? "nm3-row--done" : ""}" data-emp-id="${emp.id}">
-  <td class="nm3-td-n">${idx + 1}</td>
-  <td class="nm3-td-doc">
-    <div class="nm3-doc-t">${escapeHtml(emp.documentType || "CC")}</div>
-    <div class="nm3-doc-v">${escapeHtml(emp.documentNumber)}</div>
-  </td>
-  <td class="nm3-td-name">${escapeHtml(emp.fullName)}</td>
-  <td class="nm3-td-cargo">${escapeHtml(emp.cargo || "—")}</td>
-  <td class="nm3-td-horas">
-    <button class="nm3-horas-pill ${calc.totalHoras > 0 ? "nm3-horas-pill--has" : "nm3-horas-pill--none"}" data-emp="${emp.id}">
-      ${calc.totalHoras > 0 ? `${calc.totalHoras}h` : "Sin horas"}
-    </button>
-  </td>
-  <td class="nm3-td-vh">${fmtCOP(calc.valorHora)}<span class="nm3-vh-unit">/h</span></td>
-  <td class="nm3-td-dev">${fmtCOP(calc.devengado)}</td>
-  <td class="nm3-td-ded">
-    <div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div>
-    <div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>
-  </td>
-  <td class="nm3-td-neto">${fmtCOP(calc.neto)}</td>
-  <td class="nm3-td-act">
-    ${canEdit ? `<button class="nm3-act nm3-act-horas" data-emp="${emp.id}" title="Registrar horas">📅</button>` : ""}
-    <button class="nm3-act nm3-act-calc" data-emp="${emp.id}" title="Ver cálculo">🧾</button>
-    ${canEdit ? `<button class="nm3-act nm3-act-ok ${es.checked ? "nm3-act-ok--on" : ""}" data-emp="${emp.id}">
-      ${es.checked ? "✓" : "○"}
-    </button>` : ""}
-  </td>
-</tr>`;
-}
-
-function _totalsHtml() {
-  let dev = 0, ded = 0, neto = 0;
-  const done    = [..._empState.values()].filter(e => e.checked).length;
-  const empList = _groupEmployees();
-  for (const emp of empList) {
-    const es = getEs(emp.id);
-    const c = isHourBased(emp)
-      ? calcHourEmployee(emp)
-      : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
-    dev  += c.totalDev;
-    ded  += c.totalDed;
-    neto += c.neto;
+async function calculateGroup() {
+  if (!activeGroupId) return;
+  try {
+    await apiFetch(`/payroll/groups/${activeGroupId}/calculate`, { method: "POST" });
+    await reloadWorkArea();
+    showSuccess("Nomina municipal calculada");
+  } catch (err) {
+    showError(err.message);
   }
-  return `
-<div class="nm3-totals">
-  <div class="nm3-tot"><span class="nm3-tot-lbl">Empleados</span><strong>${empList.length}</strong></div>
-  <div class="nm3-tot"><span class="nm3-tot-lbl">Devengado</span><strong>${fmtCOP(dev)}</strong></div>
-  <div class="nm3-tot nm3-tot-ded"><span class="nm3-tot-lbl">Deducciones</span><strong>− ${fmtCOP(ded)}</strong></div>
-  <div class="nm3-tot nm3-tot-neto"><span class="nm3-tot-lbl">Neto total</span><strong>${fmtCOP(neto)}</strong></div>
-  <div class="nm3-tot nm3-tot-done"><span class="nm3-tot-lbl">Revisados</span><strong>${done} / ${_employees.length}</strong></div>
-</div>`;
 }
 
-function _renderDetailView() {
-  const root     = document.getElementById("nm3-root");
-  const period   = _currentPeriod;
-  const filtered = _filtered();
-  if (!root) return;
-
-  const done  = [..._empState.values()].filter(e => e.checked).length;
-  const total = _employees.length;
-
-  root.innerHTML = `
-<div class="nm3-card nm3-card--full">
-
-  <!-- Header -->
-  <div class="nm3-hdr">
-    <button class="nm3-back" id="nm3Back">← Volver</button>
-    <div class="nm3-hdr-center">
-      <h2 class="nm3-period-title">${escapeHtml(period.label)}</h2>
-      ${statusBadge(period.status)}
-      ${_selectedMunicipalityName ? `<span class="nm3-badge nm3-badge--calc" style="font-size:11px;margin-left:4px;">${escapeHtml(_selectedMunicipalityName)}</span>` : ""}
-      <span class="nm3-done-pill" id="nm3DonePill">${done}/${total} revisados</span>
-    </div>
-    <div class="nm3-hdr-actions">
-      ${isTH() && period.status !== "CERRADO" ? `
-        <button class="nm3-btn nm3-btn--primary" id="nm3BtnSave">💾 Guardar</button>` : ""}
-      <a class="nm3-btn nm3-btn--outline" href="/nomina/periods/${period.id}/export" download>⬇ Excel</a>
-      ${isTH() && period.status === "CALCULADO" ? `
-        <button class="nm3-btn nm3-btn--danger" id="nm3BtnClose">🔒 Cerrar</button>` : ""}
-    </div>
-  </div>
-
-  <!-- Tabs de grupo nómina -->
-  <div class="nm3-group-tabs" id="nm3GroupTabs">
-    ${_groupTabsHtml()}
-  </div>
-
-  <!-- Filtros -->
-  <div class="nm3-bar">
-    <input type="text" class="nm3-search" id="nm3Search"
-      placeholder="Nombre, cédula…"
-      value="${escapeHtml(_searchText)}">
-    <select class="nm3-fsel" id="nm3FiltMun">
-      ${_selectOpts(_unique("municipalityName"), _filterMunicipio, "Municipio")}
-    </select>
-    <select class="nm3-fsel" id="nm3FiltMod">
-      ${_selectOpts(_unique("modalityClass"), _filterModalidad, "Modalidad")}
-    </select>
-    <select class="nm3-fsel" id="nm3FiltInst">
-      ${_selectOpts(_unique("institutionName"), _filterInstitucion, "Institución")}
-    </select>
-    <select class="nm3-fsel" id="nm3FiltSede">
-      ${_selectOpts(_unique("siteName"), _filterSede, "Sede")}
-    </select>
-    <select class="nm3-fsel nm3-fsel--sort" id="nm3FiltSort">
-      <option value="">Ordenar…</option>
-      <option value="nombre"     ${_sortBy === "nombre"      ? "selected" : ""}>Nombre</option>
-      <option value="municipio"  ${_sortBy === "municipio"   ? "selected" : ""}>Municipio</option>
-      <option value="institucion"${_sortBy === "institucion" ? "selected" : ""}>Institución</option>
-      <option value="sede"       ${_sortBy === "sede"        ? "selected" : ""}>Sede</option>
-      <option value="modalidad"  ${_sortBy === "modalidad"   ? "selected" : ""}>Modalidad</option>
-      <option value="neto"       ${_sortBy === "neto"        ? "selected" : ""}>Neto a pagar</option>
-    </select>
-    <button class="nm3-sort-dir-btn" id="nm3SortDir" title="${_sortDir === "asc" ? "Ascendente" : "Descendente"}">
-      ${_sortDir === "asc" ? "↑" : "↓"}
-    </button>
-    <label class="nm3-chk-lbl">
-      <input type="checkbox" id="nm3ChkNov" ${_filterHasNov ? "checked" : ""}>
-      Nov.
-    </label>
-    <span class="nm3-count" id="nm3Count">${filtered.length} de ${total}</span>
-  </div>
-
-  <!-- Tabla con scroll -->
-  <div class="nm3-tbl-wrap">
-    <table class="nm3-tbl">
-      <thead id="nm3Thead">
-        ${_tableHeaderHtml()}
-      </thead>
-      <tbody id="nm3Tbody">
-        ${filtered.length
-          ? filtered.map((e, i) => _rowForEmp(e, i)).join("")
-          : `<tr><td colspan="${_colCount()}" class="nm3-empty-td">Sin resultados.</td></tr>`}
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Footer totales -->
-  <div class="nm3-footer" id="nm3Footer">
-    ${_totalsHtml()}
-  </div>
-
-</div>
-
-<!-- Modal: novedades -->
-<div class="nm3-overlay" id="nm3NovModal" hidden>
-  <div class="nm3-modal">
-    <div class="nm3-modal-hdr">
-      <span class="nm3-modal-ttl" id="nm3NovTitle">Novedades</span>
-      <button class="nm3-modal-x" id="nm3NovClose">×</button>
-    </div>
-    <div class="nm3-modal-body" id="nm3NovBody"></div>
-  </div>
-</div>
-
-<!-- Modal: cálculo detallado -->
-<div class="nm3-overlay" id="nm3CalcModal" hidden>
-  <div class="nm3-modal nm3-modal--wide">
-    <div class="nm3-modal-hdr">
-      <span class="nm3-modal-ttl" id="nm3CalcTitle">Detalle de cálculo</span>
-      <button class="nm3-modal-x" id="nm3CalcClose">×</button>
-    </div>
-    <div class="nm3-modal-body" id="nm3CalcBody"></div>
-  </div>
-</div>
-
-<!-- Modal: horas diarias -->
-<div class="nm3-overlay" id="nm3HorasModal" hidden>
-  <div class="nm3-modal nm3-modal--wide">
-    <div class="nm3-modal-hdr">
-      <span class="nm3-modal-ttl" id="nm3HorasTitle">Horas diarias</span>
-      <button class="nm3-modal-x" id="nm3HorasClose">×</button>
-    </div>
-    <div class="nm3-modal-body" id="nm3HorasBody"></div>
-  </div>
-</div>
-
-<!-- Modal: turnos realizados -->
-<div class="nm3-overlay" id="nm3TurnosModal" hidden>
-  <div class="nm3-modal nm3-modal--wide">
-    <div class="nm3-modal-hdr">
-      <span class="nm3-modal-ttl" id="nm3TurnosTitle">Turnos realizados</span>
-      <button class="nm3-modal-x" id="nm3TurnosClose">×</button>
-    </div>
-    <div class="nm3-modal-body" id="nm3TurnosBody"></div>
-  </div>
-</div>`;
-
-  _wireDetailEvents();
+function exportMunicipality() {
+  const detail = activeGroupDetail;
+  if (!detail?.items?.length) return;
+  const rows = [
+    ["Empleado", "Documento", "Municipio", "Institucion", "Sede", "Modalidad", "Jornada", "Devengado", "Deducciones", "Neto"],
+    ...detail.items.map((x) => [
+      x.employee_name, x.document_number, x.municipality_name, x.institution_name, x.site_name,
+      x.modality, x.work_time_type, x.total_devengado, x.total_deducciones, x.neto_pagar,
+    ]),
+  ];
+  const csv = rows.map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `nomina-${detail.group.municipality_name || "municipio"}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
-// ── HTML de modales ───────────────────────────────────────────────────────────
-
-function _novBodyHtml(empId) {
-  const es      = getEs(empId);
-  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
-
-  const rows = es.novedades.length
-    ? es.novedades.map((n, i) => `
-      <tr>
-        <td>${escapeHtml(n.label)}</td>
-        <td class="nm3-ar">${n.days} d</td>
-        <td>${n.paid
-          ? `<span class="nm3-tag nm3-tag--paid">${escapeHtml(n.coverage || "Cubierto")}</span>`
-          : `<span class="nm3-tag nm3-tag--unpaid">Descuento</span>`}</td>
-        ${canEdit ? `<td><button class="nm3-del-nov" data-idx="${i}" title="Eliminar">✕</button></td>` : ""}
-      </tr>`).join("")
-    : `<tr><td colspan="${canEdit ? 4 : 3}" class="nm3-empty-td">Sin novedades registradas.</td></tr>`;
-
-  return `
-<div class="nm3-nov-wrap">
-  <table class="nm3-tbl nm3-tbl--modal">
-    <thead>
-      <tr>
-        <th>Tipo de novedad</th>
-        <th class="nm3-ar">Días</th>
-        <th>Efecto</th>
-        ${canEdit ? "<th></th>" : ""}
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  ${canEdit ? `
-  <div class="nm3-nov-form">
-    <div class="nm3-nov-form-lbl">Registrar nueva novedad</div>
-    <div class="nm3-nov-form-row">
-      <select class="nm3-sel nm3-nov-sel" id="nm3NovType">
-        <option value="">— Tipo de novedad —</option>
-        ${NOVELTY_TYPES.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
-      </select>
-      <input type="number" class="nm3-nc-inp" id="nm3NovDays" value="1" min="1" max="30" placeholder="Días" style="width:72px">
-      <span class="nm3-unit">días</span>
-      <button class="nm3-btn nm3-btn--primary nm3-btn--sm" id="nm3NovAdd">＋ Agregar</button>
+function openNoveltyModal(itemId) {
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog">
+  <div class="nm-pay-dialog-h"><b>Registrar novedad</b><button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button></div>
+  <div class="nm-pay-dialog-b">
+    <div class="nm-pay-form-grid">
+      <div class="nm-pay-field"><label>Tipo</label><select class="nm-pay-select" id="novType">${NOVELTY_TYPES.map((t) => `<option value="${t}">${t}</option>`).join("")}</select></div>
+      <div class="nm-pay-field"><label>Dias</label><input class="nm-pay-input" id="novDays" type="number" min="0" value="1"></div>
+      <div class="nm-pay-field"><label>Inicio</label><input class="nm-pay-input" id="novStart" type="date"></div>
+      <div class="nm-pay-field"><label>Fin</label><input class="nm-pay-input" id="novEnd" type="date"></div>
+      <div class="nm-pay-field"><label>Valor</label><input class="nm-pay-input" id="novValue" type="number" min="0" value="0"></div>
+      <div class="nm-pay-field"><label>Soporte requerido</label><select class="nm-pay-select" id="novSupport"><option value="false">No</option><option value="true">Si</option></select></div>
     </div>
-  </div>` : ""}
-</div>`;
-}
-
-function _calcBodyHtml(emp) {
-  const es   = getEs(emp.id);
-  const calc = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
-
-  const adicsRows = calc.adicsCalc.map(a =>
-    `<tr><td>${escapeHtml(a.label)} (${calc.diasConTransporte}/30 d)</td>
-         <td class="nm3-ar nm3-green">+ ${fmtCOP(a.prop)}</td></tr>`
-  ).join("");
-
-  const novRows = es.novedades.length
-    ? es.novedades.map(n => `
-      <tr>
-        <td>${escapeHtml(n.label)} — ${n.days} días</td>
-        <td class="nm3-ar">${n.paid
-          ? `<span class="nm3-tag nm3-tag--paid">${escapeHtml(n.coverage || "Cubierto")}</span>`
-          : `<span class="nm3-tag nm3-tag--unpaid">Descuento</span>`}</td>
-      </tr>`).join("")
-    : `<tr><td colspan="2" class="nm3-empty-td">Sin novedades</td></tr>`;
-
-  const salarioPropRows = calc.turnosInfo.length
-    ? calc.turnosInfo.map(t =>
-        `<tr><td>Turno ${escapeHtml(t.modalidad)} — ${t.dias} d (${fmtCOP(t.salario)}/mes)</td>
-             <td class="nm3-ar nm3-green">+ ${fmtCOP(t.prop)}</td></tr>`
-      ).join("")
-    : `<tr><td>Salario proporcional (${calc.diasConSalario}/30 d)</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.salarioProp)}</td></tr>`;
-
-  return `
-<div class="nm3-calc-wrap">
-
-  <!-- Info empleado -->
-  <div class="nm3-calc-info">
-    <div class="nm3-ci"><span>Documento</span><b>${escapeHtml(emp.documentType || "CC")} ${escapeHtml(emp.documentNumber)}</b></div>
-    <div class="nm3-ci"><span>Municipio</span><b>${escapeHtml(emp.municipalityName || "—")}</b></div>
-    <div class="nm3-ci"><span>Institución</span><b>${escapeHtml(emp.institutionName || "—")}</b></div>
-    <div class="nm3-ci"><span>Sede</span><b>${escapeHtml(emp.siteName || "—")}</b></div>
-    <div class="nm3-ci"><span>Modalidad</span><b>${escapeHtml(emp.modalityClass)}</b></div>
-    <div class="nm3-ci"><span>Salario mensual</span><b>${fmtCOP(calc.salaryBase)}</b></div>
-    <div class="nm3-ci"><span>Días no clase</span><b>${es.diasNoClase}</b></div>
-    <div class="nm3-ci"><span>Días sin salario</span><b>${calc.diasSinPago}</b></div>
-    <div class="nm3-ci"><span>Días con salario</span><b>${calc.diasConSalario}/30</b></div>
-    <div class="nm3-ci"><span>Días con transporte</span><b>${calc.diasConTransporte}/30</b></div>
-    ${calc.turnosInfo.length ? `<div class="nm3-ci"><span>Turnos registrados</span><b>${calc.turnosInfo.length}</b></div>` : ""}
+    <div class="nm-pay-field"><label>Descripcion</label><textarea class="nm-pay-textarea" id="novDesc"></textarea></div>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar novedad</button>
   </div>
-
-  <!-- Tabla cálculo -->
-  <table class="nm3-tbl nm3-tbl--calc">
-    <tbody>
-      <tr class="nm3-calc-sec"><td colspan="2">💰 Devengados</td></tr>
-      <tr><td>Salario mensual</td><td class="nm3-ar">${fmtCOP(calc.salaryBase)}</td></tr>
-      <tr><td>Dias laborados</td><td class="nm3-ar">${calc.workedDays}/30</td></tr>
-      <tr><td>Devengado base</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.baseEarned)}</td></tr>
-      <tr><td>Turnos extra</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.extraShiftAmount)}</td></tr>
-      <tr><td>Otros devengos</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.otherEarnings)}</td></tr>
-      ${salarioPropRows}
-      <tr><td>Aux. transporte (${calc.diasConTransporte}/30 d)</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.auxTrans)}</td></tr>
-      ${adicsRows}
-      <tr class="nm3-calc-sub"><td><b>Total devengado</b></td><td class="nm3-ar"><b>${fmtCOP(calc.totalDev)}</b></td></tr>
-
-      <tr class="nm3-calc-sec"><td colspan="2">🔻 Deducciones</td></tr>
-      <tr><td>Salud empleado (4%)</td><td class="nm3-ar nm3-red">− ${fmtCOP(calc.salud)}</td></tr>
-      <tr><td>Pensión empleado (4%)</td><td class="nm3-ar nm3-red">− ${fmtCOP(calc.pension)}</td></tr>
-      <tr class="nm3-calc-sub"><td><b>Total deducciones</b></td><td class="nm3-ar nm3-red"><b>− ${fmtCOP(calc.totalDed)}</b></td></tr>
-
-      <tr class="nm3-calc-sec"><td colspan="2">📋 Novedades</td></tr>
-      ${novRows}
-
-      <tr class="nm3-calc-neto"><td>NETO A PAGAR</td><td class="nm3-ar"><strong>${fmtCOP(calc.neto)}</strong></td></tr>
-    </tbody>
-  </table>
-
 </div>`;
-}
-
-// ── Event wiring ──────────────────────────────────────────────────────────────
-
-function _wireListEvents() {
-  document.getElementById("nm3MonthSel")?.addEventListener("change", e => { _periodMonth = e.target.value; });
-  document.getElementById("nm3YearSel")?.addEventListener("change",  e => { _periodYear  = e.target.value; });
-
-  document.getElementById("nm3MunSel")?.addEventListener("change", e => {
-    const id   = Number(e.target.value) || 0;
-    const mun  = _availableMunicipalities.find(m => Number(m.id) === id);
-    _selectedMunicipalityId   = id;
-    _selectedMunicipalityName = mun ? mun.name : "";
-    _renderListView();
-  });
-
-  document.getElementById("nm3BtnNew")?.addEventListener("click", async () => {
-    const period     = `${_periodYear}-${_periodMonth}`;
-    const label      = `Nómina ${periodLabel(period)}`;
-    const contractId = getContractId();
-    const companyId  = getCompanyId();
-    if (!contractId || !companyId) { showError("Sin contrato o empresa asociada"); return; }
-    const btn = document.getElementById("nm3BtnNew");
-    if (btn) { btn.disabled = true; btn.textContent = "Creando…"; }
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("novSave")?.addEventListener("click", async () => {
     try {
-      const r = await apiFetch("/nomina/periods", {
+      await apiFetch(`/payroll/items/${itemId}/novelties`, {
         method: "POST",
-        body: JSON.stringify({ contractId, companyId, period, label }),
+        body: JSON.stringify({
+          novelty_type: document.getElementById("novType").value,
+          days: document.getElementById("novDays").value,
+          start_date: document.getElementById("novStart").value,
+          end_date: document.getElementById("novEnd").value,
+          value: document.getElementById("novValue").value,
+          support_required: document.getElementById("novSupport").value === "true",
+          description: document.getElementById("novDesc").value,
+        }),
       });
-      await _loadPeriodDetail(r.data.id);
+      closeModal();
+      await reloadWorkArea();
+      showSuccess("Novedad registrada");
     } catch (err) {
       showError(err.message);
-      if (btn) { btn.disabled = false; btn.textContent = "＋ Nueva nómina"; }
     }
-  });
-
-  document.querySelector(".nm3-card-body")?.addEventListener("click", async e => {
-    const btn = e.target.closest("[data-open]");
-    if (btn) await _loadPeriodDetail(Number(btn.dataset.open));
   });
 }
 
-function _wireDetailEvents() {
-  // Volver
-  document.getElementById("nm3Back")?.addEventListener("click", async () => {
-    _view = "list"; _currentPeriod = null;
-    _searchText = ""; _filterHasNov = false;
-    _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
-    _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
-    // Preserve municipality selection when going back to list
-    await _loadPeriods();
-    _renderListView();
+function openEditNoveltyModal(noveltyId) {
+  const novelty = activeGroupDetail?.novelties?.find((x) => Number(x.id) === Number(noveltyId));
+  if (!novelty) return;
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog">
+  <div class="nm-pay-dialog-h"><b>Editar novedad</b><button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button></div>
+  <div class="nm-pay-dialog-b">
+    <div class="nm-pay-form-grid">
+      <div class="nm-pay-field"><label>Tipo</label><select class="nm-pay-select" id="novType">${NOVELTY_TYPES.map((t) => `<option value="${t}" ${t === novelty.novelty_type ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      <div class="nm-pay-field"><label>Dias</label><input class="nm-pay-input" id="novDays" type="number" min="0" value="${Number(novelty.days || 0)}"></div>
+      <div class="nm-pay-field"><label>Inicio</label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(String(novelty.start_date || "").slice(0, 10))}"></div>
+      <div class="nm-pay-field"><label>Fin</label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(String(novelty.end_date || "").slice(0, 10))}"></div>
+      <div class="nm-pay-field"><label>Valor</label><input class="nm-pay-input" id="novValue" type="number" min="0" value="${Number(novelty.value || 0)}"></div>
+    </div>
+    <div class="nm-pay-field"><label>Descripcion</label><textarea class="nm-pay-textarea" id="novDesc">${escapeHtml(novelty.description || novelty.observations || "")}</textarea></div>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar cambios</button>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("novSave")?.addEventListener("click", async () => {
+    try {
+      await apiFetch(`/payroll/novelties/${noveltyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          novelty_type: document.getElementById("novType").value,
+          days: document.getElementById("novDays").value,
+          start_date: document.getElementById("novStart").value,
+          end_date: document.getElementById("novEnd").value,
+          value: document.getElementById("novValue").value,
+          description: document.getElementById("novDesc").value,
+        }),
+      });
+      closeModal();
+      await reloadWorkArea();
+      showSuccess("Novedad actualizada");
+    } catch (err) {
+      showError(err.message);
+    }
   });
+}
 
-  // Tabs de grupo
-  document.getElementById("nm3GroupTabs")?.addEventListener("click", e => {
-    const btn = e.target.closest("[data-group]");
-    if (!btn) return;
-    _activeGroup = btn.dataset.group;
-    const tabsEl = document.getElementById("nm3GroupTabs");
-    if (tabsEl) tabsEl.innerHTML = _groupTabsHtml();
-    _refreshTbody();
+function openCoverModal(noveltyId) {
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog">
+  <div class="nm-pay-dialog-h"><b>Quien cubrio esta novedad</b><button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button></div>
+  <div class="nm-pay-dialog-b">
+    <div class="nm-pay-field"><label>Tipo de cobertura</label><select class="nm-pay-select" id="coverType"><option value="INTERNA">Interna</option><option value="EXTERNA">Externa</option></select></div>
+    <div class="nm-pay-form-grid">
+      <div class="nm-pay-field"><label>ID empleado interno</label><input class="nm-pay-input" id="coverInternal" placeholder="Solo para interna"></div>
+      <div class="nm-pay-field"><label>Nombre externo</label><input class="nm-pay-input" id="coverName" placeholder="Solo para externa"></div>
+      <div class="nm-pay-field"><label>Documento externo</label><input class="nm-pay-input" id="coverDoc"></div>
+      <div class="nm-pay-field"><label>Telefono</label><input class="nm-pay-input" id="coverPhone"></div>
+      <div class="nm-pay-field"><label>Banco</label><input class="nm-pay-input" id="coverBank"></div>
+      <div class="nm-pay-field"><label>Cuenta</label><input class="nm-pay-input" id="coverAccount"></div>
+      <div class="nm-pay-field"><label>Dias</label><input class="nm-pay-input" id="coverDays" type="number" value="1"></div>
+      <div class="nm-pay-field"><label>Valor dia</label><input class="nm-pay-input" id="coverValue" type="number" value="0"></div>
+    </div>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="coverSave">Guardar cobertura</button>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("coverSave")?.addEventListener("click", async () => {
+    try {
+      await apiFetch(`/payroll/novelties/${noveltyId}/cover`, {
+        method: "POST",
+        body: JSON.stringify({
+          cover_type: document.getElementById("coverType").value,
+          internal_employee_id: document.getElementById("coverInternal").value,
+          full_name: document.getElementById("coverName").value,
+          document_number: document.getElementById("coverDoc").value,
+          phone: document.getElementById("coverPhone").value,
+          bank: document.getElementById("coverBank").value,
+          account_number: document.getElementById("coverAccount").value,
+          days: document.getElementById("coverDays").value,
+          value_per_day: document.getElementById("coverValue").value,
+        }),
+      });
+      closeModal();
+      await reloadWorkArea();
+      showSuccess("Cobertura registrada");
+    } catch (err) {
+      showError(err.message);
+    }
   });
+}
 
-  // Búsqueda
-  document.getElementById("nm3Search")?.addEventListener("input", e => {
-    _searchText = e.target.value.trim().toLowerCase();
-    _refreshTbody();
-  });
-
-  // Filtros de selección
-  document.getElementById("nm3FiltMun")?.addEventListener("change",  e => { _filterMunicipio   = e.target.value; _refreshTbody(); });
-  document.getElementById("nm3FiltMod")?.addEventListener("change",  e => { _filterModalidad   = e.target.value; _refreshTbody(); });
-  document.getElementById("nm3FiltInst")?.addEventListener("change", e => { _filterInstitucion = e.target.value; _refreshTbody(); });
-  document.getElementById("nm3FiltSede")?.addEventListener("change", e => { _filterSede        = e.target.value; _refreshTbody(); });
-
-  // Ordenar
-  document.getElementById("nm3FiltSort")?.addEventListener("change", e => { _sortBy = e.target.value; _refreshTbody(); });
-  document.getElementById("nm3SortDir")?.addEventListener("click", () => {
-    _sortDir = _sortDir === "asc" ? "desc" : "asc";
-    const btn = document.getElementById("nm3SortDir");
-    if (btn) { btn.textContent = _sortDir === "asc" ? "↑" : "↓"; btn.title = _sortDir === "asc" ? "Ascendente" : "Descendente"; }
-    _refreshTbody();
-  });
-
-  // Filtro novedades
-  document.getElementById("nm3ChkNov")?.addEventListener("change", e => {
-    _filterHasNov = e.target.checked;
-    _refreshTbody();
-  });
-
-  // Guardar / cerrar
-  document.getElementById("nm3BtnSave")?.addEventListener("click", _saveLiquidation);
-  document.getElementById("nm3BtnClose")?.addEventListener("click", _closePeriod);
-
-  // Cerrar modales
-  document.getElementById("nm3NovClose")?.addEventListener("click", _closeNovModal);
-  document.getElementById("nm3NovModal")?.addEventListener("click", e => { if (e.target.id === "nm3NovModal") _closeNovModal(); });
-  document.getElementById("nm3CalcClose")?.addEventListener("click", _closeCalcModal);
-  document.getElementById("nm3CalcModal")?.addEventListener("click", e => { if (e.target.id === "nm3CalcModal") _closeCalcModal(); });
-  document.getElementById("nm3HorasClose")?.addEventListener("click", _closeHorasModal);
-  document.getElementById("nm3HorasModal")?.addEventListener("click", e => { if (e.target.id === "nm3HorasModal") _closeHorasModal(); });
-  document.getElementById("nm3TurnosClose")?.addEventListener("click", _closeTurnosModal);
-  document.getElementById("nm3TurnosModal")?.addEventListener("click", e => { if (e.target.id === "nm3TurnosModal") _closeTurnosModal(); });
-
-  // Delegación de eventos en la tabla
-  const tbody = document.getElementById("nm3Tbody");
-  if (!tbody) return;
-
-  tbody.addEventListener("click", e => {
-    // Novedad badge → abrir modal de novedades
-    const novPill = e.target.closest(".nm3-nov-pill--has");
-    if (novPill) { _openNovModal(Number(novPill.dataset.emp)); return; }
-
-    // Botón agregar novedad
-    const novBtn = e.target.closest(".nm3-act-nov");
-    if (novBtn)  { _openNovModal(Number(novBtn.dataset.emp)); return; }
-
-    // Turno pill
-    const turnoPill = e.target.closest(".nm3-turno-pill--has, .nm3-turno-pill--add");
-    if (turnoPill) { _openTurnosModal(Number(turnoPill.dataset.emp)); return; }
-
-    // Horas pill / botón horas
-    const horasPill = e.target.closest(".nm3-horas-pill");
-    if (horasPill) { _openHorasModal(Number(horasPill.dataset.emp)); return; }
-    const horasBtn = e.target.closest(".nm3-act-horas");
-    if (horasBtn)  { _openHorasModal(Number(horasBtn.dataset.emp));  return; }
-
-    // Botón cálculo detallado
-    const calcBtn = e.target.closest(".nm3-act-calc");
-    if (calcBtn) { _openCalcModal(Number(calcBtn.dataset.emp)); return; }
-
-    // Marcar listo
-    const okBtn = e.target.closest(".nm3-act-ok");
-    if (okBtn) {
-      const empId = Number(okBtn.dataset.emp);
-      const es    = getEs(empId);
-      es.checked  = !es.checked;
-      _refreshRow(empId);
-      _refreshFooter();
+async function toggleReviewed(noveltyId, reviewed, input) {
+  let reason = "";
+  if (!reviewed) {
+    reason = prompt("Motivo para quitar la marca de revisada") || "";
+    if (!reason.trim()) {
+      input.checked = true;
       return;
     }
-  });
-
-  tbody.addEventListener("input", e => {
-    const inp = e.target.closest(".nm3-nc-inp");
-    if (!inp) return;
-    const empId = Number(inp.dataset.emp);
-    const val   = Math.max(0, Math.min(30, parseInt(inp.value, 10) || 0));
-    getEs(empId).diasNoClase = val;
-    _refreshRowCalc(empId);
-    _refreshFooter();
-  });
-}
-
-// ── Modal: novedades ──────────────────────────────────────────────────────────
-
-function _openNovModal(empId) {
-  const emp = _employees.find(e => e.id === empId);
-  _modalEmpId = empId;
-  document.getElementById("nm3NovTitle").textContent = emp ? emp.fullName : "Novedades";
-  document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(empId);
-  document.getElementById("nm3NovModal").removeAttribute("hidden");
-  _wireNovModal();
-}
-
-function _wireNovModal() {
-  document.getElementById("nm3NovAdd")?.addEventListener("click", () => {
-    const typeEl = document.getElementById("nm3NovType");
-    const daysEl = document.getElementById("nm3NovDays");
-    const id     = typeEl?.value;
-    if (!id) { typeEl?.focus(); return; }
-    const days    = Math.max(1, parseInt(daysEl?.value, 10) || 1);
-    const novType = NOVELTY_TYPES.find(t => t.id === id);
-    if (!novType) return;
-    getEs(_modalEmpId).novedades.push({ ...novType, days });
-    document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(_modalEmpId);
-    _wireNovModal();
-    _refreshRow(_modalEmpId);
-    _refreshFooter();
-  });
-
-  document.querySelectorAll(".nm3-del-nov").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const idx = Number(btn.dataset.idx);
-      getEs(_modalEmpId).novedades.splice(idx, 1);
-      document.getElementById("nm3NovBody").innerHTML = _novBodyHtml(_modalEmpId);
-      _wireNovModal();
-      _refreshRow(_modalEmpId);
-      _refreshFooter();
+  }
+  try {
+    await apiFetch(`/payroll/novelties/${noveltyId}/reviewed`, {
+      method: "PATCH",
+      body: JSON.stringify({ reviewed, reason }),
     });
-  });
+    await reloadWorkArea();
+    showSuccess("Revision actualizada");
+  } catch (err) {
+    input.checked = !reviewed;
+    showError(err.message);
+  }
 }
 
-function _closeNovModal() {
-  document.getElementById("nm3NovModal")?.setAttribute("hidden", "");
-  _modalEmpId = null;
-}
-
-// ── Modal: cálculo ────────────────────────────────────────────────────────────
-
-function _openCalcModal(empId) {
-  const emp = _employees.find(e => e.id === empId);
-  if (!emp) return;
-  document.getElementById("nm3CalcTitle").textContent = emp.fullName;
-  document.getElementById("nm3CalcBody").innerHTML    = isHourBased(emp) ? _calcBodyHtmlHours(emp) : _calcBodyHtml(emp);
-  document.getElementById("nm3CalcModal").removeAttribute("hidden");
-}
-
-function _closeCalcModal() {
-  document.getElementById("nm3CalcModal")?.setAttribute("hidden", "");
-}
-
-function _calcBodyHtmlHours(emp) {
-  const es      = getEs(emp.id);
-  const calc    = calcHourEmployee(emp);
-  const modCfg  = (_salaryConfig.modalities || {})[emp.modalityClass] || {};
-  const salBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
-
-  const horasRows = es.horasDiarias.length
-    ? es.horasDiarias.map(d => `
-      <tr>
-        <td>${d.fecha}</td>
-        <td class="nm3-ar">${d.horas}h</td>
-        <td class="nm3-ar nm3-green">+ ${fmtCOP(Math.round(calc.valorHora * d.horas))}</td>
-      </tr>`).join("")
-    : `<tr><td colspan="3" class="nm3-empty-td">Sin horas registradas</td></tr>`;
-
-  return `
-<div class="nm3-calc-wrap">
-  <div class="nm3-calc-info">
-    <div class="nm3-ci"><span>Documento</span><b>${escapeHtml(emp.documentType || "CC")} ${escapeHtml(emp.documentNumber)}</b></div>
-    <div class="nm3-ci"><span>Cargo</span><b>${escapeHtml(emp.cargo || "—")}</b></div>
-    <div class="nm3-ci"><span>Grupo</span><b>${_getGroup(emp)}</b></div>
-    <div class="nm3-ci"><span>Salario base</span><b>${fmtCOP(salBase)}</b></div>
-    <div class="nm3-ci"><span>Valor hora (÷240)</span><b>${fmtCOP(calc.valorHora)}</b></div>
-    <div class="nm3-ci"><span>Total horas</span><b>${calc.totalHoras}h</b></div>
-  </div>
-  <table class="nm3-tbl nm3-tbl--calc">
-    <tbody>
-      <tr class="nm3-calc-sec"><td colspan="3">📅 Horas trabajadas</td></tr>
-      <tr><th>Fecha</th><th class="nm3-ar">Horas</th><th class="nm3-ar">Valor</th></tr>
-      ${horasRows}
-      <tr class="nm3-calc-sec"><td colspan="3">💰 Devengados</td></tr>
-      <tr><td>Devengado (${calc.totalHoras}h × ${fmtCOP(calc.valorHora)})</td><td colspan="2" class="nm3-ar nm3-green">+ ${fmtCOP(calc.devengado)}</td></tr>
-      <tr class="nm3-calc-sub"><td><b>Total devengado</b></td><td colspan="2" class="nm3-ar"><b>${fmtCOP(calc.devengado)}</b></td></tr>
-      <tr class="nm3-calc-sec"><td colspan="3">🔻 Deducciones</td></tr>
-      <tr><td>Salud empleado (4%)</td><td colspan="2" class="nm3-ar nm3-red">− ${fmtCOP(calc.salud)}</td></tr>
-      <tr><td>Pensión empleado (4%)</td><td colspan="2" class="nm3-ar nm3-red">− ${fmtCOP(calc.pension)}</td></tr>
-      <tr class="nm3-calc-sub"><td><b>Total deducciones</b></td><td colspan="2" class="nm3-ar nm3-red"><b>− ${fmtCOP(calc.totalDed)}</b></td></tr>
-      <tr class="nm3-calc-neto"><td>NETO A PAGAR</td><td colspan="2" class="nm3-ar"><strong>${fmtCOP(calc.neto)}</strong></td></tr>
-    </tbody>
-  </table>
-</div>`;
-}
-
-// ── Modal: horas diarias ──────────────────────────────────────────────────────
-
-function _horasBodyHtml(empId) {
-  const es      = getEs(empId);
-  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
-  const start   = new Date((_currentPeriod?.period_start || new Date().toISOString().slice(0, 10)) + "T00:00:00Z");
-  const end     = new Date((_currentPeriod?.period_end   || new Date().toISOString().slice(0, 10)) + "T00:00:00Z");
-
-  const horasMap = {};
-  for (const d of es.horasDiarias) horasMap[d.fecha] = d.horas;
-
-  const days = [];
-  const cur  = new Date(start);
-  while (cur <= end) { days.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
-
-  const DOW = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
-  const totalHoras = es.horasDiarias.reduce((s, d) => s + (Number(d.horas) || 0), 0);
-  const emp        = _employees.find(e => e.id === empId);
-  const modCfg     = (_salaryConfig.modalities || {})[emp?.modalityClass] || {};
-  const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
-  const valorHora  = Math.round(salaryBase / 240);
-  const devengado  = Math.round(valorHora * totalHoras);
-
-  const dayInputs = days.map(fecha => {
-    const d          = new Date(fecha + "T00:00:00Z");
-    const dow        = d.getUTCDay();
-    const isWeekend  = dow === 0 || dow === 6;
-    const horas      = horasMap[fecha] ?? "";
-    return `
-<div class="nm3-horas-day ${isWeekend ? "nm3-horas-day--wknd" : ""}">
-  <div class="nm3-horas-dow">${DOW[dow]}</div>
-  <div class="nm3-horas-date">${d.getUTCDate()}</div>
-  ${canEdit
-    ? `<input type="number" class="nm3-horas-inp" data-fecha="${fecha}" value="${horas}" min="0" max="24" placeholder="0">`
-    : `<div class="nm3-horas-ro">${horas !== "" ? horas + "h" : "—"}</div>`}
-</div>`;
-  }).join("");
-
-  return `
-<div class="nm3-horas-wrap">
-  ${canEdit ? `
-  <div class="nm3-horas-actions">
-    <button class="nm3-btn nm3-btn--sm nm3-btn--outline" id="nm3HorasFillWk">Días hábiles (8h)</button>
-    <button class="nm3-btn nm3-btn--sm nm3-btn--outline" id="nm3HorasClear">Limpiar todo</button>
-  </div>` : ""}
-  <div class="nm3-horas-grid">${dayInputs}</div>
-  <div class="nm3-horas-summary" id="nm3HorasSummary">
-    <span>Total horas: <strong>${totalHoras}h</strong></span>
-    <span>Valor/hora: <strong>${fmtCOP(valorHora)}</strong></span>
-    <span>Devengado: <strong class="nm3-green">${fmtCOP(devengado)}</strong></span>
+async function openSupportsModal() {
+  try {
+    const params = activePeriod ? `?periodId=${activePeriod.id}` : "";
+    const response = await apiFetch(`/payroll/supports${params}`);
+    const supports = Array.isArray(response.data) ? response.data : [];
+    const modal = document.getElementById("nmPayModal");
+    modal.innerHTML = `
+<div class="nm-pay-dialog">
+  <div class="nm-pay-dialog-h"><b>Control de soportes de novedades</b><button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button></div>
+  <div class="nm-pay-dialog-b">
+    ${supports.length ? `
+    <table class="nm-pay-table">
+      <thead><tr><th>Empleado</th><th>Municipio</th><th>Novedad</th><th>Soporte</th><th>Estado</th><th>Observaciones</th><th></th></tr></thead>
+      <tbody>${supports.map((s) => `
+        <tr>
+          <td>${escapeHtml(s.employee_name || "")}<br><small>${escapeHtml(s.document_number || "")}</small></td>
+          <td>${escapeHtml(s.municipality_name || "")}</td>
+          <td>${escapeHtml(s.novelty_type || "")}</td>
+          <td>${escapeHtml(s.support_type || "")}</td>
+          <td>${escapeHtml(s.status || "")}</td>
+          <td>${escapeHtml(s.observations || "")}</td>
+          <td>
+            <button class="nm-pay-btn nm-pay-btn--sm" data-support-status="${s.id}" data-status="cargado">Cargado</button>
+            <button class="nm-pay-btn nm-pay-btn--sm" data-support-status="${s.id}" data-status="aprobado">Aprobar</button>
+            <button class="nm-pay-btn nm-pay-btn--sm" data-support-status="${s.id}" data-status="rechazado">Rechazar</button>
+          </td>
+        </tr>`).join("")}</tbody>
+    </table>` : `<div class="nm-pay-empty">No hay soportes pendientes o registrados.</div>`}
+    <div class="nm-pay-doc">Los soportes son informativos y no bloquean calculo, revision, cierre, exportacion ni pago.</div>
   </div>
 </div>`;
-}
-
-function _openHorasModal(empId) {
-  const emp = _employees.find(e => e.id === empId);
-  _modalEmpId = empId;
-  document.getElementById("nm3HorasTitle").textContent = emp ? emp.fullName : "Horas diarias";
-  document.getElementById("nm3HorasBody").innerHTML    = _horasBodyHtml(empId);
-  document.getElementById("nm3HorasModal").removeAttribute("hidden");
-  _wireHorasModal(empId);
-}
-
-function _closeHorasModal() {
-  document.getElementById("nm3HorasModal")?.setAttribute("hidden", "");
-  _modalEmpId = null;
-}
-
-function _wireHorasModal(empId) {
-  const body = document.getElementById("nm3HorasBody");
-  if (!body) return;
-
-  const _update = () => {
-    const es   = getEs(empId);
-    const inps = body.querySelectorAll(".nm3-horas-inp");
-    es.horasDiarias = [];
-    inps.forEach(inp => {
-      const horas = Number(inp.value) || 0;
-      if (horas > 0) es.horasDiarias.push({ fecha: inp.dataset.fecha, horas });
-    });
-    const totalHoras = es.horasDiarias.reduce((s, d) => s + d.horas, 0);
-    const emp        = _employees.find(e => e.id === empId);
-    const modCfg     = (_salaryConfig.modalities || {})[emp?.modalityClass] || {};
-    const salaryBase = modCfg.salary || (_salaryConfig.smlv || 1_750_905);
-    const valorHora  = Math.round(salaryBase / 240);
-    const devengado  = Math.round(valorHora * totalHoras);
-    const sumEl      = document.getElementById("nm3HorasSummary");
-    if (sumEl) sumEl.innerHTML = `
-      <span>Total horas: <strong>${totalHoras}h</strong></span>
-      <span>Valor/hora: <strong>${fmtCOP(valorHora)}</strong></span>
-      <span>Devengado: <strong class="nm3-green">${fmtCOP(devengado)}</strong></span>`;
-    _refreshRow(empId);
-    _refreshFooter();
-  };
-
-  body.querySelectorAll(".nm3-horas-inp").forEach(inp => inp.addEventListener("input", _update));
-
-  document.getElementById("nm3HorasFillWk")?.addEventListener("click", () => {
-    body.querySelectorAll(".nm3-horas-inp").forEach(inp => {
-      const dow = new Date(inp.dataset.fecha + "T00:00:00Z").getUTCDay();
-      if (dow !== 0 && dow !== 6) inp.value = "8";
-    });
-    _update();
-  });
-
-  document.getElementById("nm3HorasClear")?.addEventListener("click", () => {
-    body.querySelectorAll(".nm3-horas-inp").forEach(inp => { inp.value = ""; });
-    _update();
-  });
-}
-
-// ── Modal: turnos realizados ──────────────────────────────────────────────────
-
-function _turnosBodyHtml(empId) {
-  const es      = getEs(empId);
-  const canEdit = isTH() && _currentPeriod?.status !== "CERRADO";
-  const modalities = Object.keys(_salaryConfig.modalities || {});
-
-  const rows = es.turnos.length
-    ? es.turnos.map((t, i) => `
-      <tr>
-        <td>${escapeHtml(t.modalidad)}</td>
-        <td class="nm3-ar">${t.dias} d</td>
-        <td class="nm3-ar">${fmtCOP(Math.round(((_salaryConfig.modalities?.[t.modalidad]?.salary || _salaryConfig.smlv || 0) / 30)))}</td>
-        <td class="nm3-ar">${fmtCOP(Math.round(((_salaryConfig.modalities?.[t.modalidad]?.salary || _salaryConfig.smlv || 0) / 30) * (Number(t.dias) || 0)))}</td>
-        ${canEdit ? `<td><button class="nm3-del-turno" data-idx="${i}" title="Eliminar">✕</button></td>` : ""}
-      </tr>`).join("")
-    : `<tr><td colspan="${canEdit ? 5 : 4}" class="nm3-empty-td">Sin turnos registrados.</td></tr>`;
-
-  return `
-<div class="nm3-nov-wrap">
-  <table class="nm3-tbl nm3-tbl--modal">
-    <thead>
-      <tr>
-        <th>Modalidad</th>
-        <th class="nm3-ar">Dias</th>
-        <th class="nm3-ar">Valor unitario</th>
-        <th class="nm3-ar">Total turno</th>
-        ${canEdit ? "<th></th>" : ""}
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  ${canEdit ? `
-  <div class="nm3-nov-form">
-    <div class="nm3-nov-form-lbl">Agregar turno realizado</div>
-    <div class="nm3-nov-form-row">
-      <select class="nm3-sel nm3-nov-sel" id="nm3TurnoMod">
-        <option value="">— Modalidad —</option>
-        ${modalities.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("")}
-      </select>
-      <input type="number" class="nm3-nc-inp" id="nm3TurnoDias" value="1" min="1" max="30" placeholder="Días" style="width:72px">
-      <span class="nm3-unit">días</span>
-      <button class="nm3-btn nm3-btn--primary nm3-btn--sm" id="nm3TurnoAdd">＋ Agregar</button>
-    </div>
-  </div>` : ""}
-</div>`;
-}
-
-function _openTurnosModal(empId) {
-  const emp = _employees.find(e => e.id === empId);
-  _modalEmpId = empId;
-  document.getElementById("nm3TurnosTitle").textContent = emp ? emp.fullName : "Turnos realizados";
-  document.getElementById("nm3TurnosBody").innerHTML    = _turnosBodyHtml(empId);
-  document.getElementById("nm3TurnosModal").removeAttribute("hidden");
-  _wireTurnosModal();
-}
-
-function _closeTurnosModal() {
-  document.getElementById("nm3TurnosModal")?.setAttribute("hidden", "");
-  _modalEmpId = null;
-}
-
-function _wireTurnosModal() {
-  document.getElementById("nm3TurnoAdd")?.addEventListener("click", () => {
-    const modEl  = document.getElementById("nm3TurnoMod");
-    const diasEl = document.getElementById("nm3TurnoDias");
-    const mod    = modEl?.value;
-    if (!mod) { modEl?.focus(); return; }
-    const dias = Math.max(1, parseInt(diasEl?.value, 10) || 1);
-    getEs(_modalEmpId).turnos.push({ modalidad: mod, dias });
-    document.getElementById("nm3TurnosBody").innerHTML = _turnosBodyHtml(_modalEmpId);
-    _wireTurnosModal();
-    _refreshRow(_modalEmpId);
-    _refreshFooter();
-  });
-
-  document.querySelectorAll(".nm3-del-turno").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const idx = Number(btn.dataset.idx);
-      getEs(_modalEmpId).turnos.splice(idx, 1);
-      document.getElementById("nm3TurnosBody").innerHTML = _turnosBodyHtml(_modalEmpId);
-      _wireTurnosModal();
-      _refreshRow(_modalEmpId);
-      _refreshFooter();
-    });
-  });
-}
-
-// ── Refreshes parciales ───────────────────────────────────────────────────────
-
-function _refreshTbody() {
-  const tbody   = document.getElementById("nm3Tbody");
-  const theadEl = document.getElementById("nm3Thead");
-  const countEl = document.getElementById("nm3Count");
-  if (!tbody) return;
-  if (theadEl) theadEl.innerHTML = _tableHeaderHtml();
-  const filtered = _filtered();
-  tbody.innerHTML = filtered.length
-    ? filtered.map((e, i) => _rowForEmp(e, i)).join("")
-    : `<tr><td colspan="${_colCount()}" class="nm3-empty-td">Sin resultados.</td></tr>`;
-  if (countEl) countEl.textContent = `${filtered.length} de ${_employees.length}`;
-  _refreshFooter();
-}
-
-function _refreshRow(empId) {
-  const tbody = document.getElementById("nm3Tbody");
-  if (!tbody) return;
-  const emp = _employees.find(e => e.id === empId);
-  if (!emp) return;
-  const existing = tbody.querySelector(`[data-emp-id="${empId}"]`);
-  if (!existing) return;
-  const allFiltered = _filtered();
-  const idx  = allFiltered.findIndex(e => e.id === empId);
-  const temp = document.createElement("tbody");
-  temp.innerHTML = _rowForEmp(emp, idx >= 0 ? idx : 0);
-  existing.replaceWith(temp.firstElementChild);
-}
-
-function _refreshRowCalc(empId) {
-  const emp = _employees.find(e => e.id === empId);
-  if (!emp) return;
-  const es   = getEs(empId);
-  const calc = calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
-  const row  = document.querySelector(`#nm3Tbody [data-emp-id="${empId}"]`);
-  if (!row) return;
-  const devEl  = row.querySelector(".nm3-td-dev");
-  const dedEl  = row.querySelector(".nm3-td-ded");
-  const netoEl = row.querySelector(".nm3-td-neto");
-  if (devEl)  devEl.textContent = fmtCOP(calc.totalDev);
-  if (dedEl)  dedEl.innerHTML   = `<div class="nm3-ded-main">− ${fmtCOP(calc.totalDed)}</div><div class="nm3-ded-det">S ${fmtCOP(calc.salud)} · P ${fmtCOP(calc.pension)}</div>`;
-  if (netoEl) netoEl.textContent = fmtCOP(calc.neto);
-}
-
-function _refreshFooter() {
-  const el   = document.getElementById("nm3Footer");
-  const pill = document.getElementById("nm3DonePill");
-  if (el) el.innerHTML = _totalsHtml();
-  if (pill) {
-    const done = [..._empState.values()].filter(e => e.checked).length;
-    pill.textContent = `${done}/${_employees.length} revisados`;
-  }
-}
-
-// ── API calls ─────────────────────────────────────────────────────────────────
-
-async function _loadPeriods() {
-  const contractId = getContractId();
-  if (!contractId) return;
-  try {
-    const [periodsResp, empsResp] = await Promise.all([
-      apiFetch(`/nomina/periods?contractId=${contractId}`),
-      apiFetch(`/nomina/employees?contractId=${contractId}`).catch(() => ({ data: [] })),
-    ]);
-    _periods = Array.isArray(periodsResp.data) ? periodsResp.data : [];
-    // Build unique municipality list from employees
-    const allEmps = Array.isArray(empsResp.data) ? empsResp.data : [];
-    const munMap  = new Map();
-    for (const e of allEmps) {
-      if (e.municipalityId && e.municipalityName) munMap.set(e.municipalityId, e.municipalityName);
-    }
-    _availableMunicipalities = Array.from(munMap.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name, "es"));
-    // Reset selection if previous municipality no longer exists
-    if (_selectedMunicipalityId && !munMap.has(_selectedMunicipalityId)) {
-      _selectedMunicipalityId   = 0;
-      _selectedMunicipalityName = "";
-    }
-  } catch { _periods = []; _availableMunicipalities = []; }
-}
-
-async function _loadPeriodDetail(periodId) {
-  const contractId = getContractId();
-  try {
-    const empsUrl = _selectedMunicipalityId
-      ? `/nomina/employees?contractId=${contractId}&municipalityId=${_selectedMunicipalityId}`
-      : `/nomina/employees?contractId=${contractId}`;
-    const [periodResp, empsResp, salResp] = await Promise.all([
-      apiFetch(`/nomina/periods/${periodId}`),
-      apiFetch(empsUrl),
-      apiFetch(`/config/contracts/${contractId}/salary-config`),
-    ]);
-
-    _currentPeriod = periodResp.data.period;
-    _employees     = Array.isArray(empsResp.data) ? empsResp.data : [];
-    _salaryConfig  = salResp.data || {};
-    _searchText    = "";
-    _filterHasNov  = false;
-
-    _empState.clear();
-    for (const emp of _employees) {
-      _empState.set(emp.id, { diasNoClase: 0, novedades: [], horasDiarias: [], turnos: [], checked: false });
-    }
-    for (const r of (periodResp.data.results || [])) {
-      const es = _empState.get(Number(r.employeeId));
-      if (es) {
-        es.diasNoClase  = r.diasNoClase || 0;
-        es.novedades    = Array.isArray(r.novedades)    ? r.novedades    : [];
-        es.horasDiarias = Array.isArray(r.horasDiarias) ? r.horasDiarias : [];
-        es.turnos       = Array.isArray(r.turnos)       ? r.turnos       : [];
-      }
-    }
-
-    _view = "detail";
-    _renderDetailView();
+    modal.hidden = false;
+    wireModalClose();
+    modal.querySelectorAll("[data-support-status]").forEach((button) => button.addEventListener("click", async () => {
+      await apiFetch("/payroll/supports", {
+        method: "POST",
+        body: JSON.stringify({ id: button.dataset.supportStatus, status: button.dataset.status }),
+      });
+      closeModal();
+      await reloadWorkArea();
+      showSuccess("Soporte actualizado");
+    }));
   } catch (err) {
-    showError("Error cargando el período: " + err.message);
+    showError(err.message);
   }
 }
 
-async function _saveLiquidation() {
-  if (!_currentPeriod) return;
-  const btn = document.getElementById("nm3BtnSave");
-  if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
-
-  try {
-    const lines = _employees.map(emp => {
-      const es        = getEs(emp.id);
-      const hourBased = isHourBased(emp);
-      return {
-        employeeId: emp.id, fullName: emp.fullName,
-        documentNumber: emp.documentNumber, documentType: emp.documentType,
-        siteName: emp.siteName, institutionName: emp.institutionName,
-        municipalityName: emp.municipalityName, modality: emp.modality,
-        modalityClass: emp.modalityClass, workdayType: emp.workdayType,
-        cargo: emp.cargo || "",
-        diasNoClase:  es.diasNoClase,
-        novedades:    es.novedades,
-        horasDiarias: es.horasDiarias,
-        turnos:       es.turnos,
-        payrollType:  hourBased ? "horas" : "mensual",
-      };
-    });
-
-    const r = await apiFetch(`/nomina/periods/${_currentPeriod.id}/save`, {
-      method: "POST",
-      body: JSON.stringify({ lines }),
-    });
-
-    _currentPeriod.status = "CALCULADO";
-    showSuccess(`Nómina guardada · ${r.data.totals.employees} empleados`);
-    _renderDetailView();
-  } catch (err) {
-    showError("Error al guardar: " + err.message);
-    if (btn) { btn.disabled = false; btn.textContent = "💾 Guardar"; }
-  }
+function wireModalClose() {
+  document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", closeModal));
 }
 
-async function _closePeriod() {
-  if (!_currentPeriod) return;
-  if (!confirm(`¿Cerrar definitivamente la nómina "${_currentPeriod.label}"? Esta acción no se puede revertir.`)) return;
-  try {
-    await apiFetch(`/nomina/periods/${_currentPeriod.id}/close`, { method: "POST" });
-    _currentPeriod.status = "CERRADO";
-    showSuccess("Período cerrado");
-    _renderDetailView();
-  } catch (err) {
-    showError("Error al cerrar: " + err.message);
+function closeModal() {
+  const modal = document.getElementById("nmPayModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.innerHTML = "";
   }
 }
-
-// ── Exports ───────────────────────────────────────────────────────────────────
 
 export async function loadPayrollModule() {
-  _view = "list"; _currentPeriod = null; _employees = [];
-  _salaryConfig = {}; _empState.clear(); _searchText = ""; _filterHasNov = false;
-  _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
-  _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
-  _selectedMunicipalityId = 0; _selectedMunicipalityName = ""; _availableMunicipalities = [];
-  await _loadPeriods();
-  return `<div class="nm3-shell"><div id="nm3-root"></div></div>`;
+  periods = [];
+  activePeriod = null;
+  groupsState = { positions: [], groups: [] };
+  activePosition = "";
+  activeGroupId = null;
+  activeGroupDetail = null;
+  municipalitySearch = "";
+  await loadPeriods();
+  await loadGroups();
+  await loadGroupDetail();
+  return shell();
 }
 
 export function wirePayrollEvents() {
-  _renderListView();
+  render();
 }

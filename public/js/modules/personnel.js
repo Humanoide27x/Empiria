@@ -653,6 +653,39 @@ function getPersonnelMunicipalityNameById(municipalityId) {
   return found?.name || "";
 }
 
+function getDraftMunicipalityId(draft = {}) {
+  const raw = draft.municipality_id ?? draft.municipalityId ?? draft.municipio_id ?? "";
+  if (String(raw || "").trim()) return String(raw).trim();
+
+  const rawName = draft.municipalityName ?? draft.municipality_name ?? draft.municipality ?? draft.municipio ?? "";
+  if (!String(rawName || "").trim()) return "";
+
+  const found = META_MUNICIPALITIES.find(
+    (item) => normalizeCatalogText(item.name) === normalizeCatalogText(rawName)
+  );
+  return found?.id ? String(found.id) : "";
+}
+
+function getDraftMunicipalityName(draft = {}) {
+  const id = getDraftMunicipalityId(draft);
+  return getPersonnelMunicipalityNameById(id)
+    || String(draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "").trim();
+}
+
+function syncDraftOfficialMunicipality(draft = state.personnelDraft || {}) {
+  const municipalityId = getDraftMunicipalityId(draft);
+  draft.municipalityId = municipalityId;
+  draft.municipality_id = municipalityId;
+  const municipalityName = municipalityId
+    ? getPersonnelMunicipalityNameById(municipalityId)
+    : String(draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "").trim();
+  draft.municipalityName = municipalityName;
+  draft.municipality_name = municipalityName;
+  draft.educationalMunicipality = municipalityName;
+  draft.educational_municipality = municipalityName;
+  return municipalityId;
+}
+
 async function loadEducationalScopeOptions(draft = state.personnelDraft || {}, { force = false } = {}) {
   if (!_cachedPayload) _cachedPayload = {};
 
@@ -789,20 +822,8 @@ function _refreshPersonnelSection() {
       : state.educationalCatalog || {};
   const educationalCatalogMeta = _cachedPayload?.educationalCatalogMeta || {};
 
-  const institutionalMunicipalityRaw = firstDv(
-    "educationalMunicipality", "educational_municipality",
-    "municipio_educativo", "municipio_institucional",
-    "municipalityName", "municipality", "municipio"
-  );
-  const municipalityNameResolved = (() => {
-    const catalogKey = findCatalogKey(educationalCatalog, institutionalMunicipalityRaw);
-    if (catalogKey) return catalogKey;
-    const found = META_MUNICIPALITIES.find(
-      m => String(m.id) === String(institutionalMunicipalityRaw) ||
-           String(m.name).toUpperCase() === String(institutionalMunicipalityRaw).toUpperCase()
-    );
-    return found ? found.name : institutionalMunicipalityRaw;
-  })();
+  syncDraftOfficialMunicipality(draft);
+  const municipalityNameResolved = getDraftMunicipalityName(draft);
   const municipalityKey      = findCatalogKey(educationalCatalog, municipalityNameResolved);
   const institutionalMunicipality = municipalityKey || municipalityNameResolved;
   const municipalityCatalog  = municipalityKey ? educationalCatalog[municipalityKey] : {};
@@ -936,10 +957,11 @@ function findCatalogKey(object, value) {
 function syncInstitutionalSelectionsWithCatalog(draft = state.personnelDraft || {}, educationalCatalog = {}) {
   if (!draft || !educationalCatalog || typeof educationalCatalog !== "object") return;
 
-  const municipalityRaw = draft.educationalMunicipality || draft.educational_municipality || "";
+  const municipalityRaw = getDraftMunicipalityName(draft);
+  draft.educationalMunicipality = municipalityRaw;
+  draft.educational_municipality = municipalityRaw;
   const municipalityKey = findCatalogKey(educationalCatalog, municipalityRaw);
   if (!municipalityKey) {
-    draft.educationalMunicipality = "";
     draft.institution = "";
     draft.site = "";
     draft.educationalModality = "";
@@ -1517,9 +1539,12 @@ function buildTabInstitucional(
     `;
   }
 
+  const hasOfficialMunicipality = Boolean(String(draftValue("municipalityId") || "").trim());
   const hasCoverageCatalog = Array.isArray(institutionalMunicipalities) && institutionalMunicipalities.length > 0;
   const infoMessage = educationalCatalogMessage || (
-    hasCoverageCatalog ? "Selecciona municipio, institución, sede y modalidad desde la cobertura PAE vigente." : ""
+    !hasOfficialMunicipality
+      ? "Seleccione primero el municipio en Vinculación."
+      : hasCoverageCatalog ? "Selecciona institución, sede y modalidad desde la cobertura PAE vigente." : ""
   );
 
   return `
@@ -1546,7 +1571,7 @@ function buildTabInstitucional(
             ${renderOptions(
               institutionNames,
               selectedInstitution,
-              institutionalMunicipality ? "Selecciona institución" : "Selecciona primero municipio"
+              institutionalMunicipality ? "Selecciona institución" : "Seleccione primero el municipio en Vinculación"
             )}
           </select>
         </label>
@@ -2111,22 +2136,8 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
       : state.educationalCatalog || {};
   const educationalCatalogMeta = _cachedPayload?.educationalCatalogMeta || {};
 
-  const institutionalMunicipalityRaw = firstDraftValue(
-    "educationalMunicipality", "educational_municipality",
-    "municipio_educativo", "municipio_institucional",
-    "municipalityName", "municipality", "municipio"
-  );
-
-  const municipalityNameResolved = (() => {
-    const catalogKey = findCatalogKey(educationalCatalog, institutionalMunicipalityRaw);
-    if (catalogKey) return catalogKey;
-    const found = META_MUNICIPALITIES.find(
-      (m) =>
-        String(m.id) === String(institutionalMunicipalityRaw) ||
-        String(m.name).toUpperCase() === String(institutionalMunicipalityRaw).toUpperCase()
-    );
-    return found ? found.name : institutionalMunicipalityRaw;
-  })();
+  syncDraftOfficialMunicipality(draft);
+  const municipalityNameResolved = getDraftMunicipalityName(draft);
 
   const municipalityKey       = findCatalogKey(educationalCatalog, municipalityNameResolved);
   const institutionalMunicipality = municipalityKey || municipalityNameResolved;
@@ -2310,25 +2321,12 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
         if (e.target.name === "presentedInOffer" && e.target.value !== "true")
           state.personnelDraft.offerPosition = "";
         if (e.target.name === "municipalityId") {
-          const munId  = Number(e.target.value);
-          const munObj = META_MUNICIPALITIES.find((m) => m.id === munId);
-          state.personnelDraft.educationalMunicipality = munObj ? munObj.name : "";
+          syncDraftOfficialMunicipality(state.personnelDraft);
           state.personnelDraft.institution             = "";
           state.personnelDraft.site                    = "";
           state.personnelDraft.educationalModality     = "";
           state.personnelDraft.gestorZona              = "";
           state.personnelDraft.auxiliarGestorZona      = "";
-          shouldReloadGestores = true;
-          shouldValidateGestorSelection = true;
-        }
-        if (e.target.name === "educationalMunicipality") {
-          const munObj = META_MUNICIPALITIES.find((m) => m.name === e.target.value);
-          if (munObj) state.personnelDraft.municipalityId = munObj.id;
-          state.personnelDraft.institution         = "";
-          state.personnelDraft.site                = "";
-          state.personnelDraft.educationalModality = "";
-          state.personnelDraft.gestorZona          = "";
-          state.personnelDraft.auxiliarGestorZona  = "";
           shouldReloadGestores = true;
           shouldValidateGestorSelection = true;
         }
@@ -2704,7 +2702,19 @@ function hydratePersonnelDraft(found) {
     found.presentedInOffer === true             ||
     found.presentedInOffer === "true";
 
-  return {
+  const rawMunicipalityId =
+    found.municipality_id ?? found.municipalityId ?? found.municipio_id ?? "";
+  const rawMunicipalityName =
+    found.municipality_name ?? found.municipalityName ?? found.municipality ?? found.municipio ?? "";
+  const normalizedMunicipalityId = String(rawMunicipalityId || "").trim()
+    || String(META_MUNICIPALITIES.find(
+      (item) => normalizeCatalogText(item.name) === normalizeCatalogText(rawMunicipalityName)
+    )?.id || "");
+  const normalizedMunicipalityName = normalizedMunicipalityId
+    ? getPersonnelMunicipalityNameById(normalizedMunicipalityId)
+    : String(rawMunicipalityName || "").trim();
+
+  const draft = {
     firstName:    found.primer_nombre  || found.firstName  || "",
     secondName:   found.segundo_nombre || found.secondName || "",
     firstLastName:  found.primer_apellido  || found.firstLastName  || "",
@@ -2731,15 +2741,10 @@ function hydratePersonnelDraft(found) {
 
     companyId:    found.company_id  || found.companyId  || "",
     contractId:   found.contract_id || found.contractId || "",
-    municipalityId: (() => {
-      const rawMunicipalityId = found.municipalityId || found.municipality_id || found.municipio_id || "";
-      if (String(rawMunicipalityId).trim()) return rawMunicipalityId;
-      const rawMunicipalityName = found.municipalityName || found.municipality_name || found.municipality || found.municipio || "";
-      const municipality = META_MUNICIPALITIES.find(
-        (item) => normalizeCatalogText(item.name) === normalizeCatalogText(rawMunicipalityName)
-      );
-      return municipality?.id || "";
-    })(),
+    municipalityId: normalizedMunicipalityId,
+    municipality_id: normalizedMunicipalityId,
+    municipalityName: normalizedMunicipalityName,
+    municipality_name: normalizedMunicipalityName,
 
     presentedInOffer: isPresentedInOffer ? "true" : "false",
     offerPosition: isPresentedInOffer
@@ -2757,9 +2762,8 @@ function hydratePersonnelDraft(found) {
     civilStatus:        found.estado_civil  || found.civilStatus  || "",
     residenceZone:      found.zona_residencia || found.residenceZone || "",
 
-    educationalMunicipality:
-      found.educationalMunicipality || found.educational_municipality ||
-      found.municipio_educativo     || found.municipio_institucional  || "",
+    educationalMunicipality: normalizedMunicipalityName,
+    educational_municipality: normalizedMunicipalityName,
     institution:       found.institution || found.institutionName || found.institution_name || found.institucion_educativa || "",
     site:              found.site        || found.siteName        || found.site_name        || found.sede_educativa        || "",
     educationalModality: found.educationalModality || found.modality || found.modalidad || "",
@@ -2825,6 +2829,8 @@ function hydratePersonnelDraft(found) {
     hasAuxiliarGestor:   (found.auxiliarGestorZona  || found.auxiliar_gestor_zona) ? "true" : "",
     municipiosACargo:    found.municipiosACargo      || found.municipios_a_cargo    || "",
   };
+  syncDraftOfficialMunicipality(draft);
+  return draft;
 }
 
 // ── renderPersonnelTableModule ────────────────────────────────────────────────
@@ -3486,6 +3492,8 @@ export async function handlePersonnelFormSubmit(event) {
     }
   }
 
+  syncDraftOfficialMunicipality(d);
+
   const payload = {
     // Identificación
     firstName:              d.firstName              || "",
@@ -3517,6 +3525,9 @@ export async function handlePersonnelFormSubmit(event) {
     municipalityId:
       document.querySelector('#personnelForm [name="municipalityId"]')?.value ||
       d.municipalityId || "",
+    municipality_id:
+      document.querySelector('#personnelForm [name="municipalityId"]')?.value ||
+      d.municipality_id || d.municipalityId || "",
 
     // Licitación
     presentedInOffer: d.presentedInOffer || "",
@@ -3534,7 +3545,7 @@ export async function handlePersonnelFormSubmit(event) {
     residenceZone:        d.residenceZone        || "",
 
     // Institucional
-    educationalMunicipality: d.educationalMunicipality || "",
+    educationalMunicipality: getDraftMunicipalityName(d),
     institution:             d.institution             || "",
     site:                    d.site                    || "",
     educationalModality:     d.educationalModality     || "",

@@ -14,6 +14,7 @@ const {
   createSafeAccessLog,
   requireAdministrator,
 } = require("../auth/auth.helpers");
+const pool = require("../../db/pool");
 
 function handleAdminResetMfa(req, res) {
   if (req.method !== "POST") {
@@ -187,9 +188,118 @@ function handleAccessLogs(req, res) {
   }
 }
 
+async function handleMunicipalityIntegrity(req, res) {
+  if (req.method !== "GET") {
+    sendMethodNotAllowed(res);
+    return;
+  }
+
+  const auth = requireAdministrator(req, res);
+  if (!auth) return;
+
+  try {
+    const [
+      employeesNoMunicipality,
+      employeesInvalidMunicipality,
+      institutionsNoMunicipality,
+      orphanSites,
+      coverageRowsNoMunicipality,
+      payrollGroupsNoMunicipality,
+    ] = await Promise.all([
+      // Empleados activos sin municipality_id
+      pool.query(`
+        SELECT id, full_name, document_number, real_position, status, contract_id, company_id
+        FROM employees
+        WHERE municipality_id IS NULL
+          AND UPPER(TRIM(COALESCE(status, ''))) NOT IN ('RETIRADO','RETIRADA','INACTIVO','INACTIVA')
+        ORDER BY full_name
+        LIMIT 200
+      `),
+      // Empleados con municipality_id que no existe en el catálogo
+      pool.query(`
+        SELECT e.id, e.full_name, e.municipality_id
+        FROM employees e
+        WHERE e.municipality_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM municipalities m WHERE m.id = e.municipality_id)
+        ORDER BY e.full_name
+        LIMIT 200
+      `),
+      // Instituciones sin municipality_id
+      pool.query(`
+        SELECT id, name FROM institutions WHERE municipality_id IS NULL ORDER BY name LIMIT 200
+      `),
+      // Sedes educativas sin institución válida
+      pool.query(`
+        SELECT s.id, s.name, s.institution_id
+        FROM educational_sites s
+        WHERE s.institution_id IS NULL
+           OR NOT EXISTS (SELECT 1 FROM institutions i WHERE i.id = s.institution_id)
+        ORDER BY s.name
+        LIMIT 200
+      `),
+      // Filas de cobertura sin municipality_id
+      pool.query(`
+        SELECT DISTINCT municipality, COUNT(*) AS rows
+        FROM coverage_upload_rows
+        WHERE municipality_id IS NULL
+          AND municipality IS NOT NULL
+          AND TRIM(municipality) <> ''
+        GROUP BY municipality
+        ORDER BY rows DESC
+        LIMIT 100
+      `),
+      // Grupos de nómina sin municipality_id (si la tabla existe)
+      pool.query(`
+        SELECT id, name, municipality_id FROM payroll_groups
+        WHERE municipality_id IS NULL
+        ORDER BY name
+        LIMIT 100
+      `).catch(() => ({ rows: [] })),
+    ]);
+
+    sendJson(res, 200, {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      report: {
+        employeesWithoutMunicipality: {
+          count: employeesNoMunicipality.rows.length,
+          rows: employeesNoMunicipality.rows,
+        },
+        employeesWithInvalidMunicipalityId: {
+          count: employeesInvalidMunicipality.rows.length,
+          rows: employeesInvalidMunicipality.rows,
+        },
+        institutionsWithoutMunicipality: {
+          count: institutionsNoMunicipality.rows.length,
+          rows: institutionsNoMunicipality.rows,
+        },
+        orphanEducationalSites: {
+          count: orphanSites.rows.length,
+          rows: orphanSites.rows,
+        },
+        coverageRowsWithoutMunicipalityId: {
+          count: coverageRowsNoMunicipality.rows.length,
+          rows: coverageRowsNoMunicipality.rows,
+        },
+        payrollGroupsWithoutMunicipality: {
+          count: payrollGroupsNoMunicipality.rows.length,
+          rows: payrollGroupsNoMunicipality.rows,
+        },
+      },
+    });
+  } catch (error) {
+    sendJson(res, 500, {
+      ok: false,
+      message: "Error al generar reporte de integridad",
+      detail: error.message,
+    });
+  }
+}
+
 module.exports = {
   handleAdminResetMfa,
   handleUsers,
   handleUserUpdate,
   handleAccessLogs,
+  handleMunicipalityIntegrity,
 };
