@@ -175,6 +175,14 @@ export async function renderDashboard(user, access) {
 
   renderEmptyWorkspace();
   syncAdminPanelsVisibility();
+
+  const availableModules = Array.isArray(access.modules) ? access.modules.map((item) => item.module) : [];
+  const defaultModule = availableModules.includes("dashboard_hr")
+    ? "dashboard_hr"
+    : (availableModules.includes("dashboard") ? "dashboard" : availableModules[0]);
+  if (defaultModule) {
+    await openModule(defaultModule);
+  }
 }
 
 export function resetDashboard() {

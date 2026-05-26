@@ -18,6 +18,11 @@ function normalize(value) {
     .trim();
 }
 
+// Matches the PostgreSQL SQL_NORMALIZE_TEXT used in getActiveEmployeeCoverageCounts
+function normalizeSql(value) {
+  return normalize(value).replace(/[^A-Z0-9 ]/g, "");
+}
+
 function cleanText(value) {
   return String(value || "").trim();
 }
@@ -724,10 +729,10 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
     }
 
     const employeeKey = [
-      normalize(row.municipality),
-      normalize(row.institution),
-      normalize(row.site),
-      normalize(row.modality),
+      normalizeSql(row.municipality),
+      normalizeSql(row.institution),
+      normalizeSql(row.site),
+      normalizeSql(row.modality),
     ].join("|");
 
     const employeeCoverage = employeeCoverageMap.get(employeeKey) || {

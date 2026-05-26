@@ -72,22 +72,26 @@ function calcEmployee(modalityClass, diasNoClase, novedades, salaryConfig, turno
   const diasCubiertos     = novedades.filter(n =>  n.paid).reduce((s, n) => s + n.days, 0);
   const diasConSalario    = Math.max(0, 30 - diasSinPago);
   const diasConTransporte = Math.max(0, 30 - diasNoClase - diasSinPago - diasCubiertos);
-
-  // Si hay turnos registrados, calcular salario proporcional por modalidad de turno
-  let salarioProp;
-  let turnosInfo = [];
-  if (turnos.length > 0) {
-    salarioProp = 0;
-    for (const t of turnos) {
-      const tCfg   = modalities[t.modalidad] || modCfg;
-      const tSal   = tCfg.salary || smlv;
-      const tProp  = Math.round(tSal / 30 * Math.max(0, t.dias - diasSinPago));
-      salarioProp += tProp;
-      turnosInfo.push({ modalidad: t.modalidad, dias: t.dias, salario: tSal, prop: tProp });
-    }
-  } else {
-    salarioProp = Math.round(salaryBase / 30 * diasConSalario);
-  }
+  const dailySalary      = salaryBase / 30;
+  const workedDays       = diasConSalario;
+  const baseEarned       = Math.round(dailySalary * workedDays);
+  const turnosInfo       = (Array.isArray(turnos) ? turnos : []).map(t => {
+    const tCfg          = modalities[t.modalidad] || modCfg;
+    const salarioTurno  = tCfg.salary || smlv;
+    const diasTurno     = Math.max(0, Number(t.dias) || 0);
+    const valorUnitario = Math.round(salarioTurno / 30);
+    const totalTurno    = Math.round(valorUnitario * diasTurno);
+    return {
+      modalidad: t.modalidad,
+      dias: diasTurno,
+      salario: salarioTurno,
+      salarioMensual: salarioTurno,
+      valorUnitario,
+      total: totalTurno,
+      prop: totalTurno,
+    };
+  });
+  const extraShiftAmount = turnosInfo.reduce((s, t) => s + t.total, 0);
 
   const auxTrans    = Math.round(auxCfg / 30 * diasConTransporte);
   const adicsCalc   = adicionales.map(a => ({
@@ -96,16 +100,28 @@ function calcEmployee(modalityClass, diasNoClase, novedades, salaryConfig, turno
     prop:  Math.round(Number(a.value) / 30 * diasConTransporte),
   }));
   const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
-  const totalDev   = salarioProp + auxTrans + totalAdics;
-  const salud      = Math.ceil(salarioProp * 0.04 / 100) * 100;
+  const otherEarnings = auxTrans + totalAdics;
+  const totalDev   = baseEarned + extraShiftAmount + otherEarnings;
+  const salud      = Math.ceil(baseEarned * 0.04 / 100) * 100;
   const pension    = salud;
   const totalDed   = salud * 2;
   const neto       = totalDev - totalDed;
 
   return {
     diasSinPago, diasCubiertos, diasConSalario, diasConTransporte,
-    salaryBase, salarioProp, auxTrans, adicsCalc, totalAdics,
-    totalDev, salud, pension, totalDed, neto, turnosInfo,
+    salaryBase,
+    dailySalary,
+    workedDays,
+    salarioProp: baseEarned,
+    baseEarned,
+    extraShiftAmount,
+    auxTrans,
+    adicsCalc,
+    totalAdics,
+    otherEarnings,
+    totalDev,
+    grossEarned: totalDev,
+    salud, pension, totalDed, neto, turnosInfo,
   };
 }
 
@@ -126,6 +142,9 @@ let _filterSede       = "";
 let _sortBy           = "";
 let _sortDir          = "asc";
 let _activeGroup      = "todos";
+let _selectedMunicipalityId   = 0;   // 0 = no municipality selected
+let _selectedMunicipalityName = "";  // display name
+let _availableMunicipalities  = [];  // [{ id, name }] for the current contract
 let _periodMonth   = String(new Date().getMonth() + 1).padStart(2, "0");
 let _periodYear    = String(new Date().getFullYear());
 let _modalEmpId    = null;
@@ -255,12 +274,24 @@ function _renderListView() {
   const curYear = new Date().getFullYear();
   const years   = Array.from({ length: 5 }, (_, i) => curYear - 1 + i);
 
+  const munSelectHtml = _availableMunicipalities.length > 1 ? `
+  <div class="nm3-mun-selector" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:13px;color:var(--text-secondary,#64748B);white-space:nowrap;">Municipio:</span>
+    <select class="nm3-sel" id="nm3MunSel" style="min-width:200px;">
+      <option value="">— Todos los municipios —</option>
+      ${_availableMunicipalities.map(m =>
+        `<option value="${m.id}" ${Number(m.id) === _selectedMunicipalityId ? "selected" : ""}>${escapeHtml(m.name)}</option>`
+      ).join("")}
+    </select>
+    ${_selectedMunicipalityName ? `<span class="nm3-badge nm3-badge--calc" style="font-size:11px;">${escapeHtml(_selectedMunicipalityName)}</span>` : ""}
+  </div>` : "";
+
   root.innerHTML = `
 <div class="nm3-card">
   <div class="nm3-card-hdr">
     <div>
       <h2 class="nm3-title">Nómina PAE</h2>
-      <span class="nm3-subtitle">Períodos de liquidación</span>
+      <span class="nm3-subtitle">${_selectedMunicipalityName ? `Municipio: ${escapeHtml(_selectedMunicipalityName)}` : "Períodos de liquidación"}</span>
     </div>
     ${isTH() ? `
     <div class="nm3-hdr-right">
@@ -278,6 +309,7 @@ function _renderListView() {
   </div>
 
   <div class="nm3-card-body">
+    ${munSelectHtml}
     ${_periods.length ? `
     <table class="nm3-periods-tbl">
       <thead>
@@ -331,8 +363,10 @@ function _filtered() {
   if (_sortBy) {
     list = [...list].sort((a, b) => {
       if (_sortBy === "neto") {
-        const na = calcEmployee(a.modalityClass, getEs(a.id).diasNoClase, getEs(a.id).novedades, _salaryConfig).neto;
-        const nb = calcEmployee(b.modalityClass, getEs(b.id).diasNoClase, getEs(b.id).novedades, _salaryConfig).neto;
+        const aState = getEs(a.id);
+        const bState = getEs(b.id);
+        const na = calcEmployee(a.modalityClass, aState.diasNoClase, aState.novedades, _salaryConfig, aState.turnos).neto;
+        const nb = calcEmployee(b.modalityClass, bState.diasNoClase, bState.novedades, _salaryConfig, bState.turnos).neto;
         return _sortDir === "asc" ? na - nb : nb - na;
       }
       const fieldMap = { nombre: "fullName", municipio: "municipalityName", institucion: "institutionName", sede: "siteName", modalidad: "modalityClass" };
@@ -407,7 +441,7 @@ function _rowHtmlSummary(emp, idx) {
   const es    = getEs(emp.id);
   const neto  = isHourBased(emp)
     ? calcHourEmployee(emp).neto
-    : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig).neto;
+    : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos).neto;
   const grp   = _getGroup(emp);
   const grpLabel = { operarios:"Operarios", bodega_ri:"Bodega RI", bodega_rp:"Bodega RP", administrativos:"Admin." }[grp] || grp;
   const grpColor = { operarios:"caa", bodega_ri:"ri", bodega_rp:"caares", administrativos:"ri" }[grp] || "caa";
@@ -469,9 +503,10 @@ function _totalsHtml() {
   const done    = [..._empState.values()].filter(e => e.checked).length;
   const empList = _groupEmployees();
   for (const emp of empList) {
+    const es = getEs(emp.id);
     const c = isHourBased(emp)
       ? calcHourEmployee(emp)
-      : calcEmployee(emp.modalityClass, getEs(emp.id).diasNoClase, getEs(emp.id).novedades, _salaryConfig);
+      : calcEmployee(emp.modalityClass, es.diasNoClase, es.novedades, _salaryConfig, es.turnos);
     dev  += c.totalDev;
     ded  += c.totalDed;
     neto += c.neto;
@@ -504,6 +539,7 @@ function _renderDetailView() {
     <div class="nm3-hdr-center">
       <h2 class="nm3-period-title">${escapeHtml(period.label)}</h2>
       ${statusBadge(period.status)}
+      ${_selectedMunicipalityName ? `<span class="nm3-badge nm3-badge--calc" style="font-size:11px;margin-left:4px;">${escapeHtml(_selectedMunicipalityName)}</span>` : ""}
       <span class="nm3-done-pill" id="nm3DonePill">${done}/${total} revisados</span>
     </div>
     <div class="nm3-hdr-actions">
@@ -708,6 +744,7 @@ function _calcBodyHtml(emp) {
     <div class="nm3-ci"><span>Institución</span><b>${escapeHtml(emp.institutionName || "—")}</b></div>
     <div class="nm3-ci"><span>Sede</span><b>${escapeHtml(emp.siteName || "—")}</b></div>
     <div class="nm3-ci"><span>Modalidad</span><b>${escapeHtml(emp.modalityClass)}</b></div>
+    <div class="nm3-ci"><span>Salario mensual</span><b>${fmtCOP(calc.salaryBase)}</b></div>
     <div class="nm3-ci"><span>Días no clase</span><b>${es.diasNoClase}</b></div>
     <div class="nm3-ci"><span>Días sin salario</span><b>${calc.diasSinPago}</b></div>
     <div class="nm3-ci"><span>Días con salario</span><b>${calc.diasConSalario}/30</b></div>
@@ -719,6 +756,11 @@ function _calcBodyHtml(emp) {
   <table class="nm3-tbl nm3-tbl--calc">
     <tbody>
       <tr class="nm3-calc-sec"><td colspan="2">💰 Devengados</td></tr>
+      <tr><td>Salario mensual</td><td class="nm3-ar">${fmtCOP(calc.salaryBase)}</td></tr>
+      <tr><td>Dias laborados</td><td class="nm3-ar">${calc.workedDays}/30</td></tr>
+      <tr><td>Devengado base</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.baseEarned)}</td></tr>
+      <tr><td>Turnos extra</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.extraShiftAmount)}</td></tr>
+      <tr><td>Otros devengos</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.otherEarnings)}</td></tr>
       ${salarioPropRows}
       <tr><td>Aux. transporte (${calc.diasConTransporte}/30 d)</td><td class="nm3-ar nm3-green">+ ${fmtCOP(calc.auxTrans)}</td></tr>
       ${adicsRows}
@@ -744,6 +786,14 @@ function _calcBodyHtml(emp) {
 function _wireListEvents() {
   document.getElementById("nm3MonthSel")?.addEventListener("change", e => { _periodMonth = e.target.value; });
   document.getElementById("nm3YearSel")?.addEventListener("change",  e => { _periodYear  = e.target.value; });
+
+  document.getElementById("nm3MunSel")?.addEventListener("change", e => {
+    const id   = Number(e.target.value) || 0;
+    const mun  = _availableMunicipalities.find(m => Number(m.id) === id);
+    _selectedMunicipalityId   = id;
+    _selectedMunicipalityName = mun ? mun.name : "";
+    _renderListView();
+  });
 
   document.getElementById("nm3BtnNew")?.addEventListener("click", async () => {
     const period     = `${_periodYear}-${_periodMonth}`;
@@ -778,6 +828,7 @@ function _wireDetailEvents() {
     _searchText = ""; _filterHasNov = false;
     _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
     _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
+    // Preserve municipality selection when going back to list
     await _loadPeriods();
     _renderListView();
   });
@@ -1107,9 +1158,11 @@ function _turnosBodyHtml(empId) {
       <tr>
         <td>${escapeHtml(t.modalidad)}</td>
         <td class="nm3-ar">${t.dias} d</td>
+        <td class="nm3-ar">${fmtCOP(Math.round(((_salaryConfig.modalities?.[t.modalidad]?.salary || _salaryConfig.smlv || 0) / 30)))}</td>
+        <td class="nm3-ar">${fmtCOP(Math.round(((_salaryConfig.modalities?.[t.modalidad]?.salary || _salaryConfig.smlv || 0) / 30) * (Number(t.dias) || 0)))}</td>
         ${canEdit ? `<td><button class="nm3-del-turno" data-idx="${i}" title="Eliminar">✕</button></td>` : ""}
       </tr>`).join("")
-    : `<tr><td colspan="${canEdit ? 3 : 2}" class="nm3-empty-td">Sin turnos registrados.</td></tr>`;
+    : `<tr><td colspan="${canEdit ? 5 : 4}" class="nm3-empty-td">Sin turnos registrados.</td></tr>`;
 
   return `
 <div class="nm3-nov-wrap">
@@ -1117,7 +1170,9 @@ function _turnosBodyHtml(empId) {
     <thead>
       <tr>
         <th>Modalidad</th>
-        <th class="nm3-ar">Días</th>
+        <th class="nm3-ar">Dias</th>
+        <th class="nm3-ar">Valor unitario</th>
+        <th class="nm3-ar">Total turno</th>
         ${canEdit ? "<th></th>" : ""}
       </tr>
     </thead>
@@ -1241,17 +1296,37 @@ async function _loadPeriods() {
   const contractId = getContractId();
   if (!contractId) return;
   try {
-    const r = await apiFetch(`/nomina/periods?contractId=${contractId}`);
-    _periods = Array.isArray(r.data) ? r.data : [];
-  } catch { _periods = []; }
+    const [periodsResp, empsResp] = await Promise.all([
+      apiFetch(`/nomina/periods?contractId=${contractId}`),
+      apiFetch(`/nomina/employees?contractId=${contractId}`).catch(() => ({ data: [] })),
+    ]);
+    _periods = Array.isArray(periodsResp.data) ? periodsResp.data : [];
+    // Build unique municipality list from employees
+    const allEmps = Array.isArray(empsResp.data) ? empsResp.data : [];
+    const munMap  = new Map();
+    for (const e of allEmps) {
+      if (e.municipalityId && e.municipalityName) munMap.set(e.municipalityId, e.municipalityName);
+    }
+    _availableMunicipalities = Array.from(munMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+    // Reset selection if previous municipality no longer exists
+    if (_selectedMunicipalityId && !munMap.has(_selectedMunicipalityId)) {
+      _selectedMunicipalityId   = 0;
+      _selectedMunicipalityName = "";
+    }
+  } catch { _periods = []; _availableMunicipalities = []; }
 }
 
 async function _loadPeriodDetail(periodId) {
   const contractId = getContractId();
   try {
+    const empsUrl = _selectedMunicipalityId
+      ? `/nomina/employees?contractId=${contractId}&municipalityId=${_selectedMunicipalityId}`
+      : `/nomina/employees?contractId=${contractId}`;
     const [periodResp, empsResp, salResp] = await Promise.all([
       apiFetch(`/nomina/periods/${periodId}`),
-      apiFetch(`/nomina/employees?contractId=${contractId}`),
+      apiFetch(empsUrl),
       apiFetch(`/config/contracts/${contractId}/salary-config`),
     ]);
 
@@ -1340,6 +1415,7 @@ export async function loadPayrollModule() {
   _salaryConfig = {}; _empState.clear(); _searchText = ""; _filterHasNov = false;
   _filterMunicipio = ""; _filterModalidad = ""; _filterInstitucion = ""; _filterSede = "";
   _sortBy = ""; _sortDir = "asc"; _activeGroup = "todos";
+  _selectedMunicipalityId = 0; _selectedMunicipalityName = ""; _availableMunicipalities = [];
   await _loadPeriods();
   return `<div class="nm3-shell"><div id="nm3-root"></div></div>`;
 }

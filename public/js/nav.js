@@ -7,6 +7,11 @@ const _iv = (mod) => `${mod}?v=${window.APP_VERSION || '0'}`;
 // Callback registered by dashboard.js to clean up its timers and charts.
 export const dashboardCleaner = { fn: () => {} };
 
+function resolveModuleAlias(moduleKey) {
+  if (moduleKey === "dashboard") return "dashboard_hr";
+  return moduleKey;
+}
+
 export function renderModuleNav(modules = []) {
   if (!elements.moduleNav) return;
 
@@ -373,6 +378,8 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
 }
 
 export async function openModule(moduleKey) {
+  const requestedModuleKey = moduleKey;
+  moduleKey = resolveModuleAlias(moduleKey);
   if (moduleKey !== "dashboard_hr") dashboardCleaner.fn();
   state.activeModule = moduleKey;
   state.expandedModule = moduleKey;
@@ -383,7 +390,9 @@ export async function openModule(moduleKey) {
     return;
   }
 
-  const moduleConfig = state.access.modules.find((item) => item.module === moduleKey);
+  const moduleConfig =
+    state.access.modules.find((item) => item.module === moduleKey)
+    || state.access.modules.find((item) => item.module === requestedModuleKey);
   if (!moduleConfig) {
     renderEmptyWorkspace();
     return;

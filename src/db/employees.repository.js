@@ -1,6 +1,9 @@
 const pool = require("./pool");
 const { normalizeText } = require("../utils/text");
 
+const _tableExistsCache = new Map();
+const _missingTableWarnings = new Set();
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toNumberOrNull(value) {
@@ -33,6 +36,21 @@ function normalize(value) {
 
 function cleanText(value) {
   return String(value || "").trim();
+}
+
+async function tableExists(tableName) {
+  if (_tableExistsCache.has(tableName)) return _tableExistsCache.get(tableName);
+  const result = await pool.query(`SELECT to_regclass($1) AS reg`, [`public.${tableName}`]);
+  const exists = Boolean(result.rows[0]?.reg);
+  _tableExistsCache.set(tableName, exists);
+  return exists;
+}
+
+function warnMissingLookupTable(tableName, context) {
+  const key = `${tableName}:${context}`;
+  if (_missingTableWarnings.has(key)) return;
+  _missingTableWarnings.add(key);
+  console.warn(`[employees.repository] Tabla ${tableName} no disponible durante ${context}; se aplica fallback seguro.`);
 }
 
 // Sanea cualquier valor de fecha antes de mandarlo a PG (acepta serial Excel, Date, o string)
@@ -74,6 +92,10 @@ function buildFullName(data = {}) {
 
 async function resolveInstitutionId(name, municipalityId = null) {
   if (!name || !String(name).trim()) return null;
+  if (!(await tableExists("institutions"))) {
+    warnMissingLookupTable("institutions", "resolveInstitutionId");
+    return null;
+  }
   const nameStr = String(name).trim();
   const normalized = normalize(nameStr).replace(/[^A-Z0-9]/g, '');
   if (!normalized) return null;
@@ -95,6 +117,10 @@ async function resolveInstitutionId(name, municipalityId = null) {
 
 async function resolveSiteId(name, institutionId = null) {
   if (!name || !String(name).trim()) return null;
+  if (!(await tableExists("educational_sites"))) {
+    warnMissingLookupTable("educational_sites", "resolveSiteId");
+    return null;
+  }
   const nameStr = String(name).trim();
   const normalized = normalize(nameStr).replace(/[^A-Z0-9]/g, '');
   if (!normalized) return null;
@@ -120,6 +146,10 @@ async function resolveSiteId(name, institutionId = null) {
 async function resolveMunicipalityId(value) {
   const numericId = toNumberOrNull(value);
   if (numericId) return numericId;
+  if (!(await tableExists("municipalities"))) {
+    warnMissingLookupTable("municipalities", "resolveMunicipalityId");
+    return null;
+  }
 
   const name = String(value || "").trim();
   if (!name) return null;
@@ -404,6 +434,8 @@ const _LIST_COLS = `
     e.coverage_start_date,
     m.name AS municipality_name,
     c.name AS contract_name,
+    i.name AS institution_name,
+    s.name AS site_name,
     COALESCE(doc_stats.total_docs, 0)::int AS document_total,
     COALESCE(doc_stats.validated_docs, 0)::int AS document_validated,
     COALESCE(doc_stats.pending_docs, 0)::int AS document_pending,
@@ -460,6 +492,12 @@ function mapEmployeeList(row) {
     modality: row.modality || "",
     gestorZona: row.gestor_zona || "",
     coverageStartDate: row.coverage_start_date || "",
+    institutionName: row.institution_name || "",
+    institution: row.institution_name || "",
+    institucion_educativa: row.institution_name || "",
+    siteName: row.site_name || "",
+    site: row.site_name || "",
+    sede_educativa: row.site_name || "",
     hvStatus: row.hv_status || "Incompleta",
     alertsCount: Number(row.alerts_count || 0),
     documentTotal: Number(row.document_total || 0),
@@ -713,12 +751,12 @@ async function createEmployee(data) {
   if (!siteId) siteId = await resolveSiteId(rawSiteNameC, null);
   if (!siteId) {
     const rawSiteId = toNumberOrNull(data.siteId || data.site_id || data.site);
-    if (rawSiteId) {
+    if (rawSiteId && await tableExists("educational_sites")) {
       const exists = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [rawSiteId]);
       siteId = exists.rows[0] ? rawSiteId : null;
     }
   }
-  if (siteId) {
+  if (siteId && await tableExists("educational_sites")) {
     const verify = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [siteId]);
     if (!verify.rows[0]) { siteId = null; }
   }
@@ -839,14 +877,14 @@ async function updateEmployee(id, data) {
   if (!siteId) {
     // data.site might itself be a numeric ID if site_name was missing at load time
     const rawSiteId = toNumberOrNull(data.siteId || data.site_id || data.site);
-    if (rawSiteId) {
+    if (rawSiteId && await tableExists("educational_sites")) {
       const exists = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [rawSiteId]);
       siteId = exists.rows[0] ? rawSiteId : null;
     }
   }
 
   // Final safety: verify siteId actually exists before using it
-  if (siteId) {
+  if (siteId && await tableExists("educational_sites")) {
     const verify = await pool.query(`SELECT 1 FROM educational_sites WHERE id = $1`, [siteId]);
     if (!verify.rows[0]) {
       console.error(`[updateEmployee] site_id ${siteId} not found in educational_sites — forcing null`);

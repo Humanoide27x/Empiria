@@ -401,7 +401,6 @@ function _profileTab(profile, admin) {
 // ── TAB: NÓMINA ───────────────────────────────────────────────────────────────
 
 function _nominaTab(payrollVals, admin) {
-  const activeVal = payrollVals.find(v => v.active) || null;
   const SALARY_TYPES = [
     { v: "mensual", l: "Mensual" }, { v: "diario", l: "Diario" },
     { v: "por_hora", l: "Por hora" }, { v: "prestacion_servicios", l: "Prestación de servicios" },
@@ -507,8 +506,6 @@ function _nominaTab(payrollVals, admin) {
 // ── TAB: DOCUMENTOS ───────────────────────────────────────────────────────────
 
 function _documentosTab(docReqs, docTypes, admin) {
-  const reqIds = new Set(docReqs.map(d => d.documentTypeId));
-
   return `
     <div class="pos-form-card">
       <div class="pos-panel-hdr-row">

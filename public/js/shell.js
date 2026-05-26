@@ -93,7 +93,7 @@ document.addEventListener("keydown", e => {
 });
 
 const MODULE_LINKS = [
-  { key: "dashboard",                      label: "Dashboard",                   icon: "📊" },
+  { key: "dashboard_hr",                   label: "Dashboard",                   icon: "📊" },
   { key: "gestion_personal",               label: "Gestión del Personal",        icon: "👥" },
   { key: "calculadora_personal",           label: "Calculadora",                 icon: "🔢" },
   { key: "cobertura_calculadora",          label: "Verificación de Cobertura",   icon: "📍" },

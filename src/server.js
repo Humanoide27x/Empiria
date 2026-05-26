@@ -20,7 +20,6 @@ const { handleEducationRoutes } = require("./modules/education/education.routes"
 const { handleNovedades } = require("./modules/novedades/novedades.controller");
 const { handleCalculatorRoutes } = require("./modules/calculator/calculator.routes");
 const { handleModuleConfigRoutes } = require("./modules/config/module_config.routes");
-const { handleClientsRoutes }      = require("./modules/config/clients/clients.routes");
 const { handleNominaRoutes }       = require("./modules/nomina/nomina.routes");
 const { handleDotacionRoutes }     = require("./modules/dotacion/dotacion.routes");
 
@@ -335,9 +334,6 @@ async function requestHandler(req, res) {
 
   const nominaHandled = await handleNominaRoutes(req, res, url);
   if (nominaHandled) return;
-
-  const clientsHandled = await handleClientsRoutes(req, res, url);
-  if (clientsHandled) return;
 
   const dotacionHandled = await handleDotacionRoutes(req, res, url);
   if (dotacionHandled) return;

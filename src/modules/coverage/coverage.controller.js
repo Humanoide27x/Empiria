@@ -16,6 +16,37 @@ const {
   getCoverageRowsByUpload,
 } = require("./coverage.excel");
 
+const COVERAGE_SUMMARY_CACHE = new Map();
+const COVERAGE_SUMMARY_TTL = 90 * 1000;
+
+function getCoverageSummaryCacheKey(filters = {}) {
+  const municipalityIds = Array.isArray(filters.municipalityIds) ? filters.municipalityIds.join(",") : "";
+  return [
+    filters.companyId || "",
+    filters.contractId || "",
+    filters.municipalityId || "",
+    municipalityIds,
+  ].join("|");
+}
+
+function readCoverageSummaryCache(key) {
+  const cached = COVERAGE_SUMMARY_CACHE.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.ts > COVERAGE_SUMMARY_TTL) {
+    COVERAGE_SUMMARY_CACHE.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeCoverageSummaryCache(key, data) {
+  COVERAGE_SUMMARY_CACHE.set(key, { ts: Date.now(), data });
+}
+
+function clearCoverageSummaryCache() {
+  COVERAGE_SUMMARY_CACHE.clear();
+}
+
 function toNumber(value) {
   if (value === null || value === undefined || value === "") return 0;
 
@@ -153,11 +184,21 @@ function handleCoverageSummary(req, res, url) {
         municipalityIds: resource.municipalityIds || null,
       };
 
+      const cacheKey = getCoverageSummaryCacheKey(filters);
+      const cached = readCoverageSummaryCache(cacheKey);
+      if (cached) {
+        sendJson(innerRes, 200, { ok: true, cached: true, data: cached });
+        return;
+      }
+
       const summary = await getCoverageSummary(filters);
+      const data = Array.isArray(summary) ? decorateCoverageRows(summary) : summary;
+      writeCoverageSummaryCache(cacheKey, data);
 
       sendJson(innerRes, 200, {
         ok: true,
-        data: Array.isArray(summary) ? decorateCoverageRows(summary) : summary,
+        cached: false,
+        data,
       });
     }
   )(req, res, url);
@@ -202,6 +243,7 @@ function handleCoverageUpload(req, res, url) {
           fileName: body.fileName,
           uploadedBy: user?.name || user?.username || "Usuario",
         });
+        clearCoverageSummaryCache();
 
         sendJson(innerRes, 201, {
           ok: true,

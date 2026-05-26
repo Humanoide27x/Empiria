@@ -30,17 +30,28 @@ function guardTH(req, res) {
   return auth.user;
 }
 
-// GET /nomina/employees?contractId=X
+// GET /nomina/employees?contractId=X[&municipalityId=Y]
 async function handleGetEmployees(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
   const auth = requireAuth(req, res);
   if (!auth) return;
   const contractId = Number(url.searchParams.get("contractId"));
   if (!contractId) { sendJson(res, 400, { ok: false, message: "contractId requerido" }); return; }
+
+  // Scope by user's assigned municipalities first
   const rawMunIds = auth.user?.municipality_ids;
-  const municipalityIds = Array.isArray(rawMunIds) && rawMunIds.length > 0
+  let municipalityIds = Array.isArray(rawMunIds) && rawMunIds.length > 0
     ? rawMunIds.map(Number).filter(n => n > 0)
     : null;
+
+  // If a specific municipalityId is requested, narrow to that one (if in scope)
+  const requestedMunId = Number(url.searchParams.get("municipalityId") || 0);
+  if (requestedMunId > 0) {
+    if (!municipalityIds || municipalityIds.includes(requestedMunId)) {
+      municipalityIds = [requestedMunId];
+    }
+  }
+
   const employees = await getContractEmployees(contractId, municipalityIds);
   sendJson(res, 200, { ok: true, data: employees });
 }
@@ -117,10 +128,11 @@ async function handleSavePeriod(req, res, id) {
   const linesWithCalc = body.lines.map(line => {
     const novedades    = Array.isArray(line.novedades)    ? line.novedades    : [];
     const horasDiarias = Array.isArray(line.horasDiarias) ? line.horasDiarias : [];
+    const turnos       = Array.isArray(line.turnos)       ? line.turnos       : [];
     const calc = line.payrollType === "horas"
       ? calcLineHoras(salaryConfig, line.modalityClass, horasDiarias)
-      : calcLine(salaryConfig, line.modalityClass, Number(line.diasNoClase) || 0, novedades);
-    return { ...line, novedades, horasDiarias, calc };
+      : calcLine(salaryConfig, line.modalityClass, Number(line.diasNoClase) || 0, novedades, turnos);
+    return { ...line, novedades, horasDiarias, turnos, calc };
   });
 
   await savePeriodLines(id, period.contract_id, period.company_id, linesWithCalc, salarySnapshot);

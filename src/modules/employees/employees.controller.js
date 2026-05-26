@@ -18,10 +18,262 @@ function toTitleCase(value) {
     .replace(/\b\p{L}/gu, (char) => char.toUpperCase());
 }
 
+const GESTOR_POSITION = "GESTOR DE ZONA";
+const AUXILIAR_GESTOR_POSITION = "AUXILIAR DE GESTOR DE ZONA";
+
 // Cache del catálogo educativo — se reconstruye máximo una vez cada 5 minutos
-let _catalogCache = null;
-let _catalogCacheTs = 0;
+let _catalogCache = new Map();
 const CATALOG_TTL = 5 * 60 * 1000;
+
+function normalizeScopedText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function splitAssignedMunicipalities(value) {
+  return String(value || "")
+    .split(/[|,;\n\r]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function resolveMunicipalityRecord({
+  municipalityId,
+  municipalityName,
+}) {
+  const rawId = municipalityId !== undefined && municipalityId !== null && String(municipalityId).trim() !== ""
+    ? Number(municipalityId)
+    : null;
+
+  if (Number.isFinite(rawId) && rawId > 0) {
+    const { rows } = await pool.query(
+      `SELECT id, name FROM municipalities WHERE id = $1 LIMIT 1`,
+      [rawId]
+    );
+    if (rows[0]) return rows[0];
+  }
+
+  const normalizedName = String(municipalityName || "").trim();
+  if (!normalizedName) return null;
+
+  const { rows } = await pool.query(
+    `
+    SELECT id, name
+    FROM municipalities
+    WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))
+       OR REGEXP_REPLACE(UPPER(TRIM(name)), '[^A-Z0-9]', '', 'g')
+          = REGEXP_REPLACE(UPPER(TRIM($1)), '[^A-Z0-9]', '', 'g')
+    ORDER BY id ASC
+    LIMIT 1
+    `,
+    [normalizedName]
+  );
+  return rows[0] || null;
+}
+
+async function listScopedManagers({
+  companyId,
+  contractId,
+  municipalityId,
+  municipalityName,
+  allowedMunicipalityIds = [],
+}) {
+  const municipality = await resolveMunicipalityRecord({ municipalityId, municipalityName });
+  if (!municipality) {
+    return {
+      municipality: null,
+      gestores: [],
+      auxiliares: [],
+    };
+  }
+
+  if (
+    Array.isArray(allowedMunicipalityIds) &&
+    allowedMunicipalityIds.length > 0 &&
+    !allowedMunicipalityIds.map(String).includes(String(municipality.id))
+  ) {
+    return {
+      municipality,
+      gestores: [],
+      auxiliares: [],
+    };
+  }
+
+  const values = [
+    [GESTOR_POSITION, AUXILIAR_GESTOR_POSITION],
+  ];
+  const conditions = [
+    `(
+      UPPER(TRIM(COALESCE(e.real_position, ''))) = ANY($1)
+      OR UPPER(TRIM(COALESCE(e.cargo, ''))) = ANY($1)
+    )`,
+    `COALESCE(NULLIF(TRIM(e.full_name), ''), '') <> ''`,
+    `UPPER(TRIM(COALESCE(e.status, 'ACTIVO'))) = 'ACTIVO'`,
+  ];
+  const assignmentJoinConditions = [
+    `eca.employee_id = e.id`,
+    `eca.active = true`,
+    `eca.assignment_end_date IS NULL`,
+  ];
+
+  if (companyId) {
+    values.push(Number(companyId));
+    assignmentJoinConditions.push(`eca.company_id = $${values.length}`);
+    conditions.push(`(e.company_id = $${values.length} OR eca.id IS NOT NULL)`);
+  }
+
+  if (contractId) {
+    values.push(Number(contractId));
+    assignmentJoinConditions.push(`eca.contract_id = $${values.length}`);
+    conditions.push(`(e.contract_id = $${values.length} OR eca.id IS NOT NULL)`);
+  }
+
+  const { rows } = await pool.query(
+    `
+    SELECT
+      e.id,
+      e.full_name,
+      e.real_position,
+      e.cargo,
+      e.municipios_a_cargo,
+      e.municipality_id,
+      legacy_m.name AS municipality_name,
+      COALESCE(
+        ARRAY_REMOVE(
+          ARRAY_AGG(DISTINCT eam.municipality_id) FILTER (WHERE eam.municipality_id IS NOT NULL),
+          NULL
+        ),
+        ARRAY[]::INTEGER[]
+      ) AS assignment_municipality_ids,
+      COALESCE(
+        ARRAY_REMOVE(
+          ARRAY_AGG(DISTINCT scoped_m.name) FILTER (WHERE scoped_m.name IS NOT NULL),
+          NULL
+        ),
+        ARRAY[]::TEXT[]
+      ) AS assignment_municipality_names
+    FROM employees e
+    LEFT JOIN municipalities legacy_m
+      ON legacy_m.id = e.municipality_id
+    LEFT JOIN employee_contract_assignments eca
+      ON ${assignmentJoinConditions.join("\n     AND ")}
+    LEFT JOIN employee_assignment_municipalities eam
+      ON eam.assignment_id = eca.id
+     AND eam.active = true
+    LEFT JOIN municipalities scoped_m
+      ON scoped_m.id = eam.municipality_id
+    WHERE ${conditions.join(" AND ")}
+    GROUP BY e.id, e.full_name, e.real_position, e.cargo, e.municipios_a_cargo, e.municipality_id, legacy_m.name
+    ORDER BY e.full_name ASC
+    `,
+    values
+  );
+
+  const targetMunicipality = normalizeScopedText(municipality.name);
+  const targetMunicipalityId = String(municipality.id);
+  const gestores = [];
+  const auxiliares = [];
+
+  for (const row of rows) {
+    const assignedMunicipalities = splitAssignedMunicipalities(row.municipios_a_cargo);
+    const assignmentMunicipalityIds = Array.isArray(row.assignment_municipality_ids)
+      ? row.assignment_municipality_ids.map((item) => String(item))
+      : [];
+    const assignmentMunicipalityNames = Array.isArray(row.assignment_municipality_names)
+      ? row.assignment_municipality_names
+      : [];
+    const hasMunicipality = (
+      assignmentMunicipalityIds.includes(targetMunicipalityId)
+      || assignedMunicipalities.some((item) => {
+        const normalized = normalizeScopedText(item);
+        return normalized === targetMunicipality || String(item).trim() === targetMunicipalityId;
+      })
+      || assignmentMunicipalityNames.some(
+        (item) => normalizeScopedText(item) === targetMunicipality
+      )
+      || String(row.municipality_id || "").trim() === targetMunicipalityId
+      || normalizeScopedText(row.municipality_name) === targetMunicipality
+    );
+    if (!hasMunicipality) continue;
+
+    const fullName = String(row.full_name || "").trim();
+    if (!fullName) continue;
+
+    const position = normalizeScopedText(row.real_position || row.cargo);
+    if (position === GESTOR_POSITION && !gestores.includes(fullName)) gestores.push(fullName);
+    if (position === AUXILIAR_GESTOR_POSITION && !auxiliares.includes(fullName)) auxiliares.push(fullName);
+  }
+
+  return {
+    municipality,
+    gestores,
+    auxiliares,
+  };
+}
+
+async function validateScopedManagerAssignments(body = {}, resource = {}) {
+  const gestorName = String(body.gestorZona || body.gestor_zona || "").trim();
+  const auxiliarName = String(body.auxiliarGestorZona || body.auxiliar_gestor_zona || "").trim();
+
+  if (!gestorName && !auxiliarName) {
+    return { ok: true };
+  }
+
+  const companyId = body.companyId || body.company_id || resource?.companyId || null;
+  const contractId = body.contractId || body.contract_id || resource?.contractId || null;
+  const municipalityId = body.municipalityId || body.municipality_id || body.municipio_id || null;
+  const municipalityName = body.municipalityName || body.municipality || body.municipio || null;
+
+  const scopedManagers = await listScopedManagers({
+    companyId,
+    contractId,
+    municipalityId,
+    municipalityName,
+    allowedMunicipalityIds: resource?.municipalityIds,
+  });
+
+  if (!scopedManagers.municipality) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Debes seleccionar un municipio valido antes de asignar gestor.",
+    };
+  }
+
+  if (
+    gestorName &&
+    !scopedManagers.gestores.some((item) => normalizeScopedText(item) === normalizeScopedText(gestorName))
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      message: scopedManagers.gestores.length
+        ? "El gestor seleccionado no esta asignado a este municipio."
+        : "No hay gestores asignados a este municipio.",
+    };
+  }
+
+  if (
+    auxiliarName &&
+    !scopedManagers.auxiliares.some((item) => normalizeScopedText(item) === normalizeScopedText(auxiliarName))
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      message: scopedManagers.auxiliares.length
+        ? "El auxiliar de gestor seleccionado no esta asignado a este municipio."
+        : "No hay auxiliares de gestor asignados a este municipio.",
+    };
+  }
+
+  return {
+    ok: true,
+    municipality: scopedManagers.municipality,
+  };
+}
 
 async function measureEndpoint(label, fn) {
   const startedAt = process.hrtime.bigint();
@@ -35,50 +287,162 @@ async function measureEndpoint(label, fn) {
   }
 }
 
-async function getEducationalCatalog() {
-  if (_catalogCache && Date.now() - _catalogCacheTs < CATALOG_TTL) {
-    return _catalogCache;
+function getEducationalCatalogCacheKey({
+  companyId,
+  contractId,
+  allowedMunicipalityIds = [],
+}) {
+  return [
+    companyId || "",
+    contractId || "",
+    Array.isArray(allowedMunicipalityIds) ? allowedMunicipalityIds.map(String).sort().join(",") : "",
+  ].join("|");
+}
+
+function readEducationalCatalogCache(cacheKey) {
+  const cached = _catalogCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() - cached.ts > CATALOG_TTL) {
+    _catalogCache.delete(cacheKey);
+    return null;
+  }
+  return cached.data;
+}
+
+function writeEducationalCatalogCache(cacheKey, data) {
+  _catalogCache.set(cacheKey, { ts: Date.now(), data });
+}
+
+async function getEducationalCatalog({
+  companyId,
+  contractId,
+  allowedMunicipalityIds = [],
+} = {}) {
+  const scopedCompanyId = Number(companyId) || null;
+  const scopedContractId = Number(contractId) || null;
+  const cacheKey = getEducationalCatalogCacheKey({
+    companyId: scopedCompanyId,
+    contractId: scopedContractId,
+    allowedMunicipalityIds,
+  });
+  const cached = readEducationalCatalogCache(cacheKey);
+  if (cached) return cached;
+
+  if (!scopedCompanyId || !scopedContractId) {
+    return {
+      educationalCatalog: {},
+      educationalCatalogMeta: {
+        companyId: scopedCompanyId,
+        contractId: scopedContractId,
+        periodMonth: null,
+        uploadId: null,
+        hasCoverage: false,
+        municipalities: [],
+        message: "Selecciona empresa y contrato para cargar la cobertura PAE.",
+      },
+    };
   }
 
-  const result = await pool.query(`
+  const coverageResult = await pool.query(
+    `
+    WITH latest_upload AS (
+      SELECT id, period_month
+      FROM coverage_uploads
+      WHERE company_id = $1
+        AND contract_id = $2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    )
     SELECT
-      TRIM(m.name) AS municipality,
-      TRIM(i.name) AS institution,
-      TRIM(s.name) AS site,
-      TRIM(sm.modality) AS modality
-    FROM municipalities m
-    JOIN institutions i ON i.municipality_id = m.id
-    JOIN educational_sites s ON s.institution_id = i.id
-    JOIN site_modalities sm ON sm.site_id = s.id
-    WHERE m.name IS NOT NULL
-      AND i.name IS NOT NULL
-      AND s.name IS NOT NULL
-      AND sm.modality IS NOT NULL
-    ORDER BY m.name, i.name, s.name, sm.modality
-  `);
+      lu.id AS upload_id,
+      lu.period_month,
+      TRIM(r.municipality) AS municipality_name,
+      TRIM(r.institution) AS institution_name,
+      TRIM(r.site) AS site_name,
+      TRIM(r.modality) AS modality_name
+    FROM latest_upload lu
+    JOIN coverage_upload_rows r
+      ON r.upload_id = lu.id
+    WHERE NULLIF(TRIM(r.municipality), '') IS NOT NULL
+      AND NULLIF(TRIM(r.institution), '') IS NOT NULL
+      AND NULLIF(TRIM(r.site), '') IS NOT NULL
+      AND NULLIF(TRIM(r.modality), '') IS NOT NULL
+    ORDER BY 3, 4, 5, 6
+    `,
+    [scopedCompanyId, scopedContractId]
+  );
+
+  const municipalityRows = await pool.query(
+    `SELECT id, name FROM municipalities WHERE name IS NOT NULL ORDER BY name ASC`
+  );
+  const municipalityByNormalizedName = new Map(
+    municipalityRows.rows.map((row) => [normalizeScopedText(row.name), row])
+  );
+
+  const allowedMunicipalitySet = Array.isArray(allowedMunicipalityIds) && allowedMunicipalityIds.length > 0
+    ? new Set(allowedMunicipalityIds.map(String))
+    : null;
 
   const catalog = {};
+  const municipalityOptions = [];
+  const seenMunicipalities = new Set();
 
-  for (const row of result.rows) {
-    const municipality = String(row.municipality || "").trim();
-    const institution = String(row.institution || "").trim();
-    const site = String(row.site || "").trim();
-    const modality = String(row.modality || "").trim();
+  for (const row of coverageResult.rows) {
+    const municipalityName = String(row.municipality_name || "").trim();
+    const institutionName = String(row.institution_name || "").trim();
+    const siteName = String(row.site_name || "").trim();
+    const modalityName = String(row.modality_name || "").trim();
+    if (!municipalityName || !institutionName || !siteName || !modalityName) continue;
 
-    if (!municipality || !institution || !site || !modality) continue;
+    const matchedMunicipality = municipalityByNormalizedName.get(
+      normalizeScopedText(municipalityName)
+    ) || null;
 
-    if (!catalog[municipality]) catalog[municipality] = {};
-    if (!catalog[municipality][institution]) catalog[municipality][institution] = {};
-    if (!catalog[municipality][institution][site]) catalog[municipality][institution][site] = [];
+    if (
+      allowedMunicipalitySet &&
+      (!matchedMunicipality || !allowedMunicipalitySet.has(String(matchedMunicipality.id)))
+    ) {
+      continue;
+    }
 
-    if (!catalog[municipality][institution][site].includes(modality)) {
-      catalog[municipality][institution][site].push(modality);
+    const municipalityKey = matchedMunicipality?.name || municipalityName;
+
+    if (!catalog[municipalityKey]) catalog[municipalityKey] = {};
+    if (!catalog[municipalityKey][institutionName]) catalog[municipalityKey][institutionName] = {};
+    if (!catalog[municipalityKey][institutionName][siteName]) catalog[municipalityKey][institutionName][siteName] = [];
+
+    if (!catalog[municipalityKey][institutionName][siteName].includes(modalityName)) {
+      catalog[municipalityKey][institutionName][siteName].push(modalityName);
+    }
+
+    if (!seenMunicipalities.has(normalizeScopedText(municipalityKey))) {
+      seenMunicipalities.add(normalizeScopedText(municipalityKey));
+      municipalityOptions.push({
+        id: matchedMunicipality?.id || null,
+        name: municipalityKey,
+      });
     }
   }
 
-  _catalogCache = catalog;
-  _catalogCacheTs = Date.now();
-  return catalog;
+  municipalityOptions.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es"));
+
+  const response = {
+    educationalCatalog: catalog,
+    educationalCatalogMeta: {
+      companyId: scopedCompanyId,
+      contractId: scopedContractId,
+      periodMonth: coverageResult.rows[0]?.period_month || null,
+      uploadId: coverageResult.rows[0]?.upload_id || null,
+      hasCoverage: municipalityOptions.length > 0,
+      municipalities: municipalityOptions,
+      message: municipalityOptions.length
+        ? ""
+        : "No existe cobertura PAE cargada para este contexto.",
+    },
+  };
+
+  writeEducationalCatalogCache(cacheKey, response);
+  return response;
 }
 
 async function handleContractPositions(req, res, contractId) {
@@ -153,9 +517,69 @@ function handlePersonnel(req, res) {
       async (req, res, url, user, resource) => {
         const parsedUrl = url || requestUrl;
         if (parsedUrl.pathname === "/personnel/catalog") {
-          const educationalCatalog = await measureEndpoint("GET /personnel/catalog educationalCatalog", () => getEducationalCatalog())
-            .catch(err => { console.error("ERROR CATALOGO EDUCATIVO:", err); return {}; });
-          return sendJson(res, 200, { ok: true, educationalCatalog });
+          const qCompanyId = parsedUrl.searchParams.get("companyId") || resource?.companyId || "";
+          const qContractId = parsedUrl.searchParams.get("contractId") || resource?.contractId || "";
+          const educationalCatalogPayload = await measureEndpoint(
+            "GET /personnel/catalog educationalCatalog",
+            () => getEducationalCatalog({
+              companyId: qCompanyId,
+              contractId: qContractId,
+              allowedMunicipalityIds: resource?.municipalityIds,
+            })
+          ).catch(err => {
+            console.error("ERROR CATALOGO EDUCATIVO:", err);
+            return {
+              educationalCatalog: {},
+              educationalCatalogMeta: {
+                companyId: qCompanyId ? Number(qCompanyId) || null : null,
+                contractId: qContractId ? Number(qContractId) || null : null,
+                periodMonth: null,
+                uploadId: null,
+                hasCoverage: false,
+                municipalities: [],
+                message: "No fue posible cargar la cobertura PAE para este contexto.",
+              },
+            };
+          });
+          return sendJson(res, 200, { ok: true, ...educationalCatalogPayload });
+        }
+
+        if (parsedUrl.pathname === "/personnel/managers") {
+          const qMunicipalityId = parsedUrl.searchParams.get("municipalityId")
+            || parsedUrl.searchParams.get("municipality_id")
+            || "";
+          const qMunicipalityName = parsedUrl.searchParams.get("municipalityName")
+            || parsedUrl.searchParams.get("municipality_name")
+            || "";
+          const qCompanyId = parsedUrl.searchParams.get("companyId") || resource?.companyId || "";
+          const qContractId = parsedUrl.searchParams.get("contractId") || resource?.contractId || "";
+
+          const scopedManagers = await measureEndpoint(
+            "GET /personnel/managers listScopedManagers",
+            () => listScopedManagers({
+              companyId: qCompanyId,
+              contractId: qContractId,
+              municipalityId: qMunicipalityId,
+              municipalityName: qMunicipalityName,
+              allowedMunicipalityIds: resource?.municipalityIds,
+            })
+          );
+
+          const municipalityName = scopedManagers.municipality?.name || "";
+          const message = !scopedManagers.municipality
+            ? "Selecciona un municipio valido para consultar gestores."
+            : scopedManagers.gestores.length
+              ? `Gestores cargados para ${municipalityName}.`
+              : "No hay gestores asignados a este municipio.";
+
+          return sendJson(res, 200, {
+            ok: true,
+            municipalityId: scopedManagers.municipality?.id || null,
+            municipalityName,
+            gestores: scopedManagers.gestores,
+            auxiliares: scopedManagers.auxiliares,
+            message,
+          });
         }
 
         const detailMatch = parsedUrl.pathname.match(/^\/personnel\/(\d+)$/);
@@ -338,6 +762,14 @@ function handlePersonnel(req, res) {
           body.contractId = resource.contractId;
         }
 
+        const managerValidation = await validateScopedManagerAssignments(body, resource);
+        if (!managerValidation.ok) {
+          return sendJson(res, managerValidation.status || 400, {
+            ok: false,
+            message: managerValidation.message,
+          });
+        }
+
         const created = await createEmployee(body);
         return sendJson(res, 201, { data: created });
       }
@@ -370,7 +802,7 @@ function handlePersonnel(req, res) {
     return withModuleProtection(
       "gestion_personal",
       "update",
-      async (req, res) => {
+      async (req, res, url, user, resource) => {
         const body = await readJsonBody(req);
         const id = body.id || body.employeeId || body.personnelId;
 
@@ -378,6 +810,21 @@ function handlePersonnel(req, res) {
           return sendJson(res, 400, {
             ok: false,
             message: "ID requerido para actualizar el empleado",
+          });
+        }
+
+        if (!body.companyId && !body.company_id && resource?.companyId) {
+          body.companyId = resource.companyId;
+        }
+        if (!body.contractId && !body.contract_id && resource?.contractId) {
+          body.contractId = resource.contractId;
+        }
+
+        const managerValidation = await validateScopedManagerAssignments(body, resource);
+        if (!managerValidation.ok) {
+          return sendJson(res, managerValidation.status || 400, {
+            ok: false,
+            message: managerValidation.message,
           });
         }
 

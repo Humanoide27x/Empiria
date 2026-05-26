@@ -6,6 +6,10 @@ const { getPersonnel } = require("../../data/personnel");
 const { getPayrollConfig } = require("../../data/payroll_config");
 const pool = require("../../db/pool");
 
+const OPERARIO_REAL_POSITION = "OPERARIO MANIPULADOR DE ALIMENTOS";
+const DASHBOARD_AUDIENCE_TTL = 5 * 60 * 1000;
+const _dashboardAudienceCache = new Map();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LEGACY: /dashboard-summary  (kept for backward compat)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +52,102 @@ function normalizeDashboardText(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toUpperCase();
+}
+
+function resolveDashboardAudienceCacheKey(user = {}) {
+  return [
+    user.id || "",
+    user.companyId ?? user.company_id ?? "",
+    user.contractId ?? user.contract_id ?? "",
+    user.full_name || user.name || "",
+    user.role_code || user.role || "",
+  ].join("|");
+}
+
+async function resolveDashboardAudience(user) {
+  const cacheKey = resolveDashboardAudienceCacheKey(user);
+  const cached = _ttlGet(_dashboardAudienceCache, cacheKey, DASHBOARD_AUDIENCE_TTL);
+  if (cached) return cached;
+
+  const role = String(user?.role_code || user?.role || "").toLowerCase().trim();
+  const companyId = user?.companyId ?? user?.company_id ?? null;
+  const contractId = user?.contractId ?? user?.contract_id ?? null;
+  const fullName = String(user?.full_name || user?.name || "").trim();
+  let employeePosition = "";
+
+  if (fullName && (companyId || contractId)) {
+    try {
+      const values = [fullName];
+      const conditions = [`UPPER(TRIM(e.full_name)) = UPPER(TRIM($1))`];
+
+      if (companyId) {
+        values.push(Number(companyId));
+        conditions.push(`e.company_id = $${values.length}`);
+      }
+      if (contractId) {
+        values.push(Number(contractId));
+        conditions.push(`e.contract_id = $${values.length}`);
+      }
+
+      const { rows } = await pool.query(
+        `
+        SELECT COALESCE(NULLIF(TRIM(e.real_position), ''), NULLIF(TRIM(e.cargo), ''), '') AS employee_position
+        FROM employees e
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY
+          CASE WHEN UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO' THEN 0 ELSE 1 END,
+          e.updated_at DESC NULLS LAST,
+          e.id DESC
+        LIMIT 1
+        `,
+        values
+      );
+
+      employeePosition = String(rows[0]?.employee_position || "").trim();
+    } catch (error) {
+      console.warn("[dashboard] No fue posible resolver la audiencia del usuario:", error.message);
+    }
+  }
+
+  const normalizedPosition = normalizeDashboardText(employeePosition);
+  let persona = "admin_full";
+  if (normalizedPosition === OPERARIO_REAL_POSITION) {
+    persona = "operario_manipulador";
+  } else if (role !== "administrador" && (companyId || contractId)) {
+    persona = "equipo_minimo";
+  }
+
+  const audience = { persona, employeePosition };
+  _ttlSet(_dashboardAudienceCache, cacheKey, audience);
+  return audience;
+}
+
+function resolveDashboardPersonnelType(requestedType, audience = {}) {
+  const normalizedRequested = String(requestedType || "").toLowerCase().trim();
+  if (audience.persona === "operario_manipulador") return "operario";
+  if (audience.persona === "equipo_minimo") return "equipo";
+  if (normalizedRequested === "operario" || normalizedRequested === "equipo") return normalizedRequested;
+  return normalizedRequested || "operario";
+}
+
+function getDashboardTitle(audience = {}, personnelType = "") {
+  if (audience.persona === "equipo_minimo" || personnelType === "equipo") return "Dashboard de Equipo Mínimo";
+  return "Dashboard";
+}
+
+function applyPersonnelTypeFilter({ conditions, values, personnelType, columnSql }) {
+  if (!personnelType || !columnSql) return;
+
+  if (personnelType === "operario") {
+    values.push(OPERARIO_REAL_POSITION);
+    conditions.push(`UPPER(TRIM(COALESCE(${columnSql}, ''))) = $${values.length}`);
+    return;
+  }
+
+  if (personnelType === "equipo") {
+    values.push(OPERARIO_REAL_POSITION);
+    conditions.push(`UPPER(TRIM(COALESCE(${columnSql}, ''))) <> $${values.length}`);
+  }
 }
 
 function resolveCoverageStatus(percent, hasOperation = true) {
@@ -154,6 +254,7 @@ function buildDashboardEmployeeScope({
   resource,
   selectedMunicipalityId,
   includeAssignedMunicipalities = true,
+  personnelType = "",
 }) {
   const joins = ["LEFT JOIN municipalities m ON m.id = e.municipality_id"];
   const conditions = ["TRUE"];
@@ -184,6 +285,13 @@ function buildDashboardEmployeeScope({
       conditions.push(`e.municipality_id = ANY($${values.length})`);
     }
   }
+
+  applyPersonnelTypeFilter({
+    conditions,
+    values,
+    personnelType,
+    columnSql: "e.real_position",
+  });
 
   return {
     joins,
@@ -461,6 +569,9 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         sendJson(innerRes, 200, {
           ok: true,
           data: {
+            dashboardPersona: "admin_full",
+            dashboardTitle: "Dashboard",
+            personnelType: "operario",
             activeEmployees: 0,
             requiredTc: 0,
             contractedTc: 0,
@@ -492,7 +603,11 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ? parsedMunicipalityId
         : null;
 
-      const personnelType = (innerUrl.searchParams.get("type") || "").toLowerCase().trim();
+      const audience = await resolveDashboardAudience(user);
+      const personnelType = resolveDashboardPersonnelType(
+        innerUrl.searchParams.get("type") || "",
+        audience
+      );
 
       const now          = new Date();
       const refMonth     = Math.min(12, Math.max(1, Number(innerUrl.searchParams.get("month")) || (now.getMonth() + 1)));
@@ -527,19 +642,8 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         user,
         resource,
         selectedMunicipalityId,
+        personnelType,
       });
-
-      if (personnelType === "operario" && employeeColumns.has("real_position")) {
-        employeeScope.values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-        employeeScope.conditions.push(
-          `UPPER(TRIM(COALESCE(e.real_position, ''))) = $${employeeScope.values.length}`
-        );
-      } else if (personnelType === "equipo" && employeeColumns.has("real_position")) {
-        employeeScope.values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-        employeeScope.conditions.push(
-          `UPPER(TRIM(COALESCE(e.real_position, ''))) != $${employeeScope.values.length}`
-        );
-      }
 
       const employeeFromSql = `
         FROM employees e
@@ -1017,6 +1121,9 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         : 0;
 
       const data = {
+        dashboardPersona: audience.persona,
+        dashboardTitle: getDashboardTitle(audience, personnelType),
+        personnelType,
         activeEmployees: Number(employeeSummary.active_employees || 0),
         requiredTc,
         contractedTc,
@@ -1130,6 +1237,9 @@ function handleDashboardKpis(req, res, url) {
       sendJson(innerRes, 200, {
         ok: true, ts: Date.now(), cached: false,
         data: {
+          dashboardPersona: "admin_full",
+          dashboardTitle: "Dashboard",
+          personnelType: "operario",
           active:0, inactive:0, novelty:0, total:0, tc_count:0, mt_count:0,
           required_tc:0, required_mt:0, required:0, contracted:0, pct_coverage:null,
           tc_20pct:0, municipalities_covered:0, total_cupos:0, pending_novelties:0,
@@ -1144,7 +1254,8 @@ function handleDashboardKpis(req, res, url) {
 
     const contractId     = innerUrl.searchParams.get("contract_id")    ? Number(innerUrl.searchParams.get("contract_id"))    : null;
     const municipalityId = innerUrl.searchParams.get("municipality_id") ? Number(innerUrl.searchParams.get("municipality_id")) : null;
-    const personnelType  = (innerUrl.searchParams.get("type") || "").toLowerCase().trim();
+    const audience = await resolveDashboardAudience(user);
+    const personnelType  = resolveDashboardPersonnelType(innerUrl.searchParams.get("type") || "", audience);
 
     const ckey = _cacheKey(`${user.companyId}|${personnelType}`, contractId, municipalityId);
     const hit  = _cacheGet(ckey);
@@ -1155,6 +1266,12 @@ function handleDashboardKpis(req, res, url) {
     if (user.companyId)  { empVals.push(user.companyId);  empParts.push(`company_id = $${empVals.length}`); }
     if (contractId)      { empVals.push(contractId);      empParts.push(`contract_id = $${empVals.length}`); }
     if (municipalityId)  { empVals.push(municipalityId);  empParts.push(`municipality_id = $${empVals.length}`); }
+    applyPersonnelTypeFilter({
+      conditions: empParts,
+      values: empVals,
+      personnelType,
+      columnSql: "real_position",
+    });
     const empWhere = empParts.length ? "WHERE " + empParts.join(" AND ") : "";
 
     // ── Coverage WHERE ──
@@ -1177,13 +1294,12 @@ function handleDashboardKpis(req, res, url) {
     const munParts = [], munVals = [];
     if (user.companyId) { munVals.push(user.companyId); munParts.push(`e.company_id = $${munVals.length}`); }
     if (contractId)     { munVals.push(contractId);     munParts.push(`e.contract_id = $${munVals.length}`); }
-    if (personnelType === "operario") {
-      munVals.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-      munParts.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) = $${munVals.length}`);
-    } else if (personnelType === "equipo") {
-      munVals.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-      munParts.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) != $${munVals.length}`);
-    }
+    applyPersonnelTypeFilter({
+      conditions: munParts,
+      values: munVals,
+      personnelType,
+      columnSql: "e.real_position",
+    });
     const munWhere = munParts.length ? "WHERE " + munParts.join(" AND ") : "";
     const munListSql  = `SELECT DISTINCT m.id, m.name FROM municipalities m
                          JOIN employees e ON e.municipality_id = m.id
@@ -1228,12 +1344,37 @@ function handleDashboardKpis(req, res, url) {
 
       pool.query(covSql, covVals),
 
-      user.companyId
-        ? pool.query(
-            `SELECT COUNT(*) AS cnt FROM payroll_novelties WHERE status = 'PENDIENTE' AND company_id = $1`,
-            [user.companyId]
-          )
-        : pool.query(`SELECT COUNT(*) AS cnt FROM payroll_novelties WHERE status = 'PENDIENTE'`),
+      (() => {
+        const novVals = [];
+        const novParts = [`n.status = 'PENDIENTE'`];
+        if (user.companyId) {
+          novVals.push(user.companyId);
+          novParts.push(`n.company_id = $${novVals.length}`);
+        }
+        if (contractId) {
+          novVals.push(contractId);
+          novParts.push(`e.contract_id = $${novVals.length}`);
+        }
+        if (municipalityId) {
+          novVals.push(municipalityId);
+          novParts.push(`e.municipality_id = $${novVals.length}`);
+        }
+        applyPersonnelTypeFilter({
+          conditions: novParts,
+          values: novVals,
+          personnelType,
+          columnSql: "e.real_position",
+        });
+        return pool.query(
+          `
+          SELECT COUNT(*) AS cnt
+          FROM payroll_novelties n
+          LEFT JOIN employees e ON e.id = n.employee_id
+          WHERE ${novParts.join(" AND ")}
+          `,
+          novVals
+        );
+      })(),
 
       pool.query(munListSql, munListVals),
     ]);
@@ -1257,6 +1398,9 @@ function handleDashboardKpis(req, res, url) {
       ts: Date.now(),
       cached: false,
       data: {
+        dashboardPersona: audience.persona,
+        dashboardTitle: getDashboardTitle(audience, personnelType),
+        personnelType,
         active,
         inactive:         Number(e.inactive    || 0),
         novelty:          Number(e.novelty     || 0),
@@ -1310,13 +1454,20 @@ function handleDashboardAlerts(req, res, url) {
       return;
     }
 
-    const alertKey = String(user.companyId ?? "");
+    const audience = await resolveDashboardAudience(user);
+    const personnelType = resolveDashboardPersonnelType(innerUrl.searchParams.get("type") || "", audience);
+    const alertKey = `${user.companyId ?? ""}|${personnelType}`;
     const cached   = _shortGet(_alertsCache, alertKey);
     if (cached) { sendJson(innerRes, 200, { ok: true, cached: true, data: cached }); return; }
 
     const cVals   = user.companyId ? [user.companyId] : [];
     const cFilter = user.companyId ? "AND company_id = $1" : "";
     const cEmp    = user.companyId ? "AND e.company_id = $1" : "";
+    const empTypeFilter = personnelType === "operario"
+      ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) = '${OPERARIO_REAL_POSITION}'`
+      : personnelType === "equipo"
+        ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) <> '${OPERARIO_REAL_POSITION}'`
+        : "";
 
     const t0 = performance.now();
     const [expiringR, lowCovR, novR, retirosR] = await Promise.all([
@@ -1330,10 +1481,12 @@ function handleDashboardAlerts(req, res, url) {
         WHERE UPPER(TRIM(status)) = 'ACTIVO'
           AND food_handling_exam_expiry_date IS NOT NULL
           ${cFilter}
+          ${personnelType === "equipo" ? "AND 1 = 0" : ""}
+          ${personnelType ? empTypeFilter.replaceAll("e.", "") : ""}
       `, cVals),
 
       // Municipios con cobertura < 85%
-      pool.query(`
+      personnelType === "equipo" ? Promise.resolve({ rows: [{ low_count: 0 }] }) : pool.query(`
         WITH latest AS (SELECT id FROM coverage_uploads ORDER BY created_at DESC LIMIT 1),
         cov AS (
           SELECT LOWER(TRIM(municipality)) AS mun_norm,
@@ -1347,7 +1500,7 @@ function handleDashboardAlerts(req, res, url) {
           SELECT LOWER(TRIM(m.name)) AS mun_norm, COUNT(e.id) AS contracted
           FROM municipalities m
           LEFT JOIN employees e ON e.municipality_id = m.id
-            AND UPPER(TRIM(e.status)) = 'ACTIVO' ${cEmp}
+            AND UPPER(TRIM(e.status)) = 'ACTIVO' ${cEmp} ${empTypeFilter}
           GROUP BY LOWER(TRIM(m.name))
         )
         SELECT COUNT(*) AS low_count
@@ -1358,8 +1511,12 @@ function handleDashboardAlerts(req, res, url) {
 
       // Novedades pendientes
       pool.query(`
-        SELECT COUNT(*) AS cnt FROM payroll_novelties
-        WHERE status = 'PENDIENTE' ${cFilter}
+        SELECT COUNT(*) AS cnt
+        FROM payroll_novelties n
+        LEFT JOIN employees e ON e.id = n.employee_id
+        WHERE n.status = 'PENDIENTE'
+          ${user.companyId ? "AND n.company_id = $1" : ""}
+          ${empTypeFilter}
       `, cVals),
 
       // Retiros en últimos 30 días
@@ -1368,6 +1525,7 @@ function handleDashboardAlerts(req, res, url) {
         WHERE UPPER(TRIM(status)) = 'INACTIVO'
           AND updated_at >= CURRENT_DATE - INTERVAL '30 days'
           ${cFilter}
+          ${personnelType ? empTypeFilter.replaceAll("e.", "") : ""}
       `, cVals),
     ]);
 
@@ -1437,8 +1595,15 @@ function handleDashboardCoverageMap(req, res, url) {
 
   withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, innerUrl, user) => {
     if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
+    const audience = await resolveDashboardAudience(user);
+    const personnelType = resolveDashboardPersonnelType(innerUrl.searchParams.get("type") || "", audience);
     const cVals = user.companyId ? [user.companyId] : [];
     const cJoin = user.companyId ? "AND e.company_id = $1" : "";
+    const cType = personnelType === "operario"
+      ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) = '${OPERARIO_REAL_POSITION}'`
+      : personnelType === "equipo"
+        ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) <> '${OPERARIO_REAL_POSITION}'`
+        : "";
 
     const { rows } = await pool.query(`
       WITH latest AS (
@@ -1464,7 +1629,7 @@ function handleDashboardCoverageMap(req, res, url) {
           COUNT(e.id) FILTER (WHERE UPPER(TRIM(e.workday_type)) = 'MT'
                                AND UPPER(TRIM(e.status)) = 'ACTIVO')  AS contracted_mt
         FROM municipalities m
-        LEFT JOIN employees e ON e.municipality_id = m.id ${cJoin}
+        LEFT JOIN employees e ON e.municipality_id = m.id ${cJoin} ${cType}
         GROUP BY m.id, m.name
       )
       SELECT
@@ -1518,13 +1683,25 @@ function handleDashboardRecentActivity(req, res, url) {
   withModuleProtection(MODULES.DASHBOARD, ACTIONS.VIEW, async (_, innerRes, innerUrl, user) => {
     if (isDemoUser(user)) { sendJson(innerRes, 200, { ok: true, data: [] }); return; }
     const limit = Math.min(Number(innerUrl.searchParams.get("limit") || 10), 50);
+    const audience = await resolveDashboardAudience(user);
+    const personnelType = resolveDashboardPersonnelType(innerUrl.searchParams.get("type") || "", audience);
 
-    const actKey  = `${user.companyId ?? ""}|${limit}`;
+    const actKey  = `${user.companyId ?? ""}|${personnelType}|${limit}`;
     const actHit  = _shortGet(_activityCache, actKey);
     if (actHit) { sendJson(innerRes, 200, { ok: true, cached: true, data: actHit }); return; }
 
     const t0 = performance.now();
     let empQuery, empVals, novQuery, novVals;
+    const empTypeFilter = personnelType === "operario"
+      ? `AND UPPER(TRIM(COALESCE(real_position,''))) = '${OPERARIO_REAL_POSITION}'`
+      : personnelType === "equipo"
+        ? `AND UPPER(TRIM(COALESCE(real_position,''))) <> '${OPERARIO_REAL_POSITION}'`
+        : "";
+    const novTypeFilter = personnelType === "operario"
+      ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) = '${OPERARIO_REAL_POSITION}'`
+      : personnelType === "equipo"
+        ? `AND UPPER(TRIM(COALESCE(e.real_position,''))) <> '${OPERARIO_REAL_POSITION}'`
+        : "";
 
     if (user.companyId) {
       empQuery = `
@@ -1533,6 +1710,7 @@ function handleDashboardRecentActivity(req, res, url) {
           status, created_at, updated_at
         FROM employees
         WHERE company_id = $1
+          ${empTypeFilter}
         ORDER BY GREATEST(created_at, updated_at) DESC
         LIMIT $2`;
       empVals = [user.companyId, limit];
@@ -1543,6 +1721,7 @@ function handleDashboardRecentActivity(req, res, url) {
         FROM payroll_novelties n
         LEFT JOIN employees e ON e.id = n.employee_id
         WHERE n.company_id = $1
+          ${novTypeFilter}
         ORDER BY n.created_at DESC
         LIMIT $2`;
       novVals = [user.companyId, limit];
@@ -1552,6 +1731,8 @@ function handleDashboardRecentActivity(req, res, url) {
           TRIM(COALESCE(first_name,'') || ' ' || COALESCE(first_last_name,'')) AS full_name,
           status, created_at, updated_at
         FROM employees
+        WHERE 1=1
+          ${empTypeFilter}
         ORDER BY GREATEST(created_at, updated_at) DESC
         LIMIT $1`;
       empVals = [limit];
@@ -1561,6 +1742,8 @@ function handleDashboardRecentActivity(req, res, url) {
           TRIM(COALESCE(e.first_name,'') || ' ' || COALESCE(e.first_last_name,'')) AS emp_name
         FROM payroll_novelties n
         LEFT JOIN employees e ON e.id = n.employee_id
+        WHERE 1=1
+          ${novTypeFilter}
         ORDER BY n.created_at DESC
         LIMIT $1`;
       novVals = [limit];
@@ -1626,6 +1809,8 @@ function handleDashboardStaffByCargo(req, res, url) {
 
     const type = (innerUrl.searchParams.get("type") || "real").toLowerCase();
     const month = innerUrl.searchParams.get("month") || "";   // formato YYYY-MM
+    const audience = await resolveDashboardAudience(user);
+    const personnelType = resolveDashboardPersonnelType(innerUrl.searchParams.get("personnel_type") || innerUrl.searchParams.get("type_context") || "", audience);
 
     const cargoExpr = type === "licitacion"
       ? `COALESCE(NULLIF(TRIM(offered_position),''), NULLIF(TRIM(offer_position),''), 'Sin cargo licitación')`
@@ -1635,6 +1820,14 @@ function handleDashboardStaffByCargo(req, res, url) {
     const compFilter = user.companyId
       ? (vals.push(user.companyId), `AND company_id = $${vals.length}`)
       : "";
+    const typeFilterParts = [];
+    applyPersonnelTypeFilter({
+      conditions: typeFilterParts,
+      values: vals,
+      personnelType,
+      columnSql: "real_position",
+    });
+    const typeFilter = typeFilterParts.length ? `AND ${typeFilterParts.join(" AND ")}` : "";
 
     let activeFilter  = `UPPER(TRIM(status)) = 'ACTIVO'`;
     let retiredFilter = `UPPER(TRIM(status)) IN ('INACTIVO','RETIRADO','RETIRO')`;
@@ -1654,7 +1847,7 @@ function handleDashboardStaffByCargo(req, res, url) {
         COUNT(*) FILTER (WHERE ${activeFilter})  AS active,
         COUNT(*) FILTER (WHERE ${retiredFilter}) AS retired
       FROM employees
-      WHERE 1=1 ${compFilter}
+      WHERE 1=1 ${compFilter} ${typeFilter}
       GROUP BY 1
       HAVING COUNT(*) FILTER (WHERE ${activeFilter}) > 0
           OR COUNT(*) FILTER (WHERE ${retiredFilter}) > 0

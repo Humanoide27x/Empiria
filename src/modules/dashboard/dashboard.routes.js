@@ -1,6 +1,10 @@
 const {
   handleDashboardSummary,
   handleDashboardWorkspaceSummary,
+  handleDashboardSummaryKpis,
+  handleDashboardSummaryDocuments,
+  handleDashboardSummaryCoverage,
+  handleDashboardSummaryPayroll,
   handleDashboardKpis,
   handleDashboardAlerts,
   handleDashboardCoverageMap,
@@ -22,6 +26,22 @@ async function handleDashboardRoutes(req, res, url) {
   }
   if (req.method === "GET" && p === "/dashboard/summary") {
     handleDashboardWorkspaceSummary(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/summary-kpis") {
+    handleDashboardSummaryKpis(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/summary-documents") {
+    handleDashboardSummaryDocuments(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/summary-coverage") {
+    handleDashboardSummaryCoverage(req, res, url);
+    return true;
+  }
+  if (req.method === "GET" && p === "/dashboard/summary-payroll") {
+    handleDashboardSummaryPayroll(req, res, url);
     return true;
   }
 

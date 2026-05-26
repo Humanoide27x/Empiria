@@ -235,6 +235,9 @@ function normalize({ summary, kpis }) {
         : []);
 
   return {
+    dashboardPersona: String(s.dashboardPersona || k.dashboardPersona || "admin_full"),
+    dashboardTitle: String(s.dashboardTitle || k.dashboardTitle || "Dashboard"),
+    personnelType: String(s.personnelType || k.personnelType || _activeType || "operario"),
     activos:          Number(s.activeEmployees    != null ? s.activeEmployees    : k.active      || 0),
     tcCont:           Number(s.contractedTc       != null ? s.contractedTc       : k.tc_count    || 0),
     mtCont:           Number(s.contractedMt       != null ? s.contractedMt       : k.mt_count    || 0),
@@ -347,18 +350,54 @@ function buildAgeBars(d) {
 
 // ── Widget builders ───────────────────────────────────────────────────────────
 
+function getDashboardPersona() {
+  return String(_lastData?.dashboardPersona || "admin_full").toLowerCase().trim();
+}
+
+function isOperarioDashboardLocked() {
+  return getDashboardPersona() === "operario_manipulador";
+}
+
+function isTeamDashboardLocked() {
+  return getDashboardPersona() === "equipo_minimo";
+}
+
+function canSwitchDashboardType() {
+  return !isOperarioDashboardLocked() && !isTeamDashboardLocked() && hasEquipoMinimo();
+}
+
 function hasEquipoMinimo() {
-  return state.access?.features?.equipo_minimo !== false;
+  return state.access?.features?.equipo_minimo === true;
 }
 
 function buildTopbar() {
+  if (isTeamDashboardLocked()) {
+    return `
+    <div class="hr-topbar">
+      <div>
+        <p class="hr-card-ttl" style="margin:0 0 4px;">Dashboard</p>
+        <h2 style="margin:0;font-size:22px;line-height:1.1;color:#1E293B;">Dashboard de Equipo Mínimo</h2>
+      </div>
+    </div>`;
+  }
+
+  if (isOperarioDashboardLocked()) {
+    return `
+    <div class="hr-topbar">
+      <div>
+        <p class="hr-card-ttl" style="margin:0 0 4px;">Dashboard</p>
+        <h2 style="margin:0;font-size:22px;line-height:1.1;color:#1E293B;">Dashboard Operativo</h2>
+      </div>
+    </div>`;
+  }
+
   return `
   <div class="hr-topbar">
     <div class="hr-type-tabs">
       <button type="button" class="hr-type-tab${_activeType === "operario" ? " active" : ""}" data-type="operario">
         Operario Manip. Alimentos
       </button>
-      ${hasEquipoMinimo() ? `
+      ${canSwitchDashboardType() ? `
       <button type="button" class="hr-type-tab${_activeType === "equipo" ? " active" : ""}" data-type="equipo">
         Equipo Mínimo (Adm.)
       </button>` : ""}
@@ -379,9 +418,13 @@ function buildKpiCard(value, title, subtitle, accent, icon) {
 }
 
 function buildKpiRow(d) {
+  const activeTitle = _activeType === "operario" ? "Manipuladores activos" : "Empleados activos";
+  const activeSubtitle = _activeType === "operario"
+    ? "Solo cargo real OPERARIO MANIPULADOR DE ALIMENTOS"
+    : "Personal activo en base real";
   return `
   <section class="hr-kpi-grid">
-    ${buildKpiCard(fmtN(d.activos), "Empleados activos", "Personal activo en base real", "#0B7CFF", ICON_PEOPLE)}
+    ${buildKpiCard(fmtN(d.activos), activeTitle, activeSubtitle, "#0B7CFF", ICON_PEOPLE)}
     ${buildKpiCard(`${fmtN(d.tcReq)} / ${fmtN(d.tcCont)}`, "TC Req · TC Cont", "Cobertura tiempo completo", "#2ECF9A", ICON_TC)}
     ${buildKpiCard(`${fmtN(d.mtReq)} / ${fmtN(d.mtCont)}`, "MT Req · MT Cont", "Cobertura medio tiempo", "#8B5CF6", ICON_MT)}
     ${buildKpiCard(fmtN(d.required20PctTc), "20% TC Requerido", "Proyección mínima requerida", "#F59E0B", ICON_PCT)}
@@ -861,16 +904,55 @@ function buildTabCard(d, opts = {}) {
   </div>`;
 }
 
-function buildEquipoPlaceholder() {
+function buildTeamMunicipalityCard(d) {
+  const items = Array.isArray(d.municipiosList) ? d.municipiosList.slice(0, 8) : [];
+  if (!items.length) {
+    return `<div class="hr-card"><p class="hr-card-ttl">Municipios del equipo</p><p class="hr-empty">Sin municipios disponibles</p></div>`;
+  }
+
   return `
-  <div class="hr-card hr-placeholder">
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="2" y="7" width="20" height="14" rx="2"/>
-      <path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
-      <line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/>
-    </svg>
-    <p class="hr-placeholder-ttl">Dashboard Equipo Mínimo (Administrativo)</p>
-    <p class="hr-placeholder-sub">Este panel está en desarrollo. Incluirá métricas específicas para el equipo administrativo y de soporte.</p>
+  <div class="hr-card">
+    <p class="hr-card-ttl">Municipios del equipo</p>
+    <div class="hr-bar-list">
+      ${items.map((item) => `
+        <div class="hr-bar-row">
+          <div class="hr-bar-head">
+            <span>${escapeHtml(item.name || "Sin municipio")}</span>
+            <strong>Activo</strong>
+          </div>
+          <div class="hr-bar-track">
+            <div class="hr-bar-fill" style="width:100%;background:#0B7CFF"></div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  </div>`;
+}
+
+function buildTeamEssentialCard(d) {
+  const rows = [
+    { label: "Cumpleaños del mes", value: d.birthdaysThisMonth.length },
+    { label: "Eventos próximos", value: d.upcomingEvents.length },
+    { label: "Certificados por vencer", value: Number(d.residenceCertStats?.proximo || 0) },
+    { label: "Certificados vencidos", value: Number(d.residenceCertStats?.vencido || 0) },
+  ];
+
+  return `
+  <div class="hr-card">
+    <p class="hr-card-ttl">Seguimiento esencial</p>
+    <div class="hr-bar-list">
+      ${rows.map((row) => `
+        <div class="hr-bar-row">
+          <div class="hr-bar-head">
+            <span>${escapeHtml(row.label)}</span>
+            <strong>${fmtN(row.value)}</strong>
+          </div>
+          <div class="hr-bar-track">
+            <div class="hr-bar-fill" style="width:${Math.max(6, Math.min(100, Number(row.value || 0) * 10))}%;background:#2ECF9A"></div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
   </div>`;
 }
 
@@ -992,6 +1074,15 @@ function buildEquipoWorkspace(d) {
     ${buildTabCard(d, { showCargo: true })}`;
 }
 
+function buildEquipoMinimoWorkspace(d) {
+  return `
+    ${buildEquipoKpiRow(d)}
+    <div class="hr-row-2">
+      ${buildTeamMunicipalityCard(d)}
+      ${buildTeamEssentialCard(d)}
+    </div>`;
+}
+
 function buildLoadingHtml() {
   const sk = (h = "20px") => `<div class="hr-skel" style="height:${h}"></div>`;
   return `
@@ -1033,9 +1124,13 @@ function buildWorkspace(d) {
           total: d.activos, inactivos: cert.inactivos, docLabel: "Certificados" })}
     </div>`;
 
+  const dashboardContent = isTeamDashboardLocked()
+    ? buildEquipoMinimoWorkspace(d)
+    : (_activeType === "operario" ? operarioContent : buildEquipoWorkspace(d));
+
   return `
   ${buildTopbar(d.municipiosList, _munId)}
-  ${_activeType === "operario" ? operarioContent : buildEquipoWorkspace(d)}
+  ${dashboardContent}
   ${buildCoverageModal(d)}`;
 }
 
@@ -1230,6 +1325,9 @@ async function renderHrWorkspace() {
   try {
     const raw = await fetchAll(_munId);
     _lastData  = normalize(raw);
+    if (_lastData?.personnelType === "equipo" || _lastData?.personnelType === "operario") {
+      _activeType = _lastData.personnelType;
+    }
     root.innerHTML = buildWorkspace(_lastData);
     triggerTransitions(_lastData);
     wireEvents();

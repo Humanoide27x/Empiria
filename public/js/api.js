@@ -27,6 +27,13 @@ function isSessionCacheable(path, options = {}) {
 
 export async function apiFetch(path, options = {}) {
   const endpoint = String(path || "");
+  if (!endpoint.startsWith("/")) {
+    const error = new Error(`Endpoint invalido en apiFetch: "${endpoint}"`);
+    error.status = 0;
+    error.endpoint = endpoint;
+    console.error(`[apiFetch] request cancelado por endpoint invalido: ${endpoint}`);
+    throw error;
+  }
   const token = getAuthToken();
   const requiresAuth = options.auth !== false && !isPublicEndpoint(endpoint);
   if (requiresAuth && !token) {

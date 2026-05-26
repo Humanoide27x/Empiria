@@ -34,19 +34,22 @@ function calcLineHoras(salaryConfig, modClass, horasDiarias) {
   const salaryBase = modCfg.salary               || smlv;
   const valorHora  = Math.round(salaryBase / 240);
   const totalHoras = (horasDiarias || []).reduce((s, d) => s + (Number(d.horas) || 0), 0);
+  const workedDays = (horasDiarias || []).filter(d => (Number(d.horas) || 0) > 0).length;
   const devengado  = Math.round(valorHora * totalHoras);
   const salud      = Math.ceil(devengado * 0.04 / 100) * 100;
   const pension    = salud;
   const totalDed   = salud * 2;
   const neto       = devengado - totalDed;
   return {
-    valorHora, totalHoras, devengado,
+    valorHora, totalHoras, devengado, workedDays,
+    salaryBase, dailySalary: Math.round(salaryBase / 30),
+    baseEarned: devengado, extraShiftAmount: 0, otherEarnings: 0,
     salarioProp: devengado, auxTrans: 0, adicsCalc: [], totalAdics: 0,
     totalDev: devengado, salud, pension, totalDed, neto,
   };
 }
 
-function calcLine(salaryConfig, modClass, diasNoClase, novedades) {
+function calcLine(salaryConfig, modClass, diasNoClase, novedades, turnos = []) {
   const modCfg     = (salaryConfig.modalities || {})[modClass] || {};
   const smlv       = salaryConfig.smlv           || 1_750_905;
   const auxCfg     = salaryConfig.aux_transporte || 249_095;
@@ -59,8 +62,25 @@ function calcLine(salaryConfig, modClass, diasNoClase, novedades) {
   const diasCubiertos     = novedades.filter(n =>  n.paid).reduce((s, n) => s + (n.days || 0), 0);
   const diasConSalario    = Math.max(0, 30 - diasSinPago);
   const diasConTransporte = Math.max(0, 30 - diasNoClase - diasSinPago - diasCubiertos);
-
-  const salarioProp = Math.round(salaryBase / 30 * diasConSalario);
+  const dailySalary = salaryBase / 30;
+  const salarioProp = Math.round(dailySalary * diasConSalario);
+  const turnosInfo = (Array.isArray(turnos) ? turnos : []).map(t => {
+    const turnoCfg      = (salaryConfig.modalities || {})[t.modalidad] || modCfg;
+    const salarioTurno  = turnoCfg.salary || smlv;
+    const diasTurno     = Math.max(0, Number(t.dias) || 0);
+    const valorUnitario = Math.round(salarioTurno / 30);
+    const totalTurno    = Math.round(valorUnitario * diasTurno);
+    return {
+      modalidad: t.modalidad,
+      dias: diasTurno,
+      salario: salarioTurno,
+      salarioMensual: salarioTurno,
+      valorUnitario,
+      total: totalTurno,
+      prop: totalTurno,
+    };
+  });
+  const extraShiftAmount = turnosInfo.reduce((s, t) => s + t.total, 0);
   const auxTrans    = Math.round(auxCfg    / 30 * diasConTransporte);
   const adicsCalc   = adicionales.map(a => ({
     label: a.label,
@@ -68,7 +88,8 @@ function calcLine(salaryConfig, modClass, diasNoClase, novedades) {
     prop:  Math.round(Number(a.value) / 30 * diasConTransporte),
   }));
   const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
-  const totalDev   = salarioProp + auxTrans + totalAdics;
+  const otherEarnings = auxTrans + totalAdics;
+  const totalDev   = salarioProp + extraShiftAmount + otherEarnings;
   const salud      = Math.ceil(salarioProp * 0.04 / 100) * 100;
   const pension    = salud;
   const totalDed   = salud * 2;
@@ -76,8 +97,49 @@ function calcLine(salaryConfig, modClass, diasNoClase, novedades) {
 
   return {
     diasSinPago, diasCubiertos, diasConSalario, diasConTransporte,
-    salaryBase, salarioProp, auxTrans, adicsCalc, totalAdics,
-    totalDev, salud, pension, totalDed, neto,
+    salaryBase,
+    dailySalary,
+    workedDays: diasConSalario,
+    salarioProp,
+    baseEarned: salarioProp,
+    turnosInfo,
+    extraShiftAmount,
+    auxTrans,
+    adicsCalc,
+    totalAdics,
+    otherEarnings,
+    totalDev,
+    grossEarned: totalDev,
+    salud, pension, totalDed, neto,
+  };
+}
+
+function extractPayrollBreakdown(row) {
+  const snapshot = row && row.salary_snapshot && typeof row.salary_snapshot === "object" && !Array.isArray(row.salary_snapshot)
+    ? row.salary_snapshot
+    : {};
+  const saved = snapshot.payrollBreakdown && typeof snapshot.payrollBreakdown === "object" && !Array.isArray(snapshot.payrollBreakdown)
+    ? snapshot.payrollBreakdown
+    : {};
+  const transportAllowance = Number(row.transport_allowance || 0);
+  const configuredEarnings = Number(row.other_earnings || 0);
+  const baseEarned         = Number(saved.baseEarned || row.base_salary || 0);
+  const totalDev           = Number(row.total_devengado || 0);
+  const salaryFromConfig   = snapshot.modalities && row.modality_class
+    ? Number((snapshot.modalities[row.modality_class] || {}).salary || 0)
+    : 0;
+
+  return {
+    baseSalaryMonthly: Number(saved.baseSalaryMonthly || salaryFromConfig || baseEarned),
+    workedDays: Number(saved.workedDays || row.worked_days || 0),
+    dailySalary: Number(saved.dailySalary || 0),
+    baseEarned,
+    extraShiftAmount: Number(saved.extraShiftAmount || 0),
+    otherEarnings: Number(saved.otherEarnings ?? (transportAllowance + configuredEarnings)),
+    transportAllowance: Number(saved.transportAllowance ?? transportAllowance),
+    configuredEarnings: Number(saved.configuredEarnings ?? configuredEarnings),
+    grossEarned: Number(saved.grossEarned || totalDev || (baseEarned + transportAllowance + configuredEarnings)),
+    turnos: Array.isArray(saved.turnos) ? saved.turnos : [],
   };
 }
 
@@ -184,32 +246,42 @@ async function getPeriodResults(periodId) {
     `SELECT * FROM payroll_results WHERE period_id = $1 ORDER BY employee_name`,
     [periodId]
   );
-  return rows.map(r => ({
-    id:              r.id,
-    employeeId:      r.employee_id,
-    employeeName:    r.employee_name,
-    documentNumber:  r.document_number,
-    site:            r.site,
-    institution:     r.institution,
-    municipality:    r.municipality,
-    modality:        r.modality,
-    modalityClass:   r.modality_class,
-    workdayType:     r.work_time_type,
-    payrollType:     r.payroll_type   || "mensual",
-    diasNoClase:     Number(r.dias_no_clase   || 0),
-    novedades:       Array.isArray(r.novedades_detalle)   ? r.novedades_detalle   : [],
-    adicionales:     Array.isArray(r.adicionales_detalle) ? r.adicionales_detalle : [],
-    horasDiarias:    Array.isArray(r.horas_diarias)       ? r.horas_diarias       : [],
-    salarioProp:     Number(r.base_salary),
-    auxTrans:        Number(r.transport_allowance),
-    totalAdics:      Number(r.other_earnings),
-    totalDev:        Number(r.total_devengado),
-    salud:           Number(r.deduccion_salud),
-    pension:         Number(r.deduccion_pension),
-    totalDed:        Number(r.total_deducciones),
-    neto:            Number(r.neto_pagar),
-    calculatedAt:    r.calculated_at,
-  }));
+  return rows.map(r => {
+    const breakdown = extractPayrollBreakdown(r);
+    return {
+      id:              r.id,
+      employeeId:      r.employee_id,
+      employeeName:    r.employee_name,
+      documentNumber:  r.document_number,
+      site:            r.site,
+      institution:     r.institution,
+      municipality:    r.municipality,
+      modality:        r.modality,
+      modalityClass:   r.modality_class,
+      workdayType:     r.work_time_type,
+      payrollType:     r.payroll_type   || "mensual",
+      diasNoClase:     Number(r.dias_no_clase   || 0),
+      novedades:       Array.isArray(r.novedades_detalle)   ? r.novedades_detalle   : [],
+      adicionales:     Array.isArray(r.adicionales_detalle) ? r.adicionales_detalle : [],
+      horasDiarias:    Array.isArray(r.horas_diarias)       ? r.horas_diarias       : [],
+      turnos:          breakdown.turnos,
+      salarioMensual:  breakdown.baseSalaryMonthly,
+      salarioDiario:   breakdown.dailySalary,
+      workedDays:      breakdown.workedDays,
+      devengadoBase:   breakdown.baseEarned,
+      turnosExtra:     breakdown.extraShiftAmount,
+      otrosDevengos:   breakdown.otherEarnings,
+      salarioProp:     breakdown.baseEarned,
+      auxTrans:        breakdown.transportAllowance,
+      totalAdics:      breakdown.configuredEarnings,
+      totalDev:        Number(r.total_devengado),
+      salud:           Number(r.deduccion_salud),
+      pension:         Number(r.deduccion_pension),
+      totalDed:        Number(r.total_deducciones),
+      neto:            Number(r.neto_pagar),
+      calculatedAt:    r.calculated_at,
+    };
+  });
 }
 
 // ── Guardar liquidación ───────────────────────────────────────────────────────
@@ -222,6 +294,24 @@ async function savePeriodLines(periodId, contractId, companyId, lines, salarySna
 
     for (const line of lines) {
       const calc = line.calc;
+      const baseSnapshot = salarySnapshot && typeof salarySnapshot === "object" && !Array.isArray(salarySnapshot)
+        ? salarySnapshot
+        : {};
+      const lineSnapshot = {
+        ...baseSnapshot,
+        payrollBreakdown: {
+          baseSalaryMonthly: Number(calc.salaryBase || 0),
+          workedDays: Number(calc.workedDays || 0),
+          dailySalary: Number(calc.dailySalary || 0),
+          baseEarned: Number(calc.baseEarned || calc.salarioProp || 0),
+          extraShiftAmount: Number(calc.extraShiftAmount || 0),
+          transportAllowance: Number(calc.auxTrans || 0),
+          configuredEarnings: Number(calc.totalAdics || 0),
+          otherEarnings: Number(calc.otherEarnings || ((calc.auxTrans || 0) + (calc.totalAdics || 0))),
+          grossEarned: Number(calc.totalDev || 0),
+          turnos: Array.isArray(calc.turnosInfo) ? calc.turnosInfo : [],
+        },
+      };
       await client.query(`
         INSERT INTO payroll_results (
           period_id, employee_id, employee_name, document_number,
@@ -234,8 +324,8 @@ async function savePeriodLines(periodId, contractId, companyId, lines, salarySna
           horas_diarias, payroll_type
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-          30, $13,$14,$15,$16,$17,$18,$19, 0,$20,'',
-          $21,$22,$23,$24,$25,$26
+          $13,$14,$15,$16,$17,$18,$19,$20,0,$21,'',
+          $22,$23,$24,$25,$26,$27
         )
       `, [
         periodId,
@@ -243,13 +333,14 @@ async function savePeriodLines(periodId, contractId, companyId, lines, salarySna
         companyId, contractId,
         line.municipalityName || "", line.institutionName || "", line.siteName || "",
         line.modality || "", line.modalityClass || "", line.workdayType || "",
-        calc.salarioProp, calc.auxTrans, calc.totalAdics,
+        Number(calc.workedDays || 0),
+        calc.salarioProp, calc.auxTrans, ((calc.totalAdics || 0) + (calc.extraShiftAmount || 0)),
         calc.totalDev, calc.salud, calc.pension, calc.totalDed,
         calc.neto,
         line.diasNoClase || 0,
         JSON.stringify(line.novedades || []),
         JSON.stringify(calc.adicsCalc || []),
-        JSON.stringify(salarySnapshot || {}),
+        JSON.stringify(lineSnapshot),
         JSON.stringify(line.horasDiarias || []),
         line.payrollType || "mensual",
       ]);
@@ -293,21 +384,20 @@ async function generateExcelBuffer(periodId) {
     "Modalidad", "Jornada",
     "Días no clase", "Días sin pago", "Días cubiertos",
     "Días con salario", "Días con transporte",
-    "Salario prop.", "Aux. transporte", "Adicionales",
+    "Salario mensual", "Salario diario", "Devengado base", "Turnos extra", "Otros devengos",
     "Total devengado", "Salud 4%", "Pensión 4%", "Total deducciones", "Neto a pagar",
   ];
 
   const dataRows = results.map(r => {
     const diasSinPago       = r.novedades.filter(n => !n.paid).reduce((s, n) => s + n.days, 0);
     const diasCubiertos     = r.novedades.filter(n =>  n.paid).reduce((s, n) => s + n.days, 0);
-    const diasConSalario    = Math.max(0, 30 - diasSinPago);
     const diasConTransporte = Math.max(0, 30 - r.diasNoClase - diasSinPago - diasCubiertos);
     return [
       r.employeeName, r.documentNumber, r.site, r.institution, r.municipality,
       r.modality, r.workdayType,
       r.diasNoClase, diasSinPago, diasCubiertos,
-      diasConSalario, diasConTransporte,
-      r.salarioProp, r.auxTrans, r.totalAdics,
+      r.workedDays, diasConTransporte,
+      r.salarioMensual, r.salarioDiario, r.devengadoBase, r.turnosExtra, r.otrosDevengos,
       r.totalDev, r.salud, r.pension, r.totalDed, r.neto,
     ];
   });
@@ -317,7 +407,7 @@ async function generateExcelBuffer(periodId) {
     { dev: 0, ded: 0, neto: 0 }
   );
   const totRow = ["TOTALES", "", "", "", "", "", "", "", "", "", "", "",
-    "", "", "", totals.dev, "", "", totals.ded, totals.neto];
+    "", "", "", "", "", totals.dev, "", "", totals.ded, totals.neto];
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows, totRow]);
@@ -328,7 +418,7 @@ async function generateExcelBuffer(periodId) {
     { wch: 10 }, { wch: 8 },
     { wch: 11 }, { wch: 12 }, { wch: 12 },
     { wch: 14 }, { wch: 16 },
-    { wch: 14 }, { wch: 15 }, { wch: 12 },
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
     { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 14 },
   ];
 

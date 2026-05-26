@@ -877,31 +877,47 @@ async function getPeriodResults(periodId) {
     [Number(periodId)]
   );
 
-  const lines = r.rows.map(row => ({
-    id:                 row.id,
-    periodId:           row.period_id,
-    employeeId:         row.employee_id,
-    employeeName:       row.employee_name,
-    documentNumber:     row.document_number,
-    municipality:       row.municipality,
-    institution:        row.institution,
-    site:               row.site,
-    modality:           row.modality,
-    modalityClass:      row.modality_class,
-    workTimeType:       row.work_time_type,
-    workedDays:         Number(row.worked_days),
-    baseSalary:         Number(row.base_salary),
-    transportAllowance: Number(row.transport_allowance),
-    otherEarnings:      Number(row.other_earnings),
-    totalDevengado:     Number(row.total_devengado),
-    deduccionSalud:     Number(row.deduccion_salud),
-    deduccionPension:   Number(row.deduccion_pension),
-    totalDeducciones:   Number(row.total_deducciones),
-    novedadDescuento:   Number(row.novedad_descuento),
-    netoPagar:          Number(row.neto_pagar),
-    observations:       row.observations || "",
-    calculatedAt:       row.calculated_at,
-  }));
+  const lines = r.rows.map(row => {
+    const snapshot = row.salary_snapshot && typeof row.salary_snapshot === "object" && !Array.isArray(row.salary_snapshot)
+      ? row.salary_snapshot
+      : {};
+    const breakdown = snapshot.payrollBreakdown && typeof snapshot.payrollBreakdown === "object" && !Array.isArray(snapshot.payrollBreakdown)
+      ? snapshot.payrollBreakdown
+      : {};
+    const transportAllowance = Number(row.transport_allowance || 0);
+    const otherEarnings      = Number(row.other_earnings || 0);
+    return {
+      id:                 row.id,
+      periodId:           row.period_id,
+      employeeId:         row.employee_id,
+      employeeName:       row.employee_name,
+      documentNumber:     row.document_number,
+      municipality:       row.municipality,
+      institution:        row.institution,
+      site:               row.site,
+      modality:           row.modality,
+      modalityClass:      row.modality_class,
+      workTimeType:       row.work_time_type,
+      workedDays:         Number(row.worked_days),
+      baseSalary:         Number(row.base_salary),
+      baseSalaryMonthly:  Number(breakdown.baseSalaryMonthly || breakdown.salaryBaseMonthly || Number(row.base_salary)),
+      dailySalary:        Number(breakdown.dailySalary || 0),
+      baseEarned:         Number(breakdown.baseEarned || row.base_salary || 0),
+      extraShiftAmount:   Number(breakdown.extraShiftAmount || 0),
+      transportAllowance: Number(row.transport_allowance),
+      otherEarnings:      Number(row.other_earnings),
+      otherEarningsTotal: Number(breakdown.otherEarnings ?? (transportAllowance + otherEarnings)),
+      turnos:             Array.isArray(breakdown.turnos) ? breakdown.turnos : [],
+      totalDevengado:     Number(row.total_devengado),
+      deduccionSalud:     Number(row.deduccion_salud),
+      deduccionPension:   Number(row.deduccion_pension),
+      totalDeducciones:   Number(row.total_deducciones),
+      novedadDescuento:   Number(row.novedad_descuento),
+      netoPagar:          Number(row.neto_pagar),
+      observations:       row.observations || "",
+      calculatedAt:       row.calculated_at,
+    };
+  });
 
   const totals = lines.reduce((acc, l) => {
     acc.employees       += 1;
@@ -942,6 +958,15 @@ async function getPaySlip(periodId, employeeId) {
   if (!r.rows[0]) throw new Error("Desprendible no encontrado para este empleado y período");
 
   const row = r.rows[0];
+  const snapshot = row.salary_snapshot && typeof row.salary_snapshot === "object" && !Array.isArray(row.salary_snapshot)
+    ? row.salary_snapshot
+    : {};
+  const breakdown = snapshot.payrollBreakdown && typeof snapshot.payrollBreakdown === "object" && !Array.isArray(snapshot.payrollBreakdown)
+    ? snapshot.payrollBreakdown
+    : {};
+  const transportAllowance = Number(row.transport_allowance || 0);
+  const otherEarnings      = Number(row.other_earnings || 0);
+
   return {
     period,
     slip: {
@@ -956,8 +981,14 @@ async function getPaySlip(periodId, employeeId) {
       workTimeType:       row.work_time_type,
       workedDays:         Number(row.worked_days),
       baseSalary:         Number(row.base_salary),
+      baseSalaryMonthly:  Number(breakdown.baseSalaryMonthly || breakdown.salaryBaseMonthly || Number(row.base_salary)),
+      dailySalary:        Number(breakdown.dailySalary || 0),
+      baseEarned:         Number(breakdown.baseEarned || row.base_salary || 0),
+      extraShiftAmount:   Number(breakdown.extraShiftAmount || 0),
       transportAllowance: Number(row.transport_allowance),
       otherEarnings:      Number(row.other_earnings),
+      otherEarningsTotal: Number(breakdown.otherEarnings ?? (transportAllowance + otherEarnings)),
+      turnos:             Array.isArray(breakdown.turnos) ? breakdown.turnos : [],
       totalDevengado:     Number(row.total_devengado),
       deduccionSalud:     Number(row.deduccion_salud),
       deduccionPension:   Number(row.deduccion_pension),
