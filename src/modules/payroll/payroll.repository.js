@@ -4,6 +4,7 @@ const pool = require("../../db/pool");
 const { getPersonnel, updatePersonnel } = require("../../data/personnel");
 const { getUsers } = require("../../data/users");
 const { getPayrollConfig } = require("../../data/payroll_config");
+const { calculatePayrollDeductionBase } = require("../../utils/payroll-deductions");
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads", "novedades");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -41,6 +42,26 @@ function toBigIntOrNull(value) {
 
 function safeString(value) {
   return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function normalizeLegacyPayrollLine(line) {
+  if (!line || typeof line !== "object") return line;
+
+  const baseSalary = Number(line.baseSalary ?? line.base_salary ?? line.baseEarned ?? 0);
+  const totalDevengado = Number(line.totalDevengado ?? line.total_devengado ?? 0);
+  const novedadDescuento = Number(line.novedadDescuento ?? line.novedad_descuento ?? 0);
+  const deduccionSalud = calculatePayrollDeductionBase(baseSalary);
+  const deduccionPension = calculatePayrollDeductionBase(baseSalary);
+  const totalDeducciones = deduccionSalud + deduccionPension;
+  const netoPagar = Math.round(totalDevengado - totalDeducciones - novedadDescuento);
+
+  return {
+    ...line,
+    deduccionSalud,
+    deduccionPension,
+    totalDeducciones,
+    netoPagar,
+  };
 }
 
 const NOVELTY_TYPES = Object.freeze([
@@ -611,8 +632,8 @@ async function calculatePayroll({ period, companyId, contractId } = {}) {
 
     // --- Totals ---
     const totalDevengado  = salarioBase + auxTransporte + novedadAdicional;
-    const deduccionSalud  = salarioBase * config.healthDeductionPct;
-    const deduccionPension = salarioBase * config.pensionDeductionPct;
+    const deduccionSalud  = calculatePayrollDeductionBase(salarioBase);
+    const deduccionPension = calculatePayrollDeductionBase(salarioBase);
     const totalDeducciones = deduccionSalud + deduccionPension;
     const netoPagar = totalDevengado - totalDeducciones - novedadDescuento;
 
@@ -669,9 +690,9 @@ async function calculatePayroll({ period, companyId, contractId } = {}) {
       transportAllowance: Math.round(auxTransporte),
       otherEarnings:   Math.round(novedadAdicional),
       totalDevengado:  Math.round(totalDevengado),
-      deduccionSalud:  Math.round(deduccionSalud),
-      deduccionPension: Math.round(deduccionPension),
-      totalDeducciones: Math.round(totalDeducciones),
+      deduccionSalud,
+      deduccionPension,
+      totalDeducciones,
       novedadDescuento: Math.round(novedadDescuento),
       netoPagar:       Math.round(netoPagar),
       observations,
@@ -886,7 +907,7 @@ async function getPeriodResults(periodId) {
       : {};
     const transportAllowance = Number(row.transport_allowance || 0);
     const otherEarnings      = Number(row.other_earnings || 0);
-    return {
+    return normalizeLegacyPayrollLine({
       id:                 row.id,
       periodId:           row.period_id,
       employeeId:         row.employee_id,
@@ -916,7 +937,7 @@ async function getPeriodResults(periodId) {
       netoPagar:          Number(row.neto_pagar),
       observations:       row.observations || "",
       calculatedAt:       row.calculated_at,
-    };
+    });
   });
 
   const totals = lines.reduce((acc, l) => {
@@ -969,7 +990,7 @@ async function getPaySlip(periodId, employeeId) {
 
   return {
     period,
-    slip: {
+    slip: normalizeLegacyPayrollLine({
       employeeId:         row.employee_id,
       employeeName:       row.employee_name,
       documentNumber:     row.document_number,
@@ -997,7 +1018,7 @@ async function getPaySlip(periodId, employeeId) {
       netoPagar:          Number(row.neto_pagar),
       observations:       row.observations || "",
       calculatedAt:       row.calculated_at,
-    },
+    }),
   };
 }
 

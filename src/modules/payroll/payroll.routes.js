@@ -26,10 +26,39 @@ const {
   handleOperationalNoveltyReviewed,
   handleOperationalNoveltyCover,
   handleOperationalSupports,
+  handleSalaryCategories,
+  handleOfficialNoveltyTypes,
+  handleItemPayslip,
+  handleChargeAccountHtml,
+  handleCambioOperativo,
+  handleItemReviewed,
+  handleDeleteNovelty,
+  handleGroupExport,
+  handleGroupClose,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
   const { pathname } = url;
+
+  // ── Nuevas rutas (033) ──────────────────────────────────────────────────────
+  if (pathname === "/payroll/salary-categories") {
+    await handleSalaryCategories(req, res, url); return true;
+  }
+  if (pathname === "/payroll/official-novelty-types") {
+    await handleOfficialNoveltyTypes(req, res, url); return true;
+  }
+  if (/^\/payroll\/items\/\d+\/slip$/.test(pathname)) {
+    await handleItemPayslip(req, res, url); return true;
+  }
+  if (/^\/payroll\/items\/\d+\/reviewed$/.test(pathname)) {
+    await handleItemReviewed(req, res, url); return true;
+  }
+  if (/^\/payroll\/items\/\d+\/cambio-operativo$/.test(pathname)) {
+    await handleCambioOperativo(req, res, url); return true;
+  }
+  if (/^\/payroll\/turn-covers\/\d+\/charge-account$/.test(pathname)) {
+    await handleChargeAccountHtml(req, res, url); return true;
+  }
 
   if (pathname === "/payroll/periods") {
     await handleOperationalPeriods(req, res, url); return true;
@@ -39,6 +68,12 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/\d+\/groups$/.test(pathname)) {
     await handleOperationalGroups(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/export$/.test(pathname)) {
+    await handleGroupExport(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/close$/.test(pathname)) {
+    await handleGroupClose(req, res, url); return true;
   }
   if (/^\/payroll\/groups\/\d+\/calculate$/.test(pathname)) {
     await handleOperationalGroupCalculate(req, res, url); return true;
@@ -51,6 +86,9 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/novelties\/\d+\/cover$/.test(pathname)) {
     await handleOperationalNoveltyCover(req, res, url); return true;
+  }
+  if (/^\/payroll\/novelties\/\d+$/.test(pathname) && req.method === "DELETE") {
+    await handleDeleteNovelty(req, res, url); return true;
   }
   if (/^\/payroll\/novelties\/\d+$/.test(pathname) && (req.method === "PATCH" || req.method === "PUT")) {
     await handleOperationalNoveltyPatch(req, res, url); return true;

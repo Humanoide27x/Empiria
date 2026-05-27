@@ -91,7 +91,11 @@
       "Bash(kill 13692)",
       "Bash(pkill -f \"node src/app.js\")",
       "Bash(Select-Object Name, PSIsContainer)",
-      "Bash(git rebase *)"
+      "Bash(git rebase *)",
+      "Bash(Select-Object -ExpandProperty Name)",
+      "Bash(Select-String -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\public\\\\js\\\\modules\\\\payroll.js\" -Pattern \"summaryTotals|renderInlineTabs|nm-pay-tabs-inline\")",
+      "Bash(Select-Object LineNumber, Line)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }

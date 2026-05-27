@@ -6,9 +6,11 @@ import {
   isInstitutionalTabEnabled, syncPersonnelDraftField, enforceInputRestrictions,
   syncEmployeeHeaderFromDraft, getDepartmentMunicipalities,
   getCompanyOptionsHtml, getContractOptionsHtml, formatCompany, formatContract,
+  ensureOfficialMunicipalitiesLoaded, getOfficialMunicipalities,
+  findOfficialMunicipality, normalizeMunicipalityText,
 } from '../utils.js';
 import {
-  META_MUNICIPALITIES, COLOMBIA_DEPARTMENTS, LICITACION_CARGOS,
+  COLOMBIA_DEPARTMENTS, LICITACION_CARGOS,
   CARGOS_REALES, ESTADOS_PERSONAL, BANKS,
 } from '../constants.js';
 import { showError, showSuccess, showWarning } from '../toast.js';
@@ -649,7 +651,7 @@ export function _clearPersonnelCache() {
 }
 
 function getPersonnelMunicipalityNameById(municipalityId) {
-  const found = META_MUNICIPALITIES.find((item) => String(item.id) === String(municipalityId || ""));
+  const found = findOfficialMunicipality(municipalityId, { includeFallback: true });
   return found?.name || "";
 }
 
@@ -660,9 +662,7 @@ function getDraftMunicipalityId(draft = {}) {
   const rawName = draft.municipalityName ?? draft.municipality_name ?? draft.municipality ?? draft.municipio ?? "";
   if (!String(rawName || "").trim()) return "";
 
-  const found = META_MUNICIPALITIES.find(
-    (item) => normalizeCatalogText(item.name) === normalizeCatalogText(rawName)
-  );
+  const found = findOfficialMunicipality(rawName, { includeFallback: true });
   return found?.id ? String(found.id) : "";
 }
 
@@ -684,6 +684,26 @@ function syncDraftOfficialMunicipality(draft = state.personnelDraft || {}) {
   draft.educationalMunicipality = municipalityName;
   draft.educational_municipality = municipalityName;
   return municipalityId;
+}
+
+function getOperationalMunicipalityOptions() {
+  return getOfficialMunicipalities({ includeFallback: false }).filter((item) => item?.id && item?.name);
+}
+
+function hasManagedMunicipalitySelection(rawValue = "", municipality) {
+  const selectedValues = String(rawValue || "")
+    .split("|")
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (!selectedValues.length || !municipality) return false;
+
+  const targetId = String(municipality.id);
+  const targetName = normalizeMunicipalityText(municipality.name);
+  return selectedValues.some((value) => {
+    const matched = findOfficialMunicipality(value, { includeFallback: true });
+    if (matched) return String(matched.id) === targetId;
+    return normalizeMunicipalityText(value) === targetName || String(value) === targetId;
+  });
 }
 
 async function loadEducationalScopeOptions(draft = state.personnelDraft || {}, { force = false } = {}) {
@@ -738,10 +758,7 @@ async function loadGestorScopeOptions(draft = state.personnelDraft || {}, { forc
   const companyId = String(draft?.companyId || state.currentUser?.companyId || "").trim();
   const contractId = String(draft?.contractId || state.currentUser?.contractId || "").trim();
   const rawMunicipalityId = String(draft?.municipalityId || "").trim();
-  const municipalityOption = META_MUNICIPALITIES.find((item) =>
-    String(item.id) === rawMunicipalityId
-    || normalizeCatalogText(item.name) === normalizeCatalogText(rawMunicipalityId)
-  );
+  const municipalityOption = findOfficialMunicipality(rawMunicipalityId, { includeFallback: true });
   const municipalityId = municipalityOption ? String(municipalityOption.id) : rawMunicipalityId;
   const municipalityName =
     municipalityOption?.name
@@ -821,15 +838,16 @@ function _refreshPersonnelSection() {
       ? _cachedPayload.educationalCatalog
       : state.educationalCatalog || {};
   const educationalCatalogMeta = _cachedPayload?.educationalCatalogMeta || {};
+  const officialMunicipalities = getOperationalMunicipalityOptions();
 
   syncDraftOfficialMunicipality(draft);
+  const municipalityIdResolved = getDraftMunicipalityId(draft);
   const municipalityNameResolved = getDraftMunicipalityName(draft);
-  const municipalityKey      = findCatalogKey(educationalCatalog, municipalityNameResolved);
-  const institutionalMunicipality = municipalityKey || municipalityNameResolved;
-  const municipalityCatalog  = municipalityKey ? educationalCatalog[municipalityKey] : {};
+  const institutionalMunicipality = municipalityIdResolved ? String(municipalityIdResolved) : "";
+  const municipalityCatalog  = institutionalMunicipality ? (educationalCatalog[institutionalMunicipality] || {}) : {};
   const institutionalMunicipalities = Array.isArray(educationalCatalogMeta?.municipalities)
     ? educationalCatalogMeta.municipalities
-    : Object.keys(educationalCatalog).map((name) => ({ id: null, name }));
+    : officialMunicipalities;
   const institutionNames     = Object.keys(municipalityCatalog);
   const selectedInstitutionRaw = firstDv("institution", "institucion_educativa");
   const institutionKey       = findCatalogKey(municipalityCatalog, selectedInstitutionRaw);
@@ -957,10 +975,11 @@ function findCatalogKey(object, value) {
 function syncInstitutionalSelectionsWithCatalog(draft = state.personnelDraft || {}, educationalCatalog = {}) {
   if (!draft || !educationalCatalog || typeof educationalCatalog !== "object") return;
 
-  const municipalityRaw = getDraftMunicipalityName(draft);
-  draft.educationalMunicipality = municipalityRaw;
-  draft.educational_municipality = municipalityRaw;
-  const municipalityKey = findCatalogKey(educationalCatalog, municipalityRaw);
+  const municipalityId = getDraftMunicipalityId(draft);
+  const municipalityName = getDraftMunicipalityName(draft);
+  draft.educationalMunicipality = municipalityName;
+  draft.educational_municipality = municipalityName;
+  const municipalityKey = municipalityId ? String(municipalityId) : "";
   if (!municipalityKey) {
     draft.institution = "";
     draft.site = "";
@@ -968,7 +987,6 @@ function syncInstitutionalSelectionsWithCatalog(draft = state.personnelDraft || 
     return;
   }
 
-  draft.educationalMunicipality = municipalityKey;
   const municipalityCatalog = educationalCatalog[municipalityKey] || {};
 
   const institutionKey = findCatalogKey(municipalityCatalog, draft.institution || draft.institucion_educativa || "");
@@ -1219,6 +1237,7 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
 // ── Part 5: tabs vinculacion, licitacion, datos_personales ───────────────────
 
 function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames, auxiliarGestorNames = [], gestorStatusMessage = "") {
+  const municipalityOptions = getOperationalMunicipalityOptions();
   const currentGestor = draftValue("gestorZona");
   const gestorOptions = gestorNames.map((g) => `
     <option value="${escapeAttr(g)}" ${currentGestor === g ? "selected" : ""}>${escapeHtml(g)}</option>
@@ -1268,7 +1287,7 @@ function buildTabVinculacion(draftValue, vinculationCompanyId, gestorNames, auxi
         <label>
           <span>Municipio *</span>
           <select name="municipalityId" required>
-            ${renderOptions(META_MUNICIPALITIES, draftValue("municipalityId"), "Selecciona municipio")}
+            ${renderOptions(municipalityOptions, draftValue("municipalityId"), "Selecciona municipio")}
           </select>
         </label>
       </div>
@@ -1335,9 +1354,11 @@ function buildTabLicitacion(draftValue, selected) {
   const presentado  = String(draftValue("presentedInOffer"));
   const cargoReal   = String(draftValue("cargo_real") || "").toUpperCase();
   const isGestor    = cargoReal === "GESTOR DE ZONA" || cargoReal === "AUXILIAR DE GESTOR DE ZONA";
-  const selectedMuns = new Set(
-    String(draftValue("municipiosACargo", "")).split("|").filter(Boolean)
-  );
+  const municipalityOptions = getOperationalMunicipalityOptions();
+  const selectedMunicipalities = String(draftValue("municipiosACargo", ""));
+  const selectedMunsCount = municipalityOptions.filter((item) =>
+    hasManagedMunicipalitySelection(selectedMunicipalities, item)
+  ).length;
 
   // Use positions from contract config if available, else fall back to static lists
   const licitacionOpts = (_contractPositions?.licitacion?.length)
@@ -1362,14 +1383,14 @@ function buildTabLicitacion(draftValue, selected) {
         </svg>
         ¿Qué municipios tiene asignado?
         <span class="mun-picker-count" id="munPickerCount">
-          ${selectedMuns.size ? `${selectedMuns.size} seleccionado${selectedMuns.size > 1 ? "s" : ""}` : "Ninguno"}
+          ${selectedMunsCount ? `${selectedMunsCount} seleccionado${selectedMunsCount > 1 ? "s" : ""}` : "Ninguno"}
         </span>
       </div>
       <div class="mun-picker-grid">
-        ${META_MUNICIPALITIES.map(m => `
-          <label class="mun-chip ${selectedMuns.has(m.name) ? "mun-chip-active" : ""}">
-            <input type="checkbox" name="municipioACargo" value="${escapeAttr(m.name)}"
-              ${selectedMuns.has(m.name) ? "checked" : ""}>
+        ${municipalityOptions.map((m) => `
+          <label class="mun-chip ${hasManagedMunicipalitySelection(selectedMunicipalities, m) ? "mun-chip-active" : ""}">
+            <input type="checkbox" name="municipioACargo" value="${escapeAttr(m.id)}"
+              ${hasManagedMunicipalitySelection(selectedMunicipalities, m) ? "checked" : ""}>
             ${escapeHtml(m.name)}
           </label>
         `).join("")}
@@ -1435,6 +1456,7 @@ function buildTabLicitacion(draftValue, selected) {
 }
 
 function buildTabDatosPersonales(draftValue, residenceMunicipality) {
+  const municipalityOptions = getOperationalMunicipalityOptions();
   return `
     <section class="personnel-section">
       <div class="form-grid form-grid-2">
@@ -1484,7 +1506,7 @@ function buildTabDatosPersonales(draftValue, residenceMunicipality) {
         <label>
           <span>Municipio *</span>
           <select name="residenceMunicipality" required>
-            ${renderOptions(META_MUNICIPALITIES, residenceMunicipality, "Selecciona municipio")}
+            ${renderOptions(municipalityOptions, residenceMunicipality, "Selecciona municipio")}
           </select>
         </label>
         <label>
@@ -1522,16 +1544,16 @@ function buildTabInstitucional(
   }
 
   if (managerRole) {
-    const selected = (name) =>
-      String(draftValue("municipiosACargo", "")).split("|").includes(name) ? "selected" : "";
+    const municipalityOptions = getOperationalMunicipalityOptions();
+    const currentSelection = String(draftValue("municipiosACargo", ""));
 
     return `
       <section class="personnel-section">
         <label>
           <span>Municipios a Cargo</span>
           <select name="municipiosACargo" multiple size="8">
-            ${META_MUNICIPALITIES.map((m) => `
-              <option value="${escapeAttr(m.name)}" ${selected(m.name)}>${escapeHtml(m.name)}</option>
+            ${municipalityOptions.map((m) => `
+              <option value="${escapeAttr(m.id)}" ${hasManagedMunicipalitySelection(currentSelection, m) ? "selected" : ""}>${escapeHtml(m.name)}</option>
             `).join("")}
           </select>
         </label>
@@ -2135,16 +2157,17 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
       ? _cachedPayload.educationalCatalog
       : state.educationalCatalog || {};
   const educationalCatalogMeta = _cachedPayload?.educationalCatalogMeta || {};
+  const officialMunicipalities = getOperationalMunicipalityOptions();
 
   syncDraftOfficialMunicipality(draft);
+  const municipalityIdResolved = getDraftMunicipalityId(draft);
   const municipalityNameResolved = getDraftMunicipalityName(draft);
 
-  const municipalityKey       = findCatalogKey(educationalCatalog, municipalityNameResolved);
-  const institutionalMunicipality = municipalityKey || municipalityNameResolved;
-  const municipalityCatalog   = municipalityKey ? educationalCatalog[municipalityKey] : {};
+  const institutionalMunicipality = municipalityIdResolved ? String(municipalityIdResolved) : "";
+  const municipalityCatalog   = institutionalMunicipality ? (educationalCatalog[institutionalMunicipality] || {}) : {};
   const institutionalMunicipalities = Array.isArray(educationalCatalogMeta?.municipalities)
     ? educationalCatalogMeta.municipalities
-    : Object.keys(educationalCatalog).map((name) => ({ id: null, name }));
+    : officialMunicipalities;
   const institutionNames      = Object.keys(municipalityCatalog);
 
   const selectedInstitutionRaw = firstDraftValue("institution", "institucion_educativa");
@@ -2321,6 +2344,12 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
         if (e.target.name === "presentedInOffer" && e.target.value !== "true")
           state.personnelDraft.offerPosition = "";
         if (e.target.name === "municipalityId") {
+          // syncPersonnelDraftField ya escribió draft.municipalityId con el nuevo valor,
+          // pero draft.municipality_id sigue con el valor de la hidratación (el viejo municipio).
+          // getDraftMunicipalityId lee municipality_id primero con ??, por lo que volvería al
+          // municipio anterior aunque el usuario haya seleccionado uno nuevo.
+          // Sincronizamos municipality_id ANTES de que syncDraftOfficialMunicipality lo lea.
+          state.personnelDraft.municipality_id = state.personnelDraft.municipalityId || "";
           syncDraftOfficialMunicipality(state.personnelDraft);
           state.personnelDraft.institution             = "";
           state.personnelDraft.site                    = "";
@@ -2707,9 +2736,7 @@ function hydratePersonnelDraft(found) {
   const rawMunicipalityName =
     found.municipality_name ?? found.municipalityName ?? found.municipality ?? found.municipio ?? "";
   const normalizedMunicipalityId = String(rawMunicipalityId || "").trim()
-    || String(META_MUNICIPALITIES.find(
-      (item) => normalizeCatalogText(item.name) === normalizeCatalogText(rawMunicipalityName)
-    )?.id || "");
+    || String(findOfficialMunicipality(rawMunicipalityName, { includeFallback: true })?.id || "");
   const normalizedMunicipalityName = normalizedMunicipalityId
     ? getPersonnelMunicipalityNameById(normalizedMunicipalityId)
     : String(rawMunicipalityName || "").trim();
@@ -2836,8 +2863,9 @@ function hydratePersonnelDraft(found) {
 // ── renderPersonnelTableModule ────────────────────────────────────────────────
 
 export async function renderPersonnelTableModule() {
+  await ensureOfficialMunicipalitiesLoaded().catch(() => {});
   if (!state.personnelFilters) {
-    state.personnelFilters = { search: "", status: "", role: "", hvStatus: "", municipality: "",
+    state.personnelFilters = { search: "", status: "", role: "", hvStatus: "", municipalityId: "",
       companyId: "", contractId: "", gestorZona: "", institution: "", site: "", modality: "", sort: "" };
   }
   if (!state.personnelPagination) {
@@ -2856,11 +2884,7 @@ export async function renderPersonnelTableModule() {
     if (f.hvStatus) params.set("hvStatus", f.hvStatus);
     if (f.companyId) params.set("companyId", f.companyId);
     if (f.contractId) params.set("contractId", f.contractId);
-    if (f.municipality) {
-      const mun = META_MUNICIPALITIES.find((m) => String(m.name).toUpperCase() === String(f.municipality).toUpperCase());
-      if (mun?.id) params.set("municipalityId", String(mun.id));
-      else params.set("municipalityName", f.municipality);
-    }
+    if (f.municipalityId) params.set("municipalityId", f.municipalityId);
     if (f.gestorZona) params.set("gestorZona", f.gestorZona);
     if (f.institution) params.set("institution", f.institution);
     if (f.site) params.set("site", f.site);
@@ -2868,7 +2892,7 @@ export async function renderPersonnelTableModule() {
     return params;
   };
 
-  const hasAnyFilter = !!(f.search || f.status || f.role || f.hvStatus || f.municipality ||
+  const hasAnyFilter = !!(f.search || f.status || f.role || f.hvStatus || f.municipalityId ||
     f.companyId || f.contractId || f.gestorZona || f.institution || f.site || f.modality);
 
   let rows = [];
@@ -2936,7 +2960,7 @@ export async function renderPersonnelTableModule() {
 
   // ── Opciones de filtros ───────────────────────────────────────────────────
   const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
-  const municipalityOptions  = META_MUNICIPALITIES.map((m) => m.name);
+  const municipalityOptions  = getOperationalMunicipalityOptions();
   const roleOptions          = uniq([f.role, ...rows.map((r) => getPersonnelRole(r).trim())]);
   const gestorZonaOptions    = uniq([f.gestorZona, ...rows.map((r) => (r.gestorZona || r.gestor_zona || "").trim())]);
   const institutionOptions   = uniq([f.institution, ...rows.map((r) => (r.institution || r.institucion_educativa || r.institutionName || "").trim())]);
@@ -3042,7 +3066,7 @@ export async function renderPersonnelTableModule() {
         hvStatus:     document.getElementById("personnelFilterHvStatus")?.value    || "",
         companyId:    document.getElementById("personnelFilterCompany")?.value     || "",
         contractId:   document.getElementById("personnelFilterContract")?.value    || "",
-        municipality: document.getElementById("personnelFilterMunicipality")?.value || "",
+        municipalityId: document.getElementById("personnelFilterMunicipality")?.value || "",
         gestorZona:   document.getElementById("personnelFilterGestorZona")?.value  || "",
         institution:  document.getElementById("personnelFilterInstitution")?.value || "",
         site:         document.getElementById("personnelFilterSite")?.value        || "",
@@ -3068,7 +3092,7 @@ export async function renderPersonnelTableModule() {
 
 
     document.getElementById("clearPersonnelFilters")?.addEventListener("click", async () => {
-      state.personnelFilters = { search:"", status:"", role:"", hvStatus:"", municipality:"",
+      state.personnelFilters = { search:"", status:"", role:"", hvStatus:"", municipalityId:"",
         companyId:"", contractId:"", gestorZona:"", institution:"", site:"", modality:"", sort:"" };
       state.personnelPagination = { page: 1, pageSize: state.personnelPagination?.pageSize || 25, total: 0, totalPages: 0 };
       state.personnelSelectedId = null;
@@ -3370,7 +3394,7 @@ export async function renderPersonnelTableModule() {
           </select>
           <select id="personnelFilterMunicipality">
             <option value="">Municipio</option>
-            ${municipalityOptions.map((v) => opt(v, f.municipality)).join("")}
+            ${municipalityOptions.map((item) => optObj({ value: item.id, label: item.name }, f.municipalityId)).join("")}
           </select>
           <select id="personnelFilterGestorZona">
             <option value="">Gestor de Zona</option>
@@ -3722,9 +3746,7 @@ function _getRequiredDocsByEmployee(employee) {
 
 function _resolveMunName(value) {
   if (!value) return "—";
-  const found = META_MUNICIPALITIES.find(
-    (m) => String(m.id) === String(value) || String(m.name).toUpperCase() === String(value).toUpperCase()
-  );
+  const found = findOfficialMunicipality(value, { includeFallback: true });
   return found ? found.name : String(value);
 }
 

@@ -985,12 +985,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
 
         if (selectedMunicipalityId) {
           coverageValues.push(Number(selectedMunicipalityId));
-          rowConditions.push(`LOWER(TRIM(r.municipality)) = (
-            SELECT LOWER(TRIM(name))
-            FROM municipalities
-            WHERE id = $${coverageValues.length}
-            LIMIT 1
-          )`);
+          rowConditions.push(`r.municipality_id = $${coverageValues.length}`);
 
           coverageValues.push(Number(selectedMunicipalityId));
           employeeCoverageConditions.push(`e.municipality_id = $${coverageValues.length}`);
@@ -1009,6 +1004,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
                 = REGEXP_REPLACE(translate(UPPER(TRIM(r.municipality)),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')
           )`);
 
+          rowConditions[rowConditions.length - 1] = `r.municipality_id = ANY($${coverageValues.length})`;
           coverageValues.push(munIds);
           employeeCoverageConditions.push(`e.municipality_id = ANY($${coverageValues.length})`);
         }
@@ -1033,15 +1029,15 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           ),
           coverage AS (
             SELECT
-              mun.id AS municipality_id,
+              r.municipality_id AS municipality_id,
               COALESCE(mun.name, TRIM(r.municipality)) AS municipality_name,
               COALESCE(SUM(r.required_tc), 0) AS required_tc,
               COALESCE(SUM(r.required_mt), 0) AS required_mt
             FROM coverage_upload_rows r
             LEFT JOIN municipalities mun
-              ON ${SQL_NORM_MUN("mun.name")} = ${SQL_NORM_MUN("r.municipality")}
+              ON mun.id = r.municipality_id
             WHERE ${rowConditions.join(" AND ")}
-            GROUP BY mun.id, COALESCE(mun.name, TRIM(r.municipality))
+            GROUP BY r.municipality_id, COALESCE(mun.name, TRIM(r.municipality))
           ),
           employees AS (
             SELECT
@@ -1069,9 +1065,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
             COALESCE(emp.contracted_mt, 0) AS contracted_mt
           FROM coverage c
           FULL OUTER JOIN employees emp
-            ON c.municipality_id IS NOT NULL
-           AND emp.municipality_id IS NOT NULL
-           AND c.municipality_id = emp.municipality_id
+            ON c.municipality_id IS NOT DISTINCT FROM emp.municipality_id
           WHERE COALESCE(c.municipality_name, emp.municipality_name) IS NOT NULL
           ORDER BY (COALESCE(c.required_tc, 0) + COALESCE(c.required_mt, 0)) DESC,
                    COALESCE(c.municipality_name, emp.municipality_name) ASC
@@ -1106,7 +1100,7 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               mergedRows.push({ ...row });
             }
           }
-          coverageByMunicipality = buildMunicipalityDistribution(mergedRows);
+          coverageByMunicipality = buildMunicipalityDistribution(coverageResult.rows);
           requiredTc = coverageByMunicipality.reduce((sum, item) => sum + item.requiredTc, 0);
           requiredMt = coverageByMunicipality.reduce((sum, item) => sum + item.requiredMt, 0);
         }
@@ -1299,15 +1293,13 @@ function handleDashboardKpis(req, res, url) {
       COALESCE(SUM(required_tc),0) AS req_tc,
       COALESCE(SUM(required_mt),0) AS req_mt,
       COALESCE(SUM(cupos),0)       AS cupos,
-      COUNT(DISTINCT TRIM(municipality)) AS mun_covered
+      COUNT(DISTINCT municipality_id) AS mun_covered
     FROM coverage_upload_rows
     WHERE upload_id = (SELECT id FROM coverage_uploads ORDER BY created_at DESC LIMIT 1)`;
     const covVals = [];
     if (municipalityId) {
       covVals.push(municipalityId);
-      covSql += ` AND ${SQL_NORM_MUN("municipality")} = (
-        SELECT ${SQL_NORM_MUN("name")} FROM municipalities WHERE id = $${covVals.length} LIMIT 1
-      )`;
+      covSql += ` AND municipality_id = $${covVals.length}`;
     }
 
     // ── Municipalities list for filters — scoped by type ──
@@ -1509,23 +1501,24 @@ function handleDashboardAlerts(req, res, url) {
       personnelType === "equipo" ? Promise.resolve({ rows: [{ low_count: 0 }] }) : pool.query(`
         WITH latest AS (SELECT id FROM coverage_uploads ORDER BY created_at DESC LIMIT 1),
         cov AS (
-          SELECT LOWER(TRIM(municipality)) AS mun_norm,
+          SELECT municipality_id,
             COALESCE(SUM(required_tc),0) + COALESCE(SUM(required_mt),0) AS required
           FROM coverage_upload_rows
           WHERE upload_id = (SELECT id FROM latest)
-          GROUP BY LOWER(TRIM(municipality))
+            AND municipality_id IS NOT NULL
+          GROUP BY municipality_id
           HAVING COALESCE(SUM(required_tc),0) + COALESCE(SUM(required_mt),0) > 0
         ),
         emp AS (
-          SELECT LOWER(TRIM(m.name)) AS mun_norm, COUNT(e.id) AS contracted
-          FROM municipalities m
-          LEFT JOIN employees e ON e.municipality_id = m.id
-            AND UPPER(TRIM(e.status)) = 'ACTIVO' ${cEmp} ${empTypeFilter}
-          GROUP BY LOWER(TRIM(m.name))
+          SELECT e.municipality_id, COUNT(e.id) AS contracted
+          FROM employees e
+          WHERE e.municipality_id IS NOT NULL
+            AND UPPER(TRIM(e.status)) = 'ACTIVO' ${cFilter} ${empTypeFilter}
+          GROUP BY e.municipality_id
         )
         SELECT COUNT(*) AS low_count
         FROM cov c
-        JOIN emp e ON e.mun_norm = c.mun_norm
+        JOIN emp e ON e.municipality_id = c.municipality_id
         WHERE c.required > 0 AND (e.contracted::float / c.required) * 100 < 85
       `, cVals),
 
@@ -1631,18 +1624,18 @@ function handleDashboardCoverageMap(req, res, url) {
       ),
       cov AS (
         SELECT
-          LOWER(TRIM(municipality)) AS mun_norm,
+          municipality_id AS mun_id,
           COALESCE(SUM(required_tc), 0) AS req_tc,
           COALESCE(SUM(required_mt), 0) AS req_mt
         FROM coverage_upload_rows
         WHERE upload_id = (SELECT id FROM latest)
-        GROUP BY LOWER(TRIM(municipality))
+          AND municipality_id IS NOT NULL
+        GROUP BY municipality_id
       ),
       emp AS (
         SELECT
           m.id   AS mun_id,
           m.name AS mun_name,
-          LOWER(TRIM(m.name)) AS mun_norm,
           COUNT(e.id) FILTER (WHERE UPPER(TRIM(e.status)) = 'ACTIVO') AS contracted,
           COUNT(e.id) FILTER (WHERE UPPER(TRIM(e.workday_type)) = 'TC'
                                AND UPPER(TRIM(e.status)) = 'ACTIVO')  AS contracted_tc,
@@ -1668,7 +1661,7 @@ function handleDashboardCoverageMap(req, res, url) {
           ELSE NULL
         END AS coverage_pct
       FROM emp em
-      LEFT JOIN cov cv ON cv.mun_norm = em.mun_norm
+      LEFT JOIN cov cv ON cv.mun_id = em.mun_id
       WHERE em.contracted > 0
          OR (COALESCE(cv.req_tc,0) + COALESCE(cv.req_mt,0)) > 0
       ORDER BY em.mun_name

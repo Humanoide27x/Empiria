@@ -316,8 +316,10 @@ function handleCoverageUploadRows(req, res, url) {
         return;
       }
 
-      const munNames = user?.municipality_names?.length ? user.municipality_names : null;
-      const data = await getCoverageRowsByUpload(uploadId, munNames);
+      const municipalityIds = Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length
+        ? resource.municipalityIds
+        : null;
+      const data = await getCoverageRowsByUpload(uploadId, municipalityIds);
 
       sendJson(innerRes, 200, {
         ok: true,

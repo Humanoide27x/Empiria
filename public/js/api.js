@@ -18,6 +18,7 @@ function isSessionCacheable(path, options = {}) {
     /^\/roles(?:\?|$)/,
     /^\/companies(?:\?|$)/,
     /^\/contracts(?:\?|$)/,
+    /^\/municipalities(?:\?|$)/,
     /^\/config\/municipalities(?:\?|$)/,
     /^\/dashboard\/periods(?:\?|$)/,
     /^\/admin\/contractual\/master\/positions(?:\?|$)/,

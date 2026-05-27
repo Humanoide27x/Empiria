@@ -4,17 +4,22 @@ const pool = require("../../db/pool");
 async function getMunicipalities(req, res) {
   try {
     const result = await pool.query(`
-      SELECT id, name 
+      SELECT
+        id,
+        TRIM(name) AS name,
+        COALESCE(normalized_name, '') AS normalized_name,
+        COALESCE(department, '') AS department,
+        COALESCE(active, true) AS active
       FROM municipalities 
-      ORDER BY name
+      ORDER BY TRIM(name)
     `);
 
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result.rows));
+    res.end(JSON.stringify({ ok: true, data: result.rows }));
   } catch (error) {
     console.error(error);
     res.writeHead(500);
-    res.end(JSON.stringify({ error: "Error municipios" }));
+    res.end(JSON.stringify({ ok: false, error: "Error municipios" }));
   }
 }
 
@@ -107,7 +112,7 @@ async function getModalities(req, res) {
 
 // ROUTER
 function handleEducationRoutes(req, res, url) {
-  if (req.method === "GET" && url.pathname === "/education/municipalities") {
+  if (req.method === "GET" && (url.pathname === "/education/municipalities" || url.pathname === "/municipalities")) {
     getMunicipalities(req, res);
     return true;
   }

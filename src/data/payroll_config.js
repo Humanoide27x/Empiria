@@ -4,21 +4,21 @@ const path = require("path");
 const CONFIG_PATH = path.join(__dirname, "payroll_config.json");
 
 const DEFAULT_CONFIG = {
-  // Colombian 2025 values
-  smlmv: 1423500,
-  transportAllowance: 202050,
+  // Valores Colombia 2026
+  smlmv: 1750905,
+  transportAllowance: 249095,
   maxTransportSalarySmlmv: 2,
   healthDeductionPct: 0.04,
   pensionDeductionPct: 0.04,
-  // Salary per modality classification
+  // Salario por categoría (fuente de verdad = Calculadora de Salario / contract_settings.salary_config)
   modalitySalaries: {
-    CAARES1: 1423500,
-    CAARES2: 1423500,
-    CAARES3: 1423500,
-    CAARES4: 1423500,
-    CAA1: 1423500,
-    CAA2: 711750,
-    RI: 1423500,
+    CAA1:    1750905,            // TC externo: 1 SMLV
+    CAA2:    875452,             // MT externo: 0.5 SMLV
+    CAARES1: 1750905,            // TC residencia (único): 1 SMLV
+    CAARES2: 875452,             // MT asociado a CAARES1: 0.5 SMLV
+    CAARES3: 1750905,            // TC residencia (múltiple): 1 SMLV
+    CAARES4: 875452,             // MT asociado a CAARES3: 0.5 SMLV
+    RI:      1750905,            // Ración industrializada: 1 SMLV
   },
   updatedAt: null,
 };

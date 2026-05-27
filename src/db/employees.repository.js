@@ -1,5 +1,6 @@
 const pool = require("./pool");
 const { normalizeText } = require("../utils/text");
+const { resolveMunicipalityRecord } = require("./municipalities.repository");
 
 const _tableExistsCache = new Map();
 const _missingTableWarnings = new Set();
@@ -155,32 +156,19 @@ async function resolveSiteId(name, institutionId = null) {
 }
 
 async function resolveMunicipalityId(value) {
-  const numericId = toNumberOrNull(value);
-  if (numericId) return numericId;
   if (!(await tableExists("municipalities"))) {
     warnMissingLookupTable("municipalities", "resolveMunicipalityId");
     return null;
   }
-
-  const name = String(value || "").trim();
-  if (!name) return null;
-
-  // Exact match (case-insensitive)
-  const exact = await pool.query(
-    `SELECT id FROM municipalities WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) LIMIT 1`,
-    [name]
-  );
-  if (exact.rows[0]) return exact.rows[0].id;
-
-  // Normalized match: remove accents and all non-alphanumeric chars (matches SQL REGEXP_REPLACE)
-  const normalized = normalize(name).replace(/[^A-Z0-9]/g, "");
-  if (!normalized) return null;
-  const fuzzy = await pool.query(
-    `SELECT id FROM municipalities
-     WHERE REGEXP_REPLACE(UPPER(name), '[^A-Z0-9]', '', 'g') = $1 LIMIT 1`,
-    [normalized]
-  );
-  return fuzzy.rows[0]?.id || null;
+  try {
+    const record = await resolveMunicipalityRecord({
+      municipalityId: value,
+      municipalityName: value,
+    });
+    return record?.id || null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Mapper ──────────────────────────────────────────────────────────────────
@@ -748,9 +736,24 @@ async function createEmployee(data) {
   const fullName = buildFullName(data);
 
   const municipalityInput = data.municipalityId || data.municipality_id || data.municipality || data.municipio;
-  const municipalityId = await resolveMunicipalityId(municipalityInput);
+  let municipalityId = null;
+  try {
+    const municipalityRecord = await resolveMunicipalityRecord({
+      municipalityId: firstDefined(data.municipalityId, data.municipality_id, data.municipio_id),
+      municipalityName: firstDefined(
+        data.municipalityName,
+        data.municipality_name,
+        data.municipality,
+        data.municipio
+      ),
+    });
+    municipalityId = municipalityRecord?.id || null;
+  } catch (err) {
+    console.error("[createEmployee] resolveMunicipalityRecord falló:", err.message);
+    municipalityId = null;
+  }
 
-  if (!municipalityId && municipalityInput && String(municipalityInput).trim()) {
+  if (!municipalityId) {
     throw new Error("Debe seleccionar un municipio válido.");
   }
 
@@ -886,11 +889,28 @@ async function updateEmployee(id, data) {
     data.municipality,
     data.municipio
   );
-  const municipalityId = municipalityInput
-    ? await resolveMunicipalityId(municipalityInput)
-    : (current.municipality_id || null);
+  let municipalityId = current.municipality_id || null;
+  try {
+    if (municipalityInput) {
+      // After { ...existing, ...data }, existing.municipalityName/municipality_name/municipality
+      // are still in data when the payload didn't include them. Passing a stale name alongside
+      // a new ID causes resolveMunicipalityRecord to throw a false conflict (ID=GRANADA,
+      // name=EL CASTILLO). Use name ONLY when there is no explicit numeric ID in the payload.
+      const resolveById = firstNonEmpty(data.municipalityId, data.municipality_id, data.municipio_id);
+      const municipalityRecord = await resolveMunicipalityRecord({
+        municipalityId: resolveById || undefined,
+        municipalityName: resolveById
+          ? undefined
+          : firstDefined(data.municipalityName, data.municipality_name, data.municipality, data.municipio),
+      });
+      municipalityId = municipalityRecord?.id || null;
+    }
+  } catch (err) {
+    console.error("[updateEmployee] resolveMunicipalityRecord falló:", err.message);
+    municipalityId = null;
+  }
 
-  if (!municipalityId && municipalityInput && String(municipalityInput).trim()) {
+  if (!municipalityId) {
     throw new Error("Debe seleccionar un municipio válido.");
   }
 

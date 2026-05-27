@@ -1,18 +1,19 @@
 "use strict";
 
 /**
- * Normalizes a municipality name to its canonical form: uppercase, no accents,
- * no special characters, single spaces. Mirrors SQL_NORM_MUN in dashboard.controller.js.
+ * Normalizes a municipality name to its canonical form: lowercase, no accents,
+ * no invisible chars, no punctuation, single spaces.
  *
- * "Puerto López" → "PUERTO LOPEZ"
- * "PUERTO LLERAS" → "PUERTO LLERAS"
+ * "PUERTO LÓPEZ" -> "puerto lopez"
+ * "Puerto  López" -> "puerto lopez"
  */
 function normalizeMunicipalityName(value) {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9 ]/g, " ")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

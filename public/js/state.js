@@ -9,6 +9,7 @@ export const state = {
   availableRoles: [],
   companies: [],
   contracts: [],
+  municipalities: [],
   users: [],
   activeModule: null,
   expandedModule: null,
@@ -30,7 +31,7 @@ export const state = {
   desprendibleDraft: {},
   certDraft: {},
   personnelFilters: {
-    search: "", status: "", hvStatus: "", municipality: "",
+    search: "", status: "", hvStatus: "", municipalityId: "",
     role: "", companyId: "", contractId: "",
     gestorZona: "", institution: "", site: "", modality: "", sort: "",
   },

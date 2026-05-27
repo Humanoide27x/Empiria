@@ -25,6 +25,128 @@ const {
 
 const operational = require("./payroll.operational.repository");
 
+// ── Salary categories ────────────────────────────────────────────────────────
+async function handleSalaryCategories(req, res, url) {
+  if (req.method === "GET") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.VIEW,
+      async (innerReq, innerRes, innerUrl, user, resource) => {
+        const contractId = innerUrl.searchParams.get("contractId") || resource.contractId;
+        if (!contractId) {
+          sendJson(innerRes, 400, { ok: false, message: "contractId requerido" });
+          return;
+        }
+        const data = await operational.getSalaryCategories(Number(contractId));
+        sendJson(innerRes, 200, { ok: true, data });
+      }
+    )(req, res, url);
+  }
+
+  if (req.method === "POST" || req.method === "PUT") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.UPDATE,
+      async (innerReq, innerRes, innerUrl, user, resource) => {
+        if (!isAdminOrTH(user)) {
+          sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede configurar categorías salariales" });
+          return;
+        }
+        const body = await readJsonBody(innerReq);
+        const contractId = body.contractId || body.contract_id || resource.contractId;
+        if (!contractId) {
+          sendJson(innerRes, 400, { ok: false, message: "contractId requerido" });
+          return;
+        }
+        try {
+          // Acepta array [{category_code, base_salary, transport_allowance, other_recargos}] o objeto único
+          const items = Array.isArray(body.categories) ? body.categories : [body];
+          const results = [];
+          for (const item of items) {
+            const row = await operational.upsertSalaryCategory(contractId, item.category_code || item.categoryCode, item);
+            results.push(row);
+          }
+          sendJson(innerRes, 200, { ok: true, data: results, message: "Categorías salariales actualizadas" });
+        } catch (err) {
+          sendJson(innerRes, 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+
+  sendMethodNotAllowed(res);
+}
+
+// ── Tipos oficiales de novedades ─────────────────────────────────────────────
+async function handleOfficialNoveltyTypes(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  try {
+    const data = await operational.getOfficialNoveltyTypes();
+    sendJson(res, 200, { ok: true, data });
+  } catch (err) {
+    sendJson(res, 500, { ok: false, message: err.message });
+  }
+}
+
+// ── Desprendible por item ─────────────────────────────────────────────────────
+async function handleItemPayslip(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const itemId = parseNumericPart(url.pathname, 2);
+  if (!itemId) { sendJson(res, 400, { ok: false, message: "ID de item invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const data = await operational.getItemPayslip(itemId);
+        sendJson(innerRes, 200, { ok: true, data });
+      } catch (err) {
+        sendJson(innerRes, 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── Cambio Operativo de Cobertura ─────────────────────────────────────────────
+async function handleCambioOperativo(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const itemId = parseNumericPart(url.pathname, 2);
+  if (!itemId) { sendJson(res, 400, { ok: false, message: "ID de item invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _url, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.createCambioOperativo(itemId, body, user.id);
+        sendJson(innerRes, 201, { ok: true, data, message: "Cambio operativo registrado" });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── PDF cuenta de cobro ───────────────────────────────────────────────────────
+async function handleChargeAccountHtml(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const coverId = parseNumericPart(url.pathname, 2);
+  if (!coverId) { sendJson(res, 400, { ok: false, message: "ID de cobertura invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const html = await operational.buildChargeAccountHtml(coverId);
+        innerRes.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        innerRes.end(html);
+      } catch (err) {
+        sendJson(innerRes, 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 function getIdFromPath(pathname, prefix) {
   const raw = String(pathname || "").replace(prefix, "").split("/").filter(Boolean)[0];
   const n = Number(raw);
@@ -142,6 +264,25 @@ async function handleOperationalGroupCalculate(req, res, url) {
   )(req, res, url);
 }
 
+async function handleItemReviewed(req, res, url) {
+  if (req.method !== "PATCH" && req.method !== "PUT") { sendMethodNotAllowed(res); return; }
+  const itemId = parseNumericPart(url.pathname, 2);
+  if (!itemId) { sendJson(res, 400, { ok: false, message: "ID de item invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.setItemReviewed(itemId, body.reviewed !== false, body, user);
+        sendJson(innerRes, 200, { ok: true, data, message: "Revision actualizada" });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 async function handleOperationalItemNovelties(req, res, url) {
   if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
   const itemId = parseNumericPart(url.pathname, 2);
@@ -155,7 +296,25 @@ async function handleOperationalItemNovelties(req, res, url) {
         const data = await operational.createNoveltyForItem(itemId, body, user.id);
         sendJson(innerRes, 201, { ok: true, data, message: "Novedad registrada correctamente" });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleDeleteNovelty(req, res, url) {
+  if (req.method !== "DELETE") { sendMethodNotAllowed(res); return; }
+  const noveltyId = parseNumericPart(url.pathname, 2);
+  if (!noveltyId) { sendJson(res, 400, { ok: false, message: "ID de novedad invalido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _innerUrl, user) => {
+      try {
+        const data = await operational.deleteNovelty(noveltyId, user);
+        sendJson(innerRes, 200, { ok: true, data, message: "Novedad eliminada y nómina recalculada" });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -174,7 +333,7 @@ async function handleOperationalNoveltyPatch(req, res, url) {
         const data = await operational.patchNovelty(noveltyId, body, user.id);
         sendJson(innerRes, 200, { ok: true, data, message: "Novedad actualizada" });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -961,6 +1120,259 @@ async function handlePaySlip(req, res, url) {
   )(req, res, url);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /payroll/groups/:groupId/export → XLSX multi-hoja por municipio
+// ─────────────────────────────────────────────────────────────────────────────
+function buildGroupXlsx({ group, items, novelties, supports, totals, coverage }) {
+  function n(v) { return Number(v || 0); }
+  function s(v) { return String(v == null ? "" : v); }
+
+  const hdrStyle = {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+    fill: { fgColor: { rgb: "1E293B" }, type: "pattern", patternType: "solid" },
+    alignment: { horizontal: "center", vertical: "center" },
+  };
+  const totStyle = {
+    font: { bold: true },
+    fill: { fgColor: { rgb: "DCFCE7" }, type: "pattern", patternType: "solid" },
+  };
+  const MONEY = "#,##0";
+
+  function makeSheet(headers, rows, moneyCols = [], colWidths = []) {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+
+    // Header styles
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[addr]) ws[addr].s = { ...hdrStyle };
+    }
+    // Money format on data + total rows
+    for (const c of moneyCols) {
+      for (let r = 1; r <= range.e.r; r++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (ws[addr] && typeof ws[addr].v === "number") ws[addr].z = MONEY;
+      }
+    }
+    // Freeze first row
+    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    // AutoFilter spanning header row
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: range.e.c } }) };
+    // Column widths
+    if (colWidths.length) ws["!cols"] = colWidths.map((w) => ({ wch: w }));
+    return ws;
+  }
+
+  // ── Hoja 1: Nómina ──────────────────────────────────────────────────────
+  const nomHdr = [
+    "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
+    "Modalidad", "Jornada", "Categoría", "Días",
+    "Salario base", "Aux. transporte", "Otros recargos", "Total devengado",
+    "Salud (4%)", "Pensión (4%)", "Total deducciones",
+    "Novedades", "Desc. salario", "Desc. transporte",
+    "Neto a pagar", "Revisada",
+  ];
+  const nomMonCols = [10,11,12,13,14,15,16,18,19,20];
+
+  const nomRows = items.map((item) => {
+    const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
+    const otros = calc.other_recargos_value != null
+      ? n(calc.other_recargos_value)
+      : Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+    return [
+      s(item.document_number), s(item.employee_name), s(item.operational_position),
+      s(item.municipality_name), s(item.institution_name), s(item.site_name),
+      s(item.modality), s(item.work_time_type), s(item.salary_category), n(item.worked_days),
+      n(item.base_salary), n(item.transport_allowance), otros, n(item.total_devengado),
+      n(calc.deduccion_salud), n(calc.deduccion_pension), n(item.total_deducciones),
+      n(item.novelty_count), n(calc.salary_discount), n(calc.transport_discount),
+      n(item.neto_pagar), item.reviewed ? "Sí" : "No",
+    ];
+  });
+
+  // Totals
+  function otrosItem(i) {
+    const c = i.calculation || {};
+    return c.other_recargos_value != null ? n(c.other_recargos_value) : Math.max(0, n(i.other_earnings) - n(c.internal_cover_value));
+  }
+  const nomTotal = [
+    "TOTAL", "", "", "", "", "", "", "", "",
+    items.reduce((a, i) => a + n(i.worked_days), 0),
+    items.reduce((a, i) => a + n(i.base_salary), 0),
+    items.reduce((a, i) => a + n(i.transport_allowance), 0),
+    items.reduce((a, i) => a + otrosItem(i), 0),
+    totals.total_devengado,
+    items.reduce((a, i) => a + n((i.calculation||{}).deduccion_salud), 0),
+    items.reduce((a, i) => a + n((i.calculation||{}).deduccion_pension), 0),
+    totals.total_deducciones,
+    totals.novelties,
+    items.reduce((a, i) => a + n((i.calculation||{}).salary_discount), 0),
+    items.reduce((a, i) => a + n((i.calculation||{}).transport_discount), 0),
+    totals.neto,
+    `${totals.items_reviewed}/${totals.employees} rev.`,
+  ];
+
+  const wsNom = makeSheet(nomHdr, [...nomRows, nomTotal], nomMonCols,
+    [14,32,22,20,28,20,10,10,10,5,14,14,12,15,12,12,15,7,13,13,14,8]);
+
+  // Style the totals row
+  const nomTotR = nomRows.length + 1;
+  for (let c = 0; c < nomHdr.length; c++) {
+    const addr = XLSX.utils.encode_cell({ r: nomTotR, c });
+    if (wsNom[addr]) { wsNom[addr].s = { ...totStyle }; if (typeof wsNom[addr].v === "number") wsNom[addr].z = MONEY; }
+  }
+
+  // ── Hoja 2: Novedades ───────────────────────────────────────────────────
+  const SALARY_AFFECTING_XL   = new Set(["PERMISOS_NO_REMUNERADOS","SUSPENSION","FECHA_INGRESO","FECHA_RETIRO"]);
+  const TRANSPORT_AFFECTING_XL = new Set(["DIAS_NO_CLASE","CITA_MEDICA","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","CALAMIDAD_FAMILIAR","LUTO","CITACION_COLEGIO","LICENCIA_MATERNIDAD_PATERNIDAD"]);
+
+  // Índice de cálculo por item para obtener tarifas diarias reales
+  const itemCalcMap = new Map(items.map((i) => [String(i.id), i.calculation || {}]));
+
+  const novHdr = [
+    "Empleado", "Documento", "Tipo de novedad", "Impacto",
+    "Fecha inicio", "Fecha fin", "Días",
+    "Desc. salario", "Desc. transporte",
+    "Soporte", "Revisada",
+  ];
+  const novRows2 = novelties
+    .filter((nov) => nov.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA")
+    .map((nov) => {
+      const code  = s(nov.novelty_type);
+      const calc  = itemCalcMap.get(String(nov.payroll_item_id)) || {};
+      const days  = Math.min(n(nov.days), n(calc.worked_days) || 30);
+      const isSal   = SALARY_AFFECTING_XL.has(code) && code !== "FECHA_INGRESO" && code !== "FECHA_RETIRO";
+      const isTrans = TRANSPORT_AFFECTING_XL.has(code);
+      const descSal   = isSal   ? Math.round(n(calc.daily_salary    || 0) * days) : 0;
+      const descTrans = isTrans ? Math.round(n(calc.daily_transport || 0) * days) : 0;
+      const impact = isSal ? "Descuento salario" : isTrans ? "Descuento transporte" : "Sin impacto";
+      return [
+        s(nov.employee_name), s(nov.document_number),
+        s(nov.novelty_name || nov.novelty_type), impact,
+        s(nov.start_date ? s(nov.start_date).slice(0,10) : ""),
+        s(nov.end_date   ? s(nov.end_date).slice(0,10)   : ""),
+        n(nov.days),
+        descSal,
+        descTrans,
+        s(nov.support_status || "sin soporte"),
+        nov.reviewed ? "Sí" : "No",
+      ];
+    });
+  const wsNov = makeSheet(novHdr, novRows2, [7,8],
+    [28,14,26,20,12,12,5,13,13,14,8]);
+
+  // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
+  const resHdr  = ["Concepto", "Valor"];
+  const coverageRows = coverage
+    ? [
+        ["", ""],
+        ["── COBERTURA ──",        ""],
+        ["TC requerido",           coverage.tc_requerido],
+        ["TC contratado",          coverage.tc_contratado],
+        ["Diferencia TC",          coverage.diferencia_tc],
+        ["MT requerido",           coverage.mt_requerido],
+        ["MT contratado",          coverage.mt_contratado],
+        ["Diferencia MT",          coverage.diferencia_mt],
+        ["Estado cobertura",       coverage.estado_cobertura],
+      ]
+    : [["Cobertura", "Sin datos de cobertura para este período/municipio"]];
+  const resRows = [
+    ["Municipio",               s(group.municipality_name)],
+    ["Período",                 s(group.period_id)],
+    ["Cargo",                   s(group.operational_position)],
+    ["Total empleados",         totals.employees],
+    ["Items revisados",         totals.items_reviewed],
+    ["Items pendientes",        totals.items_pending],
+    ["Total novedades",         totals.novelties],
+    ["Novedades revisadas",     totals.reviewed],
+    ["Soportes pendientes",     totals.pending_supports],
+    ["Total devengado",         totals.total_devengado],
+    ["Total deducciones",       totals.total_deducciones],
+    ["Neto total",              totals.neto],
+    ...coverageRows,
+  ];
+  const wsRes = makeSheet(resHdr, resRows, [1], [30, 22]);
+
+  // ── Hoja 4: Soportes ────────────────────────────────────────────────────
+  const supHdr  = ["Empleado", "Documento", "Tipo novedad", "Estado", "Municipio", "Fecha"];
+  const supRows = supports.map((sup) => [
+    s(sup.employee_name), s(sup.document_number),
+    s(sup.novelty_type), s(sup.status),
+    s(sup.municipality_name),
+    sup.created_at ? s(sup.created_at).slice(0,10) : "",
+  ]);
+  const wsSup = makeSheet(supHdr, supRows, [], [28,14,22,14,20,12]);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsNom, "Nómina");
+  XLSX.utils.book_append_sheet(wb, wsNov, "Novedades");
+  XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
+  XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
+
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
+async function handleGroupExport(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  const groupId = Number(parts[2]);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo inválido" }); return;
+  }
+
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.EXPORT,
+    async (innerReq, innerRes) => {
+      try {
+        const group = await operational.getGroup(groupId);
+        if (!group) { sendJson(innerRes, 404, { ok: false, message: "Grupo no encontrado" }); return; }
+
+        const data     = await operational.getPayrollGroupDetail(group.period_id, group.id);
+        const coverage = await operational.getCoverageStatsForGroup(group.contract_id, group.municipality_id).catch(() => null);
+        const buf  = buildGroupXlsx({ ...data, coverage });
+        const name = s(group.municipality_name || "municipio").replace(/[^a-z0-9\-_]/gi, "-");
+        const filename = `nomina-${name}-${group.period_id}.xlsx`;
+
+        innerRes.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": buf.length,
+        });
+        innerRes.end(buf);
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── Cerrar grupo de nómina ───────────────────────────────────────────────────
+async function handleGroupClose(req, res, url) {
+  if (req.method !== "PATCH" && req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const parts   = url.pathname.split("/").filter(Boolean);
+  const groupId = Number(parts[2]);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo inválido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _url, user) => {
+      try {
+        const group = await operational.closePayrollGroup(groupId, user);
+        sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina cerrada correctamente." });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── helper local (duplicado de operational para no importar) ─────────────────
+function s(v) { return String(v == null ? "" : v); }
+
 module.exports = {
   handleNovelties,
   handleNoveltyById,
@@ -989,4 +1401,16 @@ module.exports = {
   handleOperationalNoveltyReviewed,
   handleOperationalNoveltyCover,
   handleOperationalSupports,
+  // Nuevos (033)
+  handleSalaryCategories,
+  handleOfficialNoveltyTypes,
+  handleItemPayslip,
+  handleChargeAccountHtml,
+  handleCambioOperativo,
+  // Nuevo (036)
+  handleItemReviewed,
+  handleDeleteNovelty,
+  // Exportación por municipio
+  handleGroupExport,
+  handleGroupClose,
 };

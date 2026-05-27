@@ -512,11 +512,11 @@ function buildGauge(d) {
 function buildCoverageModal(d) {
   const normMun = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
 
-  // Deduplicate by accent-normalized name, then filter and sort
+  // Prefer municipality_id as the canonical key; fall back to normalized name only for legacy rows.
   const dedupMap = new Map();
   for (const m of (d.coverageByMunicipality || [])) {
-    const key = normMun(m.municipalityName);
-    if (key === "VILLAVICENCIO") continue;
+    const key = m.municipalityId ? `id:${m.municipalityId}` : `name:${normMun(m.municipalityName)}`;
+    if (normMun(m.municipalityName) === "VILLAVICENCIO") continue;
     if (!((m.requiredTotal > 0) || (m.contractedTotal > 0))) continue;
     if (dedupMap.has(key)) {
       const ex = dedupMap.get(key);

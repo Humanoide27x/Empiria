@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const XLSX = require("xlsx");
 const pool = require("../../db/pool");
 const { normalizeMunicipalityName } = require("../../utils/municipality");
+const { listMunicipalities } = require("../../db/municipalities.repository");
 
 const uploadsDir = path.join(__dirname, "../../../uploads/coverage");
 
@@ -294,13 +295,13 @@ async function saveCoverageUpload({
     `).catch(() => {});
 
     // Construir mapa normalizado de nombre → municipality_id para resolver durante la importación.
-    const munCatalogResult = await client.query(
-      `SELECT id, name FROM municipalities ORDER BY id`
-    );
+    const munCatalogResult = await listMunicipalities({}, client);
     const munNameToId = new Map();
-    for (const r of munCatalogResult.rows) {
+    const munIdToName = new Map();
+    for (const r of munCatalogResult) {
       const key = normalizeMunicipalityName(r.name);
       if (key && !munNameToId.has(key)) munNameToId.set(key, r.id);
+      munIdToName.set(Number(r.id), r.name);
     }
 
     const previousConditions = ["TRUE"];
@@ -511,6 +512,9 @@ async function saveCoverageUpload({
         (row._prevMunicipalityId > 0 ? row._prevMunicipalityId : null) ||
         munNameToId.get(normalizeMunicipalityName(row.municipality)) ||
         null;
+      const canonicalMunicipalityName = resolvedMunicipalityId
+        ? (munIdToName.get(Number(resolvedMunicipalityId)) || row.municipality)
+        : row.municipality;
 
       // New rows from the Excel must resolve to a known municipality — skip them
       // if the municipality name is not in the catalog (item 8 hardening).
@@ -547,7 +551,7 @@ async function saveCoverageUpload({
         [
           upload.id,
           row.uniqueCode || "",
-          row.municipality,
+          canonicalMunicipalityName,
           row.institution,
           row.site,
           row.modality,
@@ -694,17 +698,9 @@ function getCoverageAssignedPersonnel({
     site_id,
     modality,
   });
-  const textKey = makeCoverageTextKey({
-    contract_id,
-    municipality,
-    institution,
-    site,
-    modality,
-  });
-
   const employees = idKey && employeeIndex.byIdKey.has(idKey)
     ? employeeIndex.byIdKey.get(idKey)
-    : employeeIndex.byTextKey.get(textKey) || [];
+    : [];
 
   return buildAssignedPersonnelSummary(employees);
 }
@@ -833,7 +829,7 @@ function getCoverageStatus({ requiredTc, requiredMt, contractedTc, contractedMt 
   return "CUMPLE";
 }
 
-async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
+async function getCoverageRowsByUpload(uploadId, municipalityIds = null) {
   const uploadResult = await pool.query(
     `SELECT * FROM coverage_uploads WHERE id = $1`,
     [uploadId]
@@ -845,7 +841,8 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
     return [];
   }
 
-  const hasMunFilter = Array.isArray(municipalityNames) && municipalityNames.length > 0;
+  const hasMunFilter = Array.isArray(municipalityIds) && municipalityIds.length > 0;
+  const municipalityNames = [];
   const rowParams = hasMunFilter
     ? [uploadId, municipalityNames.map(n => n.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim())]
     : [uploadId];
@@ -856,10 +853,19 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
           SELECT REGEXP_REPLACE(translate(UPPER(TRIM(unnest($2::text[]))),'${ACCENT_FROM}','${ACCENT_TO}'),'[^A-Z0-9 ]','','g')
         )`
     : "";
+  const scopedMunicipalityIds = hasMunFilter
+    ? municipalityIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+    : [];
+  const municipalityFilterSql = scopedMunicipalityIds.length
+    ? ` AND municipality_id = ANY($2::int[])`
+    : "";
+  if (scopedMunicipalityIds.length) {
+    rowParams[1] = scopedMunicipalityIds;
+  }
 
   const currentRowsResult = await pool.query(
     `SELECT * FROM coverage_upload_rows
-     WHERE upload_id = $1${munCondition}
+     WHERE upload_id = $1${municipalityFilterSql}
      ORDER BY municipality, institution, site, modality, unique_code`,
     rowParams
   );
@@ -872,15 +878,15 @@ async function getCoverageRowsByUpload(uploadId, municipalityNames = null) {
       `
       SELECT
         r.id AS row_id,
-        m.id AS municipality_id,
+        COALESCE(r.municipality_id, m.id) AS municipality_id,
         i.id AS institution_id,
         s.id AS site_id
       FROM coverage_upload_rows r
       LEFT JOIN municipalities m
-        ON ${SQL_NORMALIZE_TEXT("m.name")} = ${SQL_NORMALIZE_TEXT("r.municipality")}
+        ON m.id = r.municipality_id
       LEFT JOIN institutions i
         ON ${SQL_NORMALIZE_TEXT("i.name")} = ${SQL_NORMALIZE_TEXT("r.institution")}
-       AND (m.id IS NULL OR i.municipality_id = m.id)
+       AND (COALESCE(r.municipality_id, m.id) IS NULL OR i.municipality_id = COALESCE(r.municipality_id, m.id))
       LEFT JOIN educational_sites s
         ON ${SQL_NORMALIZE_TEXT("s.name")} = ${SQL_NORMALIZE_TEXT("r.site")}
        AND (i.id IS NULL OR s.institution_id = i.id)

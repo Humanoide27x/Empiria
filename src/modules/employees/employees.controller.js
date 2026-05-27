@@ -9,6 +9,10 @@ const {
   updateEmployee,
   updateEmployeePhoto,
 } = require("../../db/employees.repository");
+const {
+  resolveMunicipalityRecord,
+  listMunicipalities,
+} = require("../../db/municipalities.repository");
 
 const pool = require("../../db/pool");
 
@@ -40,40 +44,6 @@ function splitAssignedMunicipalities(value) {
     .filter(Boolean);
 }
 
-async function resolveMunicipalityRecord({
-  municipalityId,
-  municipalityName,
-}) {
-  const rawId = municipalityId !== undefined && municipalityId !== null && String(municipalityId).trim() !== ""
-    ? Number(municipalityId)
-    : null;
-
-  if (Number.isFinite(rawId) && rawId > 0) {
-    const { rows } = await pool.query(
-      `SELECT id, name FROM municipalities WHERE id = $1 LIMIT 1`,
-      [rawId]
-    );
-    if (rows[0]) return rows[0];
-  }
-
-  const normalizedName = String(municipalityName || "").trim();
-  if (!normalizedName) return null;
-
-  const { rows } = await pool.query(
-    `
-    SELECT id, name
-    FROM municipalities
-    WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))
-       OR REGEXP_REPLACE(UPPER(TRIM(name)), '[^A-Z0-9]', '', 'g')
-          = REGEXP_REPLACE(UPPER(TRIM($1)), '[^A-Z0-9]', '', 'g')
-    ORDER BY id ASC
-    LIMIT 1
-    `,
-    [normalizedName]
-  );
-  return rows[0] || null;
-}
-
 async function listScopedManagers({
   companyId,
   contractId,
@@ -81,7 +51,12 @@ async function listScopedManagers({
   municipalityName,
   allowedMunicipalityIds = [],
 }) {
-  const municipality = await resolveMunicipalityRecord({ municipalityId, municipalityName });
+  let municipality = null;
+  try {
+    municipality = await resolveMunicipalityRecord({ municipalityId, municipalityName });
+  } catch {
+    municipality = null;
+  }
   if (!municipality) {
     return {
       municipality: null,
@@ -356,13 +331,16 @@ async function getEducationalCatalog({
     SELECT
       lu.id AS upload_id,
       lu.period_month,
-      TRIM(r.municipality) AS municipality_name,
+      r.municipality_id,
+      COALESCE(m.name, TRIM(r.municipality)) AS municipality_name,
       TRIM(r.institution) AS institution_name,
       TRIM(r.site) AS site_name,
       TRIM(r.modality) AS modality_name
     FROM latest_upload lu
     JOIN coverage_upload_rows r
       ON r.upload_id = lu.id
+    LEFT JOIN municipalities m
+      ON m.id = r.municipality_id
     WHERE NULLIF(TRIM(r.municipality), '') IS NOT NULL
       AND NULLIF(TRIM(r.institution), '') IS NOT NULL
       AND NULLIF(TRIM(r.site), '') IS NOT NULL
@@ -372,11 +350,9 @@ async function getEducationalCatalog({
     [scopedCompanyId, scopedContractId]
   );
 
-  const municipalityRows = await pool.query(
-    `SELECT id, name FROM municipalities WHERE name IS NOT NULL ORDER BY name ASC`
-  );
-  const municipalityByNormalizedName = new Map(
-    municipalityRows.rows.map((row) => [normalizeScopedText(row.name), row])
+  const municipalityRows = await listMunicipalities({ activeOnly: true });
+  const municipalityById = new Map(
+    municipalityRows.map((row) => [String(row.id), row])
   );
 
   const allowedMunicipalitySet = Array.isArray(allowedMunicipalityIds) && allowedMunicipalityIds.length > 0
@@ -394,9 +370,7 @@ async function getEducationalCatalog({
     const modalityName = String(row.modality_name || "").trim();
     if (!municipalityName || !institutionName || !siteName || !modalityName) continue;
 
-    const matchedMunicipality = municipalityByNormalizedName.get(
-      normalizeScopedText(municipalityName)
-    ) || null;
+    const matchedMunicipality = municipalityById.get(String(row.municipality_id || "")) || null;
 
     if (
       allowedMunicipalitySet &&
@@ -405,7 +379,9 @@ async function getEducationalCatalog({
       continue;
     }
 
-    const municipalityKey = matchedMunicipality?.name || municipalityName;
+    const municipalityKey = String(matchedMunicipality?.id || row.municipality_id || "").trim();
+    if (!municipalityKey) continue;
+    const municipalityLabel = matchedMunicipality?.name || municipalityName;
 
     if (!catalog[municipalityKey]) catalog[municipalityKey] = {};
     if (!catalog[municipalityKey][institutionName]) catalog[municipalityKey][institutionName] = {};
@@ -415,11 +391,11 @@ async function getEducationalCatalog({
       catalog[municipalityKey][institutionName][siteName].push(modalityName);
     }
 
-    if (!seenMunicipalities.has(normalizeScopedText(municipalityKey))) {
-      seenMunicipalities.add(normalizeScopedText(municipalityKey));
+    if (!seenMunicipalities.has(municipalityKey)) {
+      seenMunicipalities.add(municipalityKey);
       municipalityOptions.push({
-        id: matchedMunicipality?.id || null,
-        name: municipalityKey,
+        id: matchedMunicipality?.id || Number(row.municipality_id) || null,
+        name: municipalityLabel,
       });
     }
   }

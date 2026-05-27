@@ -1,5 +1,6 @@
 import { state } from './state.js';
-import { DOC_TYPE_LABELS, MUNICIPALITIES_BY_DEPARTMENT, META_MUNICIPALITIES } from './constants.js';
+import { apiFetch } from './api.js';
+import { DOC_TYPE_LABELS, MUNICIPALITIES_BY_DEPARTMENT } from './constants.js';
 import { showWarning } from './toast.js';
 
 // ── String helpers ────────────────────────────────────────────────────────────
@@ -262,6 +263,51 @@ export function getDepartmentMunicipalities(departmentName) {
   return MUNICIPALITIES_BY_DEPARTMENT[departmentName] || [];
 }
 
+export function normalizeMunicipalityText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+export function getOfficialMunicipalities({ includeFallback = false } = {}) {
+  const official = Array.isArray(state.municipalities) ? state.municipalities.filter(Boolean) : [];
+  if (official.length) return official;
+  return [];
+}
+
+export async function ensureOfficialMunicipalitiesLoaded({ force = false } = {}) {
+  if (!force && Array.isArray(state.municipalities) && state.municipalities.length) {
+    return state.municipalities;
+  }
+
+  const payload = await apiFetch("/municipalities");
+  const catalog = Array.isArray(payload?.data) ? payload.data : [];
+  state.municipalities = catalog.map((item) => ({
+    id: Number(item.id),
+    name: String(item.name || "").trim(),
+    normalized_name: String(item.normalized_name || "").trim(),
+    department: String(item.department || "").trim(),
+    active: item.active !== false,
+  }));
+  return state.municipalities;
+}
+
+export function findOfficialMunicipality(value, { includeFallback = false } = {}) {
+  const catalog = getOfficialMunicipalities({ includeFallback });
+  const raw = String(value ?? "").trim();
+  const normalized = normalizeMunicipalityText(raw);
+  if (!raw && !normalized) return null;
+
+  return catalog.find((item) =>
+    String(item.id) === raw
+    || normalizeMunicipalityText(item.name) === normalized
+    || normalizeMunicipalityText(item.normalized_name) === normalized
+  ) || null;
+}
+
 // ── Personnel data helpers ────────────────────────────────────────────────────
 
 export function getPersonnelFullName(item) {
@@ -279,11 +325,12 @@ export function getPersonnelRole(item) {
 }
 
 export function getPersonnelMunicipality(item = {}) {
+  const explicitName = item.municipalityName || item.municipality_name || "";
+  if (String(explicitName || "").trim()) return String(explicitName).trim();
+
   const value = item.municipalityId || item.municipality_id || item.municipio_id || item.municipality || item.municipio || "";
   if (!value) return "-";
-  const found = META_MUNICIPALITIES.find(m =>
-    String(m.id) === String(value) || String(m.name).toUpperCase() === String(value).toUpperCase()
-  );
+  const found = findOfficialMunicipality(value);
   return found ? found.name : String(value);
 }
 

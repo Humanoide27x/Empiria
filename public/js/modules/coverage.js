@@ -1,6 +1,9 @@
 import { state } from '../state.js';
 import { apiFetch } from '../api.js';
-import { escapeHtml, escapeAttr, getPersonnelFullName, getPersonnelRole, getPersonnelMunicipality } from '../utils.js';
+import {
+  escapeHtml, escapeAttr, getPersonnelFullName, getPersonnelRole, getPersonnelMunicipality,
+  ensureOfficialMunicipalitiesLoaded, findOfficialMunicipality,
+} from '../utils.js';
 import { showWarning, showError } from '../toast.js';
 import { openModule } from '../nav.js';
 
@@ -14,6 +17,7 @@ function fileToBase64(file) {
 }
 
 export async function loadCoverageModule() {
+  await ensureOfficialMunicipalitiesLoaded().catch(() => {});
   const activeMun = (state.coverageFilters || {}).coverageFilterMunicipality || "";
 
   // La cobertura viva llega calculada desde backend; no se carga personal masivo.
@@ -77,6 +81,15 @@ export async function loadCoverageModule() {
     return "BAJO";
   };
 
+  const getMunicipalityId = (row) =>
+    String(row.municipality_id || row.municipalityId || "").trim();
+
+  const getMunicipalityName = (row) => {
+    const found = findOfficialMunicipality(getMunicipalityId(row), { includeFallback: true })
+      || findOfficialMunicipality(row.municipality_name || row.municipality, { includeFallback: true });
+    return found?.name || String(row.municipality_name || row.municipality || "").trim();
+  };
+
   const getLiveCoverageCounts = (row) => {
     const contractedTc = Number(row.contracted_tc || row.contractedTc || 0);
     const contractedMt = Number(row.contracted_mt || row.contractedMt || 0);
@@ -125,7 +138,7 @@ export async function loadCoverageModule() {
   // ── KPI scope: aplica filtros de municipio y modalidad a TODAS las sedes ──────
   // (incluye sedes sin manipuladora para que los totales sean correctos al filtrar)
   const kpiAllRows = selectedRows.filter(row => {
-    if (coverageMunicipality && normalize(row.municipality) !== normalize(coverageMunicipality)) return false;
+    if (coverageMunicipality && getMunicipalityId(row) !== String(coverageMunicipality)) return false;
     if (coverageModality     && normalize(row.modality)     !== normalize(coverageModality))     return false;
     return true;
   });
@@ -143,8 +156,16 @@ export async function loadCoverageModule() {
   const totalManipuladoras   = totalContractedTc + totalContractedMt;
 
   const municipalityOptions = Array.from(
-    new Set(rowsWithRequirement.map((r) => r.municipality).filter(Boolean))
-  ).sort();
+    new Map(
+      rowsWithRequirement
+        .map((row) => {
+          const id = getMunicipalityId(row);
+          const name = getMunicipalityName(row);
+          return id && name ? [id, { id, name }] : null;
+        })
+        .filter(Boolean)
+    ).values()
+  ).sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   const modalityOptions = Array.from(
     new Set(rowsWithRequirement.map((r) => r.modality).filter(Boolean))
@@ -153,12 +174,12 @@ export async function loadCoverageModule() {
   const filteredRows = rowsWithLiveCoverage.filter((row) => {
     const live = row.liveCoverage;
     const fullText = normalize(`
-      ${row.unique_code} ${row.municipality} ${row.institution}
+      ${row.unique_code} ${getMunicipalityName(row)} ${row.institution}
       ${row.site} ${row.modality} ${row.update_origin}
       ${live.coverageStatus} ${live.coverageRisk}
     `);
     if (coverageSearch && !fullText.includes(normalize(coverageSearch))) return false;
-    if (coverageMunicipality && normalize(row.municipality) !== normalize(coverageMunicipality)) return false;
+    if (coverageMunicipality && getMunicipalityId(row) !== String(coverageMunicipality)) return false;
     if (coverageModality && normalize(row.modality) !== normalize(coverageModality)) return false;
     if (coverageChange && normalize(row.change_status) !== normalize(coverageChange)) return false;
     if (coverageStatus && normalize(live.coverageStatus) !== normalize(coverageStatus)) return false;
@@ -484,7 +505,7 @@ export async function loadCoverageModule() {
             <input id="coverageSearch" type="text" placeholder="Buscar municipio, institución, sede o código…" value="${escapeAttr(coverageSearch)}" />
             <select id="coverageFilterMunicipality">
               <option value="">Municipio</option>
-              ${municipalityOptions.map((v) => `<option value="${escapeAttr(v)}"${normalize(coverageMunicipality) === normalize(v) ? " selected" : ""}>${escapeHtml(v)}</option>`).join("")}
+              ${municipalityOptions.map((item) => `<option value="${escapeAttr(item.id)}"${String(coverageMunicipality) === String(item.id) ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
             </select>
             <select id="coverageFilterModality">
               <option value="">Modalidad</option>
@@ -529,7 +550,7 @@ export async function loadCoverageModule() {
                       const rowRiskClass     = getCoverageRiskClass(live.coverageRisk);
                       return `
                         <tr class="${row.update_origin === "HEREDADO" ? "coverage-row-inherited" : "coverage-row-updated"} ${rowCoverageClass} ${rowRiskClass}">
-                          <td>${escapeHtml(row.municipality)}</td>
+                          <td>${escapeHtml(getMunicipalityName(row))}</td>
                           <td class="td-strong">${escapeHtml(row.institution)}</td>
                           <td>${escapeHtml(row.site)}</td>
                           <td><span class="modality-chip ${getModalityClass(modality)}">${escapeHtml(modality || "N/A")}</span></td>

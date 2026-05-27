@@ -1,6 +1,7 @@
 "use strict";
 
 const pool = require("../../db/pool");
+const { calculatePayrollDeductionBase } = require("../../utils/payroll-deductions");
 
 // ── Tipos de novedad PAE (misma lógica que la calculadora) ───────────────────
 
@@ -26,6 +27,25 @@ function deriveModalityClass(modality, workdayType, siteTcCount) {
   return wt === "MT" ? "CAA2" : "CAA1";
 }
 
+function normalizeNominaResult(line) {
+  if (!line || typeof line !== "object") return line;
+
+  const baseSalary = Number(line.salarioProp ?? line.devengadoBase ?? 0);
+  const totalDev = Number(line.totalDev ?? 0);
+  const salud = calculatePayrollDeductionBase(baseSalary);
+  const pension = calculatePayrollDeductionBase(baseSalary);
+  const totalDed = salud + pension;
+  const neto = totalDev - totalDed;
+
+  return {
+    ...line,
+    salud,
+    pension,
+    totalDed,
+    neto,
+  };
+}
+
 // ── Motor de cálculo (misma lógica que calculator.js) ────────────────────────
 
 function calcLineHoras(salaryConfig, modClass, horasDiarias) {
@@ -36,7 +56,7 @@ function calcLineHoras(salaryConfig, modClass, horasDiarias) {
   const totalHoras = (horasDiarias || []).reduce((s, d) => s + (Number(d.horas) || 0), 0);
   const workedDays = (horasDiarias || []).filter(d => (Number(d.horas) || 0) > 0).length;
   const devengado  = Math.round(valorHora * totalHoras);
-  const salud      = Math.ceil(devengado * 0.04 / 100) * 100;
+  const salud      = calculatePayrollDeductionBase(devengado);
   const pension    = salud;
   const totalDed   = salud * 2;
   const neto       = devengado - totalDed;
@@ -90,7 +110,7 @@ function calcLine(salaryConfig, modClass, diasNoClase, novedades, turnos = []) {
   const totalAdics = adicsCalc.reduce((s, a) => s + a.prop, 0);
   const otherEarnings = auxTrans + totalAdics;
   const totalDev   = salarioProp + extraShiftAmount + otherEarnings;
-  const salud      = Math.ceil(salarioProp * 0.04 / 100) * 100;
+  const salud      = calculatePayrollDeductionBase(salarioProp);
   const pension    = salud;
   const totalDed   = salud * 2;
   const neto       = totalDev - totalDed;
@@ -248,7 +268,7 @@ async function getPeriodResults(periodId) {
   );
   return rows.map(r => {
     const breakdown = extractPayrollBreakdown(r);
-    return {
+    return normalizeNominaResult({
       id:              r.id,
       employeeId:      r.employee_id,
       employeeName:    r.employee_name,
@@ -280,7 +300,7 @@ async function getPeriodResults(periodId) {
       totalDed:        Number(r.total_deducciones),
       neto:            Number(r.neto_pagar),
       calculatedAt:    r.calculated_at,
-    };
+    });
   });
 }
 

@@ -250,9 +250,14 @@ async function getUserMunicipalities(userId) {
 
 async function getAllMunicipalities() {
   const { rows } = await pool.query(`
-    SELECT id, TRIM(name) AS name
+    SELECT
+      id,
+      TRIM(name) AS name,
+      COALESCE(normalized_name, '') AS normalized_name,
+      COALESCE(department, '') AS department,
+      COALESCE(active, true) AS active
     FROM municipalities
-    ORDER BY name
+    ORDER BY TRIM(name)
   `);
   return rows;
 }

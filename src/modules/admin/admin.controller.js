@@ -199,13 +199,25 @@ async function handleMunicipalityIntegrity(req, res) {
 
   try {
     const [
+      duplicateMunicipalities,
       employeesNoMunicipality,
       employeesInvalidMunicipality,
       institutionsNoMunicipality,
       orphanSites,
       coverageRowsNoMunicipality,
       payrollGroupsNoMunicipality,
+      coverageRowsInvalidMunicipality,
+      payrollGroupsInvalidMunicipality,
     ] = await Promise.all([
+      pool.query(`
+        SELECT normalized_name, ARRAY_AGG(id ORDER BY id) AS municipality_ids, ARRAY_AGG(name ORDER BY id) AS municipality_names
+        FROM municipalities
+        WHERE NULLIF(TRIM(COALESCE(normalized_name, '')), '') IS NOT NULL
+        GROUP BY normalized_name
+        HAVING COUNT(*) > 1
+        ORDER BY normalized_name
+        LIMIT 100
+      `),
       // Empleados activos sin municipality_id
       pool.query(`
         SELECT id, full_name, document_number, real_position, status, contract_id, company_id
@@ -250,9 +262,25 @@ async function handleMunicipalityIntegrity(req, res) {
       `),
       // Grupos de nómina sin municipality_id (si la tabla existe)
       pool.query(`
-        SELECT id, name, municipality_id FROM payroll_groups
+        SELECT id, operational_position AS group_name, municipality_id FROM payroll_groups
         WHERE municipality_id IS NULL
-        ORDER BY name
+        ORDER BY operational_position
+        LIMIT 100
+      `).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT id, upload_id, municipality, municipality_id
+        FROM coverage_upload_rows cur
+        WHERE municipality_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM municipalities m WHERE m.id = cur.municipality_id)
+        ORDER BY upload_id DESC, id DESC
+        LIMIT 100
+      `),
+      pool.query(`
+        SELECT id, operational_position AS group_name, municipality_id
+        FROM payroll_groups pg
+        WHERE municipality_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM municipalities m WHERE m.id = pg.municipality_id)
+        ORDER BY operational_position
         LIMIT 100
       `).catch(() => ({ rows: [] })),
     ]);
@@ -261,6 +289,10 @@ async function handleMunicipalityIntegrity(req, res) {
       ok: true,
       generatedAt: new Date().toISOString(),
       report: {
+        duplicateMunicipalities: {
+          count: duplicateMunicipalities.rows.length,
+          rows: duplicateMunicipalities.rows,
+        },
         employeesWithoutMunicipality: {
           count: employeesNoMunicipality.rows.length,
           rows: employeesNoMunicipality.rows,
@@ -281,9 +313,17 @@ async function handleMunicipalityIntegrity(req, res) {
           count: coverageRowsNoMunicipality.rows.length,
           rows: coverageRowsNoMunicipality.rows,
         },
+        coverageRowsWithInvalidMunicipalityId: {
+          count: coverageRowsInvalidMunicipality.rows.length,
+          rows: coverageRowsInvalidMunicipality.rows,
+        },
         payrollGroupsWithoutMunicipality: {
           count: payrollGroupsNoMunicipality.rows.length,
           rows: payrollGroupsNoMunicipality.rows,
+        },
+        payrollGroupsWithInvalidMunicipalityId: {
+          count: payrollGroupsInvalidMunicipality.rows.length,
+          rows: payrollGroupsInvalidMunicipality.rows,
         },
       },
     });

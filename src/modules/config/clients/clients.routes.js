@@ -61,7 +61,7 @@ async function handleClientsRoutes(req, res, url) {
   }
 
   // ── Municipalities catalog ────────────────────────────────────────────────────
-  if (p === "/config/municipalities" && m === "GET") {
+  if ((p === "/config/municipalities" || p === "/municipalities") && m === "GET") {
     await handleGetAllMunicipalities(req, res); return true;
   }
 
