@@ -35,6 +35,7 @@ const {
   handleDeleteNovelty,
   handleGroupExport,
   handleGroupClose,
+  handleGroupTurns,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
@@ -71,6 +72,9 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/groups\/\d+\/export$/.test(pathname)) {
     await handleGroupExport(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/turns$/.test(pathname)) {
+    await handleGroupTurns(req, res, url); return true;
   }
   if (/^\/payroll\/groups\/\d+\/close$/.test(pathname)) {
     await handleGroupClose(req, res, url); return true;
