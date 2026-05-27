@@ -1591,6 +1591,22 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
     [novelty.id, coverType, days * valuePerDay]
   );
 
+  // Recalcular el item del empleado origen (Sandra) para reflejar la novedad actualizada
+  if (novelty.payroll_item_id) {
+    await recalculatePayrollItem(novelty.payroll_item_id);
+  }
+
+  // Recalcular el item del empleado que cubrió (Carmenza) para sumar su ingreso por cobertura
+  if (coverType === "INTERNA" && internalEmployeeId) {
+    const { rows: coveringItemRows } = await pool.query(
+      `SELECT id FROM payroll_items WHERE period_id = $1 AND employee_id = $2 LIMIT 1`,
+      [novelty.payroll_period_id, internalEmployeeId]
+    );
+    if (coveringItemRows[0]) {
+      await recalculatePayrollItem(coveringItemRows[0].id);
+    }
+  }
+
   // Crear soportes requeridos para externos
   if (coverType === "EXTERNA") {
     for (const supportType of ["cedula", "certificacion_bancaria", "cuenta_cobro"]) {
@@ -1825,19 +1841,25 @@ async function getItemPayslip(itemId) {
         ORDER BY pn.created_at`,
       [itemId]
     ),
+    // Solo coberturas EXTERNAS del item origen (para informar quién cubrió externamente).
+    // Las coberturas INTERNAS NO se muestran en el desprendible del empleado origen.
     pool.query(
-      `SELECT ptc.*, etw.full_name AS ext_name, etw.document_number AS ext_doc,
-              e.full_name AS int_name
+      `SELECT ptc.*, etw.full_name AS ext_name, etw.document_number AS ext_doc
          FROM payroll_turn_covers ptc
          LEFT JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
-         LEFT JOIN employees e               ON e.id = ptc.internal_employee_id
-        WHERE ptc.payroll_item_id = $1`,
+        WHERE ptc.payroll_item_id = $1 AND ptc.cover_type = 'EXTERNA'`,
       [itemId]
     ),
-    // Coberturas internas hechas POR este empleado (para que calculateEmployeeAmounts las sume)
+    // Coberturas INTERNAS realizadas POR este empleado (para cálculo y para mostrar detalle
+    // de quién cubrió en el desprendible del empleado que realizó la cobertura).
     pool.query(
-      `SELECT * FROM payroll_turn_covers
-        WHERE payroll_period_id = $1 AND cover_type = 'INTERNA' AND internal_employee_id = $2`,
+      `SELECT ptc.*,
+              pn.days AS novelty_days,
+              pi_origin.employee_name AS covered_employee_name
+         FROM payroll_turn_covers ptc
+         JOIN payroll_novelties pn        ON pn.id  = ptc.novelty_id
+         JOIN payroll_items pi_origin     ON pi_origin.id = ptc.payroll_item_id
+        WHERE ptc.payroll_period_id = $1 AND ptc.cover_type = 'INTERNA' AND ptc.internal_employee_id = $2`,
       [item.period_id, item.employee_id]
     ),
   ]);
@@ -1950,9 +1972,10 @@ async function getItemPayslip(itemId) {
     net:             liveAmounts.neto_pagar,
     worked_days:     workedDays,
     salary_category: item.salary_category || "",
-    novelties:       enrichedNovelties,
-    covers:          coverRows,
-    calculation:     liveCalc,
+    novelties:        enrichedNovelties,
+    covers:           coverRows,       // solo coberturas EXTERNAS del empleado origen
+    performed_covers: myCovers,        // coberturas internas realizadas POR este empleado
+    calculation:      liveCalc,
     payslip: {
       worked_days:               workedDays,
       salary_paid_days:          salaryPaidDays,

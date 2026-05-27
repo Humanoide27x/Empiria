@@ -1275,7 +1275,7 @@ function openChargeAccount(coverId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildPayslipHtmlDoc(data, forPrint = false) {
-  const { employee, earnings, deductions, net, worked_days, covers, period, cambio_operativo, payslip } = data;
+  const { employee, earnings, deductions, net, worked_days, covers, period, cambio_operativo, payslip, performed_covers } = data;
   const fmt = fmtCOP;
 
   // ── Novedades agrupadas ──────────────────────────────────────────────────
@@ -1315,8 +1315,14 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       ${Number(earnings.other_recargos_value) ? `<div class="row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
   }
 
+  // Coberturas externas del empleado origen (informativo)
   const coverHtml = (covers || []).map((c) =>
-    `<div class="row"><span>Turno cubierto (${c.cover_type === "EXTERNA" ? `Ext: ${escapeHtml(c.ext_name || "")}` : `Int: ${escapeHtml(c.int_name || "")}`})</span><b>+${fmt(c.total_value)}</b></div>`
+    `<div class="row"><span>Turno externo — ${escapeHtml(c.ext_name || c.ext_doc || "Trabajador externo")}</span><b>+${fmt(c.total_value)}</b></div>`
+  ).join("");
+
+  // Coberturas internas realizadas POR este empleado (con detalle)
+  const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
+    `<div class="row"><span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
 
   const printScript = forPrint ? `<script>window.onload=function(){window.print();}<\/script>` : "";
@@ -1372,7 +1378,7 @@ ${printScript}
   <div class="section">
     <div class="section-h">Devengados</div>
     ${devRows}
-    ${Number(earnings.internal_cover_value) ? `<div class="row"><span>Turno cubierto (cobro)</span><b>+${fmt(earnings.internal_cover_value)}</b></div>` : ""}
+    ${performedCoverHtmlDoc}
     ${coverHtml}
     <div class="row total"><span>Total Devengado</span><b>${fmt(earnings.total_devengado)}</b></div>
   </div>
@@ -1481,9 +1487,17 @@ async function openPayslipModal(itemId) {
         ${Number(earnings.other_recargos_value) ? `<div class="nm-slip-row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
     }
 
+    // Coberturas externas que tuvo este empleado (solo informativo en su desprendible)
     const coverRows = (covers || []).map((c) => `
       <div class="nm-slip-row">
-        <span>Turno cubierto (${c.cover_type === "EXTERNA" ? `Ext: ${escapeHtml(c.ext_name || "")}` : `Int: ${escapeHtml(c.int_name || "")}`})</span>
+        <span>Turno externo — ${escapeHtml(c.ext_name || c.ext_doc || "Trabajador externo")}</span>
+        <b>+${fmt(c.total_value)}</b>
+      </div>`).join("");
+
+    // Coberturas internas que realizó este empleado (muestra a quién cubrió, días y valor)
+    const performedCoverHtml = (data.performed_covers || []).map((c) => `
+      <div class="nm-slip-row">
+        <span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
         <b>+${fmt(c.total_value)}</b>
       </div>`).join("");
 
@@ -1504,7 +1518,7 @@ async function openPayslipModal(itemId) {
     <div class="nm-slip-section">
       <div class="nm-slip-section-h">Devengados</div>
       ${devHtml}
-      ${Number(earnings.internal_cover_value) ? `<div class="nm-slip-row"><span>Turno cubierto (cobro)</span><b>+${fmt(earnings.internal_cover_value)}</b></div>` : ""}
+      ${performedCoverHtml}
       ${coverRows}
       <div class="nm-slip-row nm-slip-total"><span>Total Devengado</span><b>${fmt(earnings.total_devengado)}</b></div>
     </div>
