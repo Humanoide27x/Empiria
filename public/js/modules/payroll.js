@@ -1280,16 +1280,31 @@ async function exportMunicipality() {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: calcular días automáticamente entre dos fechas
 // ─────────────────────────────────────────────────────────────────────────────
+function countBusinessDays(startStr, endStr) {
+  if (!startStr || !endStr) return 1;
+  const start = new Date(startStr + "T00:00:00Z");
+  const end   = new Date(endStr   + "T00:00:00Z");
+  if (end < start) return 1;
+  let count = 0;
+  const cur = new Date(start);
+  while (cur <= end) {
+    const d = cur.getUTCDay(); // 0=Dom, 6=Sab
+    if (d >= 1 && d <= 5) count++;
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return Math.max(1, count);
+}
+
 function wireDateAutocalc(startId, endId, daysId) {
   const calc = () => {
-    const s = document.getElementById(startId)?.value;
-    const e = document.getElementById(endId)?.value;
-    if (s && e) {
-      const diff = (new Date(e) - new Date(s)) / 86400000;
-      const days = Math.max(1, Math.round(diff) + 1);
-      const daysEl = document.getElementById(daysId);
-      if (daysEl && !daysEl._manualOverride) daysEl.value = days;
-    }
+    const s     = document.getElementById(startId)?.value;
+    const e     = document.getElementById(endId)?.value;
+    const daysEl = document.getElementById(daysId);
+    if (!s || !e || !daysEl || daysEl._manualOverride) return;
+    const isBiz = daysEl.dataset.mode === "biz";
+    daysEl.value = isBiz
+      ? countBusinessDays(s, e)
+      : Math.max(1, Math.round((new Date(e) - new Date(s)) / 86400000) + 1);
   };
   document.getElementById(startId)?.addEventListener("change", calc);
   document.getElementById(endId)?.addEventListener("change",   calc);
@@ -1304,9 +1319,11 @@ function wireDateAutocalc(startId, endId, daysId) {
 // ─────────────────────────────────────────────────────────────────────────────
 function openNoveltyModal(itemId) {
   // DATE_TYPES: single exact date, days auto-calculated by backend
-  const DATE_TYPES  = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
-  // RANGE_TYPES: start + end dates required (incapacidades can span many days)
-  const RANGE_TYPES = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL"]);
+  const DATE_TYPES          = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  // RANGE_TYPES: start + end, calendar days auto-counted
+  const RANGE_TYPES         = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
+  // BUSINESS_RANGE_TYPES: start + end, only business days (Mon–Fri) counted
+  const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
 
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
@@ -1333,13 +1350,13 @@ function openNoveltyModal(itemId) {
       </div>
     </div>
 
-    <!-- Sección 2: rango de fechas — solo incapacidades -->
+    <!-- Sección 2: rango de fechas — incapacidades, calamidad, luto -->
     <div id="novRangeSection" hidden>
       <div class="nm-pay-form-grid">
         <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart" type="date"></div>
         <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd" type="date"></div>
         <div class="nm-pay-field">
-          <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
+          <label id="novDaysLabel">Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
           <input class="nm-pay-input" id="novDays" type="number" min="1" value="1">
         </div>
       </div>
@@ -1363,12 +1380,25 @@ function openNoveltyModal(itemId) {
   wireDateAutocalc("novStart", "novEnd", "novDays");
 
   const showSection = (code) => {
-    const isDate   = DATE_TYPES.has(code);
-    const isRange  = RANGE_TYPES.has(code);
-    const isSingle = !isDate && !isRange;
+    const isDate    = DATE_TYPES.has(code);
+    const isRange   = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+    const isBiz     = BUSINESS_RANGE_TYPES.has(code);
+    const isSingle  = !isDate && !isRange;
     document.getElementById("novDateSection").hidden   = !isDate;
     document.getElementById("novRangeSection").hidden  = !isRange;
     document.getElementById("novSingleSection").hidden = !isSingle;
+    // Mode flag for wireDateAutocalc: "biz" = business days, "" = calendar days
+    const daysEl = document.getElementById("novDays");
+    if (daysEl) {
+      daysEl.dataset.mode   = isBiz ? "biz" : "";
+      daysEl._manualOverride = false; // reset so auto-calc works after type switch
+    }
+    const daysLabel = document.getElementById("novDaysLabel");
+    if (daysLabel) {
+      daysLabel.innerHTML = isBiz
+        ? `Días hábiles <small style="color:#94A3B8;font-weight:400">(lun–vie, auto)</small>`
+        : `Días <small style="color:#94A3B8;font-weight:400">(auto)</small>`;
+    }
     const dateLabel = document.getElementById("novDateLabel");
     const dateHelp  = document.getElementById("novDateHelp");
     if (isDate && dateLabel && dateHelp) {
@@ -1411,7 +1441,7 @@ function openNoveltyModal(itemId) {
         }
         body = { novelty_type: code, novelty_date: noveltyDate, observations: obsText };
 
-      } else if (RANGE_TYPES.has(code)) {
+      } else if (RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code)) {
         const startDate = document.getElementById("novStart").value;
         const endDate   = document.getElementById("novEnd").value;
         if (!startDate) { showError("Indique la fecha de inicio."); return; }
@@ -1713,11 +1743,12 @@ function openEditNoveltyModal(noveltyId) {
   const novelty = activeGroupDetail?.novelties?.find((x) => Number(x.id) === Number(noveltyId));
   if (!novelty) return;
 
-  const DATE_TYPES  = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
-  const RANGE_TYPES = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL"]);
-  const code0       = novelty.novelty_type;
-  const isDate0     = DATE_TYPES.has(code0);
-  const isRange0    = RANGE_TYPES.has(code0);
+  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const RANGE_TYPES          = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
+  const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
+  const code0                = novelty.novelty_type;
+  const isDate0              = DATE_TYPES.has(code0);
+  const isRange0             = RANGE_TYPES.has(code0) || BUSINESS_RANGE_TYPES.has(code0);
   const startVal    = String(novelty.start_date || "").slice(0, 10);
   const endVal      = String(novelty.end_date   || "").slice(0, 10);
 
@@ -1746,14 +1777,14 @@ function openEditNoveltyModal(noveltyId) {
       </div>
     </div>
 
-    <!-- Sección 2: rango de fechas — solo incapacidades -->
+    <!-- Sección 2: rango de fechas — incapacidades, calamidad, luto -->
     <div id="novRangeSection" ${isRange0 ? "" : "hidden"}>
       <div class="nm-pay-form-grid">
         <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(startVal)}"></div>
         <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(endVal)}"></div>
         <div class="nm-pay-field">
-          <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
-          <input class="nm-pay-input" id="novDays" type="number" min="1" value="${Number(novelty.days || 1)}">
+          <label id="novDaysLabel">${BUSINESS_RANGE_TYPES.has(code0) ? `Días hábiles <small style="color:#94A3B8;font-weight:400">(lun–vie, auto)</small>` : `Días <small style="color:#94A3B8;font-weight:400">(auto)</small>`}</label>
+          <input class="nm-pay-input" id="novDays" type="number" min="1" value="${Number(novelty.days || 1)}" data-mode="${BUSINESS_RANGE_TYPES.has(code0) ? "biz" : ""}">
         </div>
       </div>
     </div>
@@ -1777,11 +1808,23 @@ function openEditNoveltyModal(noveltyId) {
 
   const showSection = (code) => {
     const isDate   = DATE_TYPES.has(code);
-    const isRange  = RANGE_TYPES.has(code);
+    const isRange  = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+    const isBiz    = BUSINESS_RANGE_TYPES.has(code);
     const isSingle = !isDate && !isRange;
     document.getElementById("novDateSection").hidden   = !isDate;
     document.getElementById("novRangeSection").hidden  = !isRange;
     document.getElementById("novSingleSection").hidden = !isSingle;
+    const daysEl = document.getElementById("novDays");
+    if (daysEl) {
+      daysEl.dataset.mode    = isBiz ? "biz" : "";
+      daysEl._manualOverride = false;
+    }
+    const daysLabel = document.getElementById("novDaysLabel");
+    if (daysLabel) {
+      daysLabel.innerHTML = isBiz
+        ? `Días hábiles <small style="color:#94A3B8;font-weight:400">(lun–vie, auto)</small>`
+        : `Días <small style="color:#94A3B8;font-weight:400">(auto)</small>`;
+    }
     const dateLabel = document.getElementById("novDateLabel");
     const dateHelp  = document.getElementById("novDateHelp");
     if (isDate && dateLabel && dateHelp) {

@@ -100,7 +100,9 @@
       "Bash(pkill -f \"node app.js\")",
       "Bash(echo \"EXIT: $?\")",
       "Bash(grep -E \"\\\\.\\(js|ts\\)$\")",
-      "Bash(grep -E \"\\\\.\\(sql|js\\)$\")"
+      "Bash(grep -n \"^=======$\" \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\public\\\\js\\\\modules\\\\payroll.js\")",
+      "Bash(grep *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Directory)"
     ]
   }
 }
