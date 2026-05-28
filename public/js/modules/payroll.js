@@ -9,8 +9,8 @@ import { showSuccess, showError } from "../toast.js";
 const NOVELTY_TYPES = [
   { code: "DIAS_NO_CLASE",                 name: "Días de No Clase",                 affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
   { code: "CITA_MEDICA",                   name: "Cita Médica",                      affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "INCAPACIDAD_MEDICA",            name: "Incapacidad Médica",               affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "INCAPACIDAD_ACCIDENTE_LABORAL", name: "Incapacidad por Accidente Laboral",affects_salary: false, affects_transport: true,  requires_turn_cover: false },
+  { code: "INCAPACIDAD_MEDICA",            name: "Incapacidad Médica",               affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
+  { code: "INCAPACIDAD_ACCIDENTE_LABORAL", name: "Incapacidad por Accidente Laboral",affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
   { code: "CALAMIDAD_FAMILIAR",            name: "Calamidad Familiar",               affects_salary: false, affects_transport: true,  requires_turn_cover: false },
   { code: "LUTO",                          name: "Luto",                             affects_salary: false, affects_transport: true,  requires_turn_cover: false },
   { code: "PERMISOS_NO_REMUNERADOS",       name: "Permisos No Remunerados",          affects_salary: true,  affects_transport: false, requires_turn_cover: false },
@@ -35,15 +35,20 @@ let groupsState      = { positions: [], groups: [] };
 let activePosition   = "";
 let activeGroupId    = null;
 let activeGroupDetail = null;
+let activeGroupTurns  = null;  // null = sin cargar, [] = sin turnos
+let turnosFilter      = { type: "TODOS", search: "" };
 let periodMonth      = new Date().toISOString().slice(0, 7);
 let municipalitySearch = "";
 let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos"
+<<<<<<< HEAD
 
 // ── Soportes tab state ────────────────────────────────────────────────────────
 let activePrimaryTab = "nomina"; // "nomina" | "soportes"
 let supportsData     = [];
 let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
 let viewerSupportId  = null;
+=======
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -372,9 +377,20 @@ async function loadGroups() {
 }
 
 async function loadGroupDetail() {
-  if (!activePeriod || !activeGroupId) { activeGroupDetail = null; return; }
+  if (!activePeriod || !activeGroupId) { activeGroupDetail = null; activeGroupTurns = null; return; }
   const response = await apiFetch(`/payroll/${activePeriod.id}/groups/${activeGroupId}`);
   activeGroupDetail = response.data || null;
+  activeGroupTurns  = null; // reset para forzar recarga al entrar a la pestaña
+}
+
+async function loadGroupTurns() {
+  if (!activeGroupId) { activeGroupTurns = []; return; }
+  try {
+    const response = await apiFetch(`/payroll/groups/${activeGroupId}/turns`);
+    activeGroupTurns = response.turns || [];
+  } catch (_) {
+    activeGroupTurns = [];
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -534,7 +550,14 @@ function renderMunicipalityPanel(position) {
         <span class="nm-pay-count">${mun.employees}</span>
         <span class="nm-pay-mun-meta">${statusBadge(mun.status)}</span>
         ${Number(mun.pending_supports || 0) ? `<span class="nm-pay-mun-alert">${Number(mun.pending_supports)} doc</span>` : ""}
-        ${Number(mun.items_reviewed || 0) > 0 ? `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px">${mun.items_reviewed}/${mun.employees} rev.</span>` : ""}
+        ${(() => {
+          const rev = Number(mun.items_reviewed || 0);
+          const tot = Number(mun.employees || 0);
+          if (!tot) return "";
+          if (rev >= tot) return `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px">&#10003; ${tot}/${tot} rev.</span>`;
+          if (rev > 0) return `<span style="font-size:10px;padding:1px 5px;background:#FEF3C7;color:#92400E;border-radius:3px;display:inline-block">${rev}/${tot} rev.</span>`;
+          return "";
+        })()}
       </button>`).join("") : `<div class="nm-pay-empty" style="padding:16px">Sin municipios.</div>`}
   </div>
 </aside>`;
@@ -613,13 +636,18 @@ ${recalcBanner}
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
+<<<<<<< HEAD
       Turnos <span class="nm-pay-count">${(covers || []).length}</span>
+=======
+      Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
     </button>
   </div>
   ${activeDetailTab === "nomina"
     ? (items.length
         ? renderItemsTable(items)
         : `<div class="nm-pay-empty">Pulsa "Calcular" para cargar los empleados activos.</div>`)
+<<<<<<< HEAD
     : activeDetailTab === "turnos"
       ? ((covers || []).length
           ? `<div class="nm-pay-table-wrap">${renderTurnsTable(covers)}</div>`
@@ -627,6 +655,15 @@ ${recalcBanner}
       : (novelties.length
           ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
           : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)}
+=======
+    : activeDetailTab === "novedades"
+    ? (novelties.length
+        ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
+        : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)
+    : (activeGroupTurns === null
+        ? `<div class="nm-pay-empty">Cargando turnos…</div>`
+        : renderTurnosSection(activeGroupTurns, isClosed))}
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 </div>`;
 }
 
@@ -684,7 +721,15 @@ function renderItemsTable(items) {
         </td>
         <td class="num">${fmtCOP(item.total_deducciones)}</td>
         <td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td>
-        <td>${Number(item.novelty_count || 0) ? `${Number(item.reviewed_count || 0)}/${Number(item.novelty_count || 0)} rev.` : "—"}</td>
+        <td>${(() => {
+          const total    = Number(item.novelty_count  || 0);
+          const reviewed = Number(item.reviewed_count || 0);
+          const pending  = total - reviewed;
+          if (!total) return "—";
+          return pending > 0
+            ? `<span style="font-size:11px;white-space:nowrap">${total} nov. · <span style="color:#B91C1C;font-weight:600">${pending} pend.</span></span>`
+            : `<span style="font-size:11px;white-space:nowrap">${total} nov. · <span style="color:#047857">${reviewed} rev.</span></span>`;
+        })()}</td>
         <td>
           ${groupLocked
             ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
@@ -730,11 +775,21 @@ function renderNoveltiesTable(novelties) {
       const meta = noveltyByCode(nov.novelty_type);
       const isReviewed     = Boolean(nov.reviewed);
       const isItemLocked   = Boolean(nov.item_reviewed);
+<<<<<<< HEAD
       const isLocked       = groupLocked || isReviewed || isItemLocked;
       const lockTitle      = groupLocked ? "Nómina cerrada — reabrir para editar" : isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
       // Impacto económico: usa computed_impact si viene del API, si no: nov.value
       const impactAmt      = Number(nov.computed_impact || nov.value || 0);
+=======
+      const isLocked       = isReviewed || isItemLocked;
+      const lockTitle      = isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
+      // Impacto del afectado: nunca usar el valor del reemplazo como fallback.
+      const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? 0);
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
       const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
+      const replacementText = Number(nov.replacement_amount || 0)
+        ? `<br><small style="color:#047857">Reemplazo: ${escapeHtml(nov.replacement_employee_name || "interno")} · ${Number(nov.covered_days || 0)}d · +${fmtCOP(nov.replacement_amount)}</small>`
+        : "";
       return `
       <tr class="${isReviewed ? "reviewed-row" : ""}">
         <td>
@@ -743,7 +798,7 @@ function renderNoveltiesTable(novelties) {
         </td>
         <td>
           <b>${escapeHtml(nov.novelty_name || nov.novelty_type || "")}</b><br>
-          <small style="color:#64748B">${escapeHtml(nov.description || nov.observations || "")}</small>
+          <small style="color:#64748B">${escapeHtml(nov.description || nov.observations || "")}</small>${replacementText}
         </td>
         <td>${noveltyImpactNoticeHtml(meta || nov)}</td>
         <td>
@@ -766,6 +821,7 @@ function renderNoveltiesTable(novelties) {
         <td>
           <button class="nm-pay-btn nm-pay-btn--sm" data-edit-novelty="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""}>Editar</button>
           <button class="nm-pay-btn nm-pay-btn--sm" data-cover-novelty="${nov.id}" data-cover-item="${nov.payroll_item_id}" ${isLocked ? "disabled" : ""}>Cubrió</button>
+          ${nov.turn_cover_id ? `<button class="nm-pay-btn nm-pay-btn--sm" data-remove-cover="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""}>Quitar cubrió</button>` : ""}
           <button class="nm-pay-btn nm-pay-btn--sm" data-delete-novelty="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""} style="color:#B91C1C;border-color:#FECACA">Eliminar</button>
           ${nov.cover_type === "EXTERNA" && nov.turn_cover_id
             ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${nov.turn_cover_id}">Cta. cobro</button>`
@@ -778,6 +834,7 @@ function renderNoveltiesTable(novelties) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 // TABLA DE TURNOS (una fila por payroll_turn_covers.id)
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTurnsTable(covers) {
@@ -840,6 +897,108 @@ function renderTurnsTable(covers) {
     }).join("")}
   </tbody>
 </table>`;
+=======
+// TABLA DE TURNOS
+// ─────────────────────────────────────────────────────────────────────────────
+function renderTurnosSection(turns, isClosed) {
+  const { type, search } = turnosFilter;
+  let rows = turns;
+
+  if (type !== "TODOS") {
+    rows = rows.filter((t) => t.cover_type === type);
+  }
+  if (search) {
+    const q = normalized(search);
+    rows = rows.filter((t) =>
+      normalized(t.origin_employee_name || "").includes(q) ||
+      normalized(t.origin_document     || "").includes(q) ||
+      normalized(t.internal_employee_name || "").includes(q) ||
+      normalized(t.external_worker_name   || "").includes(q) ||
+      normalized(t.internal_document      || "").includes(q) ||
+      normalized(t.external_document      || "").includes(q)
+    );
+  }
+
+  const filterBar = `
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+  <select class="nm-pay-select nm-pay-input--sm" id="turnoFilter" style="width:auto">
+    <option value="TODOS" ${type === "TODOS" ? "selected" : ""}>Todos los tipos</option>
+    <option value="INTERNA" ${type === "INTERNA" ? "selected" : ""}>Solo internos</option>
+    <option value="EXTERNA" ${type === "EXTERNA" ? "selected" : ""}>Solo externos</option>
+  </select>
+  <input class="nm-pay-input nm-pay-input--sm" id="turnoSearch" placeholder="Buscar nombre o documento…"
+         value="${escapeHtml(search)}" style="min-width:200px">
+  <span style="font-size:12px;color:#94A3B8">${rows.length} turno(s)</span>
+</div>`;
+
+  if (!rows.length) {
+    return `<div class="nm-pay-table-wrap">${filterBar}<div class="nm-pay-empty">Sin turnos que coincidan con los filtros.</div></div>`;
+  }
+
+  const tableRows = rows.map((t) => {
+    const isInterna = t.cover_type === "INTERNA";
+    const coverBadge = isInterna
+      ? `<span style="background:#DBEAFE;color:#1D4ED8;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">INTERNO</span>`
+      : `<span style="background:#FEF9C3;color:#92400E;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">EXTERNO</span>`;
+    const cubrioName = isInterna ? (t.internal_employee_name || "—") : (t.external_worker_name || "—");
+    const cubrioDoc  = isInterna ? (t.internal_document      || "") : (t.external_document     || "");
+    const cubrioPos  = isInterna ? (t.internal_position      || "") : "";
+    const bankInfo   = !isInterna && (t.external_bank || t.external_account_number)
+      ? `<br><small style="color:#64748B">${escapeHtml(t.external_bank || "")} ${escapeHtml(t.external_account_number || "")}</small>`
+      : "";
+    const chargeBtn  = !isInterna && t.id
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${t.id}" title="Descargar cuenta de cobro PDF">Cta. cobro</button>`
+      : "";
+    const noveltyDate = t.novelty_start ? String(t.novelty_start).slice(0, 10) : "—";
+
+    return `
+<tr>
+  <td><small>${escapeHtml(noveltyDate)}</small></td>
+  <td>
+    <b>${escapeHtml(t.origin_employee_name || "—")}</b><br>
+    <small style="color:#64748B">${escapeHtml(t.origin_document || "")}</small>
+  </td>
+  <td><small>${escapeHtml(t.novelty_type || "—")}</small></td>
+  <td>
+    <b>${escapeHtml(cubrioName)}</b><br>
+    <small style="color:#64748B">${escapeHtml(cubrioDoc)}</small>
+    ${cubrioPos ? `<br><small style="color:#94A3B8">${escapeHtml(cubrioPos)}</small>` : ""}${bankInfo}
+  </td>
+  <td>${coverBadge}</td>
+  <td>
+    <small>${escapeHtml(t.municipality_name || "—")}</small><br>
+    <small style="color:#64748B">${escapeHtml(t.institution_name || "—")}</small><br>
+    <small style="color:#94A3B8">${escapeHtml(t.site_name || "")} ${escapeHtml(t.modality || "")}</small>
+  </td>
+  <td class="num">${Number(t.covered_days || 0)}</td>
+  <td class="num">${fmtCOP(t.calculated_day_value)}</td>
+  <td class="num"><b>${fmtCOP(t.total_value)}</b></td>
+  <td>${chargeBtn}</td>
+</tr>`;
+  }).join("");
+
+  return `
+<div class="nm-pay-table-wrap">
+${filterBar}
+<table class="nm-pay-table">
+  <thead>
+    <tr>
+      <th>Fecha turno</th>
+      <th>Empleado con novedad</th>
+      <th>Tipo novedad</th>
+      <th>Quién cubrió</th>
+      <th>Tipo</th>
+      <th>Municipio / Institución / Sede</th>
+      <th class="num">Días</th>
+      <th class="num">Valor día</th>
+      <th class="num">Valor total</th>
+      <th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>${tableRows}</tbody>
+</table>
+</div>`;
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -885,8 +1044,11 @@ function wireStaticEvents() {
     activeDetailTab    = "nomina";
     await reloadDetailOnly();
   }));
-  document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", () => {
+  document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
     activeDetailTab = btn.dataset.detailTab || "nomina";
+    if (activeDetailTab === "turnos" && activeGroupTurns === null && activeGroupId) {
+      await loadGroupTurns();
+    }
     render();
   }));
   document.querySelectorAll(".nm-pay-mun").forEach((btn) => btn.addEventListener("click", async () => {
@@ -903,6 +1065,7 @@ function wireStaticEvents() {
   document.querySelectorAll("[data-payslip]").forEach((btn)        => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
   document.querySelectorAll("[data-edit-novelty]").forEach((btn)   => btn.addEventListener("click", () => openEditNoveltyModal(Number(btn.dataset.editNovelty))));
   document.querySelectorAll("[data-cover-novelty]").forEach((btn)  => btn.addEventListener("click", () => openCoverModal(Number(btn.dataset.coverNovelty), Number(btn.dataset.coverItem))));
+  document.querySelectorAll("[data-remove-cover]").forEach((btn)   => btn.addEventListener("click", () => removeCover(Number(btn.dataset.removeCover))));
   document.querySelectorAll("[data-charge-account]").forEach((btn) => btn.addEventListener("click", () => openChargeAccount(Number(btn.dataset.chargeAccount))));
   document.querySelectorAll("[data-dl-charge]").forEach((btn) => btn.addEventListener("click", () => {
     const periodLabel = activePeriod?.label || "";
@@ -911,6 +1074,19 @@ function wireStaticEvents() {
   document.querySelectorAll("[data-reviewed]").forEach((input)     => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
   document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
+  document.getElementById("turnoFilter")?.addEventListener("change", (e) => { turnosFilter.type = e.target.value; render(); });
+  document.getElementById("turnoSearch")?.addEventListener("input",  (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
+}
+
+async function removeCover(noveltyId) {
+  try {
+    await apiFetch(`/payroll/novelties/${noveltyId}/cover`, {
+      method: "POST",
+      body: JSON.stringify({ remove: true }),
+    });
+    await reloadWorkArea();
+    showSuccess("Cobertura eliminada");
+  } catch (err) { showError(err.message); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -937,10 +1113,33 @@ async function createPeriod() {
 async function reloadWorkArea() {
   await loadGroups();
   await loadGroupDetail();
+<<<<<<< HEAD
   if (activePrimaryTab === "soportes") await loadSupports();
   render();
 }
 async function reloadDetailOnly() { await loadGroupDetail(); render(); }
+=======
+  if (activeDetailTab === "turnos" && activeGroupId) await loadGroupTurns();
+  render();
+}
+async function reloadDetailOnly() {
+  await loadGroupDetail();
+  // Sync sidebar municipality counts from fresh detail so the badge stays accurate
+  if (activeGroupId && activeGroupDetail) {
+    const { totals } = activeGroupDetail;
+    for (const pos of groupsState.positions) {
+      const mun = pos.municipalities.find((m) => Number(m.id) === Number(activeGroupId));
+      if (mun) {
+        mun.items_reviewed = totals.items_reviewed;
+        pos.items_reviewed = pos.municipalities.reduce((s, m) => s + (m.items_reviewed || 0), 0);
+        break;
+      }
+    }
+  }
+  if (activeDetailTab === "turnos" && activeGroupId) await loadGroupTurns();
+  render();
+}
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
 async function calculateGroup() {
   if (!activeGroupId) return;
@@ -997,6 +1196,7 @@ function wireDateAutocalc(startId, endId, daysId) {
 // MODAL: REGISTRAR NOVEDAD
 // ─────────────────────────────────────────────────────────────────────────────
 function openNoveltyModal(itemId) {
+  const DATE_TYPES = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
 <div class="nm-pay-dialog">
@@ -1012,16 +1212,27 @@ function openNoveltyModal(itemId) {
       </select>
     </div>
     <div id="novImpactInfo"></div>
-    <div class="nm-pay-form-grid">
-      <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date"></div>
-      <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date"></div>
+    <!-- Sección fecha exacta (solo INGRESO / RETIRO) -->
+    <div id="novDateSection" hidden>
       <div class="nm-pay-field">
-        <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
-        <input class="nm-pay-input" id="novDays" type="number" min="1" value="1">
+        <label id="novDateLabel">Fecha exacta <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" id="novDate" type="date">
+        <small id="novDateHelp" style="color:#94A3B8"></small>
       </div>
-      <div class="nm-pay-field">
-        <label>Soporte requerido</label>
-        <select class="nm-pay-select" id="novSupport"><option value="false">No</option><option value="true">Sí</option></select>
+    </div>
+    <!-- Sección fechas generales (resto de tipos) -->
+    <div id="novRangeSection">
+      <div class="nm-pay-form-grid">
+        <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date"></div>
+        <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date"></div>
+        <div class="nm-pay-field">
+          <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
+          <input class="nm-pay-input" id="novDays" type="number" min="1" value="1">
+        </div>
+        <div class="nm-pay-field">
+          <label>Soporte requerido</label>
+          <select class="nm-pay-select" id="novSupport"><option value="false">No</option><option value="true">Sí</option></select>
+        </div>
       </div>
     </div>
     <div class="nm-pay-field"><label>Observaciones</label><textarea class="nm-pay-textarea" id="novDesc"></textarea></div>
@@ -1032,23 +1243,33 @@ function openNoveltyModal(itemId) {
   wireModalClose();
   wireDateAutocalc("novStart", "novEnd", "novDays");
 
-  // Mostrar descripción del impacto al cambiar tipo
   const updateImpact = () => {
-    const code = document.getElementById("novType")?.value;
-    const meta = noveltyByCode(code);
-    const el   = document.getElementById("novImpactInfo");
+    const code      = document.getElementById("novType")?.value;
+    const meta      = noveltyByCode(code);
+    const el        = document.getElementById("novImpactInfo");
+    const dateSection  = document.getElementById("novDateSection");
+    const rangeSection = document.getElementById("novRangeSection");
+    const dateLabel    = document.getElementById("novDateLabel");
+    const dateHelp     = document.getElementById("novDateHelp");
     if (!el || !meta) return;
     el.innerHTML = noveltyImpactNoticeHtml(meta);
-    return;
-    const parts = [];
-    if (meta.affects_salary)    parts.push("Descuenta del <b>salario</b>");
-    if (meta.affects_transport) parts.push("Descuenta del <b>transporte</b>");
-    if (!parts.length) parts.push("Sin descuento económico");
-    el.innerHTML = `Impacto: ${parts.join(" · ")}`;
+    const isDateType = DATE_TYPES.has(code);
+    dateSection.hidden  = !isDateType;
+    rangeSection.hidden = isDateType;
+    if (isDateType) {
+      if (code === "FECHA_INGRESO") {
+        dateLabel.innerHTML = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
+        dateHelp.textContent = "La nómina se liquidará desde este día hasta el fin del período.";
+      } else {
+        dateLabel.innerHTML = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
+        dateHelp.textContent = "La nómina se liquidará desde el inicio del período hasta este día.";
+      }
+    }
   };
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
 
+<<<<<<< HEAD
   let _isSavingNovelty = false;
   document.getElementById("novSave")?.addEventListener("click", async () => {
     if (_isSavingNovelty) return;
@@ -1064,18 +1285,54 @@ function openNoveltyModal(itemId) {
           novelty_type:    document.getElementById("novType").value,
           start_date:      document.getElementById("novStart").value || null,
           end_date:        document.getElementById("novEnd").value   || null,
+=======
+  let _savingNovelty = false;
+  document.getElementById("novSave")?.addEventListener("click", async () => {
+    if (_savingNovelty) return;
+    _savingNovelty = true;
+    const btn = document.getElementById("novSave");
+    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
+    try {
+      const code = document.getElementById("novType").value;
+      const isDateType = DATE_TYPES.has(code);
+      let body;
+      if (isDateType) {
+        const noveltyDate = document.getElementById("novDate").value;
+        if (!noveltyDate) {
+          const label = code === "FECHA_INGRESO" ? "ingreso" : "retiro";
+          showError(`Debe ingresar la fecha exacta de ${label}.`);
+          return;
+        }
+        body = {
+          novelty_type: code,
+          novelty_date: noveltyDate,
+          observations: document.getElementById("novDesc").value,
+        };
+      } else {
+        const days = Number(document.getElementById("novDays").value);
+        if (!days || days < 1) { showError("Los días deben ser mayor a 0"); return; }
+        body = {
+          novelty_type:     code,
+          start_date:       document.getElementById("novStart").value || null,
+          end_date:         document.getElementById("novEnd").value   || null,
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
           days,
           support_required: document.getElementById("novSupport").value === "true",
-          observations:    document.getElementById("novDesc").value,
-        }),
-      });
+          observations:     document.getElementById("novDesc").value,
+        };
+      }
+      await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(body) });
       closeModal();
       await reloadWorkArea();
       showSuccess("Novedad registrada");
     } catch (err) {
       showError(err.message);
     } finally {
+<<<<<<< HEAD
       _isSavingNovelty = false;
+=======
+      _savingNovelty = false;
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
       if (btn) { btn.disabled = false; btn.textContent = "Guardar novedad"; }
     }
   });
@@ -1355,6 +1612,9 @@ async function openCambioOperativoModal(itemId) {
 function openEditNoveltyModal(noveltyId) {
   const novelty = activeGroupDetail?.novelties?.find((x) => Number(x.id) === Number(noveltyId));
   if (!novelty) return;
+  const DATE_TYPES = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const isDateType = DATE_TYPES.has(novelty.novelty_type);
+  const currentDate = String(novelty.start_date || "").slice(0, 10);
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
 <div class="nm-pay-dialog">
@@ -1370,14 +1630,25 @@ function openEditNoveltyModal(noveltyId) {
       </select>
     </div>
     <div id="novImpactInfo"></div>
-    <div class="nm-pay-form-grid">
-      <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(String(novelty.start_date || "").slice(0, 10))}"></div>
-      <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(String(novelty.end_date || "").slice(0, 10))}"></div>
+    <!-- Sección fecha exacta (solo INGRESO / RETIRO) -->
+    <div id="novDateSection" ${isDateType ? "" : "hidden"}>
       <div class="nm-pay-field">
-        <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
-        <input class="nm-pay-input" id="novDays" type="number" min="1" value="${Number(novelty.days || 1)}">
+        <label id="novDateLabel">${novelty.novelty_type === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" id="novDate" type="date" value="${escapeHtml(currentDate)}">
+        <small id="novDateHelp" style="color:#94A3B8">${novelty.novelty_type === "FECHA_INGRESO" ? "La nómina se liquidará desde este día hasta el fin del período." : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
       </div>
-      <div class="nm-pay-field"><label>Valor aplicado</label><input class="nm-pay-input" id="novValue" type="number" min="0" value="${Number(novelty.value || 0)}"></div>
+    </div>
+    <!-- Sección fechas generales -->
+    <div id="novRangeSection" ${isDateType ? "hidden" : ""}>
+      <div class="nm-pay-form-grid">
+        <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(currentDate)}"></div>
+        <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(String(novelty.end_date || "").slice(0, 10))}"></div>
+        <div class="nm-pay-field">
+          <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
+          <input class="nm-pay-input" id="novDays" type="number" min="1" value="${Number(novelty.days || 1)}">
+        </div>
+        <div class="nm-pay-field"><label>Valor aplicado</label><input class="nm-pay-input" id="novValue" type="number" min="0" value="${Number(novelty.value || 0)}"></div>
+      </div>
     </div>
     <div class="nm-pay-field"><label>Observaciones</label><textarea class="nm-pay-textarea" id="novDesc">${escapeHtml(novelty.description || novelty.observations || "")}</textarea></div>
     <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar cambios</button>
@@ -1388,32 +1659,73 @@ function openEditNoveltyModal(noveltyId) {
   wireDateAutocalc("novStart", "novEnd", "novDays");
 
   const updateImpact = () => {
-    const code = document.getElementById("novType")?.value;
-    const meta = noveltyByCode(code);
-    const el   = document.getElementById("novImpactInfo");
+    const code         = document.getElementById("novType")?.value;
+    const meta         = noveltyByCode(code);
+    const el           = document.getElementById("novImpactInfo");
+    const dateSection  = document.getElementById("novDateSection");
+    const rangeSection = document.getElementById("novRangeSection");
+    const dateLabel    = document.getElementById("novDateLabel");
+    const dateHelp     = document.getElementById("novDateHelp");
     if (!el || !meta) return;
     el.innerHTML = noveltyImpactNoticeHtml(meta);
+    const isDate = DATE_TYPES.has(code);
+    dateSection.hidden  = !isDate;
+    rangeSection.hidden = isDate;
+    if (isDate && dateLabel && dateHelp) {
+      if (code === "FECHA_INGRESO") {
+        dateLabel.innerHTML = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
+        dateHelp.textContent = "La nómina se liquidará desde este día hasta el fin del período.";
+      } else {
+        dateLabel.innerHTML = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
+        dateHelp.textContent = "La nómina se liquidará desde el inicio del período hasta este día.";
+      }
+    }
   };
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
 
+  let _savingEdit = false;
   document.getElementById("novSave")?.addEventListener("click", async () => {
+    if (_savingEdit) return;
+    _savingEdit = true;
+    const btn = document.getElementById("novSave");
+    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
     try {
-      await apiFetch(`/payroll/novelties/${noveltyId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          novelty_type: document.getElementById("novType").value,
+      const code   = document.getElementById("novType").value;
+      const isDate = DATE_TYPES.has(code);
+      let body;
+      if (isDate) {
+        const noveltyDate = document.getElementById("novDate").value;
+        if (!noveltyDate) {
+          const label = code === "FECHA_INGRESO" ? "ingreso" : "retiro";
+          showError(`Debe ingresar la fecha exacta de ${label}.`);
+          return;
+        }
+        body = {
+          novelty_type: code,
+          novelty_date: noveltyDate,
+          description:  document.getElementById("novDesc").value,
+        };
+      } else {
+        body = {
+          novelty_type: code,
           start_date:   document.getElementById("novStart").value || null,
           end_date:     document.getElementById("novEnd").value   || null,
           days:         Number(document.getElementById("novDays").value),
           value:        Number(document.getElementById("novValue").value),
           description:  document.getElementById("novDesc").value,
-        }),
-      });
+        };
+      }
+      await apiFetch(`/payroll/novelties/${noveltyId}`, { method: "PATCH", body: JSON.stringify(body) });
       closeModal();
       await reloadWorkArea();
       showSuccess("Novedad actualizada");
-    } catch (err) { showError(err.message); }
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      _savingEdit = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Guardar cambios"; }
+    }
   });
 }
 
@@ -1428,7 +1740,7 @@ function openCoverModal(noveltyId, itemId) {
   const employees = activeGroupDetail?.items || [];
   const internalOptions = employees
     .filter((e) => String(e.employee_id) !== String(novelty.employee_id))
-    .map((e) => `<option value="${e.employee_id}">${escapeHtml(e.employee_name)} — ${escapeHtml(e.document_number || "")}</option>`)
+    .map((e) => `<option value="${e.employee_id}" ${String(e.employee_id) === String(novelty.replacement_employee_id || "") ? "selected" : ""}>${escapeHtml(e.employee_name)} — ${escapeHtml(e.document_number || "")}</option>`)
     .join("");
 
   const modal = document.getElementById("nmPayModal");
@@ -1449,11 +1761,11 @@ function openCoverModal(noveltyId, itemId) {
       </div>
       <div class="nm-pay-field">
         <label>Días cubiertos</label>
-        <input class="nm-pay-input" id="coverDays" type="number" min="1" value="${Number(novelty.days || 1)}">
+        <input class="nm-pay-input" id="coverDays" type="number" min="1" max="${Number(novelty.days || 1)}" value="${Number(novelty.covered_days || novelty.days || 1)}">
       </div>
       <div class="nm-pay-field">
         <label>Valor día <small style="color:#94A3B8;font-weight:400">(0 = automático)</small></label>
-        <input class="nm-pay-input" id="coverValueDay" type="number" min="0" value="0">
+        <input class="nm-pay-input" id="coverValueDay" type="number" min="0" value="${Number(novelty.replacement_value_per_day || 0)}">
       </div>
     </div>
 
@@ -1508,6 +1820,10 @@ function openCoverModal(noveltyId, itemId) {
       const coverType = document.getElementById("coverType").value;
       const days      = Number(document.getElementById("coverDays").value) || 1;
       const valueDia  = Number(document.getElementById("coverValueDay").value) || 0;
+      if (days > Number(novelty.days || 0)) {
+        showError("Los días cubiertos no pueden superar los días de incapacidad");
+        return;
+      }
 
       const body = { cover_type: coverType, days, value_per_day: valueDia || undefined };
 
@@ -1538,6 +1854,7 @@ function openCoverModal(noveltyId, itemId) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUENTA DE COBRO (HTML/impresión) para turno externo
+<<<<<<< HEAD
 // Usa fetch autenticado en lugar de window.open directo para enviar el token
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchChargeAccountHtml(coverId) {
@@ -1582,6 +1899,33 @@ async function downloadChargeAccount(coverId, extDoc, periodLabel) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
   } catch (err) {
     showError(err.message || "Error descargando cuenta de cobro");
+=======
+// Usa fetch autenticado → blob URL para evitar redirect a login
+// ─────────────────────────────────────────────────────────────────────────────
+async function openChargeAccount(coverId) {
+  try {
+    const token = state.token || localStorage.getItem("empiria_token") || "";
+    const res = await fetch(`/payroll/turn-covers/${coverId}/charge-account`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || `Error ${res.status}`);
+    }
+    const html = await res.text();
+    const blob    = new Blob([html], { type: "text/html; charset=utf-8" });
+    const blobUrl = URL.createObjectURL(blob);
+    const win = window.open(blobUrl, "_blank");
+    if (!win) {
+      showError("El navegador bloqueó la ventana emergente. Permite ventanas emergentes e intenta de nuevo.");
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
+    // Liberar la URL del blob una vez cargada la ventana
+    win.addEventListener("load", () => URL.revokeObjectURL(blobUrl), { once: true });
+  } catch (err) {
+    showError(err.message || "No se pudo cargar la cuenta de cobro");
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   }
 }
 
@@ -1630,9 +1974,13 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       ${Number(earnings.other_recargos_value) ? `<div class="row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
   }
 
+<<<<<<< HEAD
   // Coberturas internas realizadas POR este empleado (suman a su devengado)
+=======
+  // Coberturas internas realizadas POR este empleado (suman a sus devengados)
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
-    `<div class="row"><span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
+    `<div class="row"><span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
 
   const printScript = forPrint ? `<script>window.onload=function(){window.print();}<\/script>` : "";
@@ -1738,7 +2086,7 @@ async function openPayslipModal(itemId) {
     const data = response.data;
     if (!data) { showError("No se pudo cargar el desprendible"); return; }
 
-    const { employee, earnings, deductions, net, worked_days, covers, period, cambio_operativo, payslip } = data;
+    const { employee, earnings, deductions, net, worked_days, period, cambio_operativo, payslip } = data;
     const fmt = fmtCOP;
 
     // ── Cabecera del empleado ──────────────────────────────────────────────
@@ -1796,10 +2144,14 @@ async function openPayslipModal(itemId) {
         ${Number(earnings.other_recargos_value) ? `<div class="nm-slip-row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
     }
 
+<<<<<<< HEAD
     // Coberturas internas que realizó este empleado (suman a su devengado)
+=======
+    // Coberturas internas que realizó este empleado (suman a sus devengados)
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
     const performedCoverHtml = (data.performed_covers || []).map((c) => `
       <div class="nm-slip-row">
-        <span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
+        <span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
         <b>+${fmt(c.total_value)}</b>
       </div>`).join("");
 
@@ -2624,12 +2976,23 @@ function closeModal() {
 // ENTRYPOINTS EXPORTADOS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function loadPayrollModule() {
+<<<<<<< HEAD
   periods            = [];
   activePeriod       = null;
   groupsState        = { positions: [], groups: [] };
   activePosition     = "";
   activeGroupId      = null;
   activeGroupDetail  = null;
+=======
+  periods           = [];
+  activePeriod      = null;
+  groupsState       = { positions: [], groups: [] };
+  activePosition    = "";
+  activeGroupId     = null;
+  activeGroupDetail = null;
+  activeGroupTurns  = null;
+  turnosFilter      = { type: "TODOS", search: "" };
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   municipalitySearch = "";
   activePrimaryTab   = "nomina";
   supportsData       = [];

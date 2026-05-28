@@ -217,7 +217,7 @@ async function handleOperationalGroups(req, res, url) {
         const data = await operational.listPayrollGroups(periodId);
         sendJson(innerRes, 200, { ok: true, data });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -258,7 +258,7 @@ async function handleOperationalGroupCalculate(req, res, url) {
         const data = await operational.calculatePayrollGroup(groupId);
         sendJson(innerRes, 200, { ok: true, data, message: "Grupo calculado correctamente" });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -352,7 +352,7 @@ async function handleOperationalNoveltyReviewed(req, res, url) {
         const data = await operational.setNoveltyReviewed(noveltyId, body.reviewed !== false, body, user);
         sendJson(innerRes, 200, { ok: true, data, message: "Revision actualizada" });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -371,7 +371,7 @@ async function handleOperationalNoveltyCover(req, res, url) {
         const data = await operational.createTurnCover(noveltyId, body, user.id);
         sendJson(innerRes, 201, { ok: true, data, message: "Cobertura registrada" });
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -1123,7 +1123,12 @@ async function handlePaySlip(req, res, url) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /payroll/groups/:groupId/export → XLSX multi-hoja por municipio
 // ─────────────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 function buildGroupXlsx({ group, items, novelties, supports, covers, totals, coverage }) {
+=======
+function buildGroupXlsx(options) {
+  const { group, items, novelties, supports, totals, coverage } = options;
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   function n(v) { return Number(v || 0); }
   function s(v) { return String(v == null ? "" : v); }
 
@@ -1167,12 +1172,12 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
   const nomHdr = [
     "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
     "Modalidad", "Jornada", "Categoría", "Días",
-    "Salario base", "Aux. transporte", "Otros recargos", "Total devengado",
+    "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
     "Salud (4%)", "Pensión (4%)", "Total deducciones",
     "Novedades", "Desc. salario", "Desc. transporte",
     "Neto a pagar", "Revisada",
   ];
-  const nomMonCols = [10,11,12,13,14,15,16,18,19,20];
+  const nomMonCols = [10,11,12,13,14,15,16,17,19,20,21];
 
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
@@ -1183,7 +1188,7 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
       s(item.document_number), s(item.employee_name), s(item.operational_position),
       s(item.municipality_name), s(item.institution_name), s(item.site_name),
       s(item.modality), s(item.work_time_type), s(item.salary_category), n(item.worked_days),
-      n(item.base_salary), n(item.transport_allowance), otros, n(item.total_devengado),
+      n(item.base_salary), n(item.transport_allowance), otros, n(calc.internal_cover_value), n(item.total_devengado),
       n(calc.deduccion_salud), n(calc.deduccion_pension), n(item.total_deducciones),
       n(item.novelty_count), n(calc.salary_discount), n(calc.transport_discount),
       n(item.neto_pagar), item.reviewed ? "Sí" : "No",
@@ -1201,6 +1206,7 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
     items.reduce((a, i) => a + n(i.base_salary), 0),
     items.reduce((a, i) => a + n(i.transport_allowance), 0),
     items.reduce((a, i) => a + otrosItem(i), 0),
+    items.reduce((a, i) => a + n((i.calculation||{}).internal_cover_value), 0),
     totals.total_devengado,
     items.reduce((a, i) => a + n((i.calculation||{}).deduccion_salud), 0),
     items.reduce((a, i) => a + n((i.calculation||{}).deduccion_pension), 0),
@@ -1213,7 +1219,7 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
   ];
 
   const wsNom = makeSheet(nomHdr, [...nomRows, nomTotal], nomMonCols,
-    [14,32,22,20,28,20,10,10,10,5,14,14,12,15,12,12,15,7,13,13,14,8]);
+    [14,32,22,20,28,20,10,10,10,5,14,14,12,18,15,12,12,15,7,13,13,14,8]);
 
   // Style the totals row
   const nomTotR = nomRows.length + 1;
@@ -1233,9 +1239,11 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
     "ID novedad", "Empleado", "Documento", "Tipo de novedad", "Impacto",
     "Fecha inicio", "Fecha fin", "Días",
     "Desc. salario", "Desc. transporte",
-    "Soporte", "Revisada",
+    "Soporte", "Estado", "Revisada",
   ];
-  const novRows2 = novelties
+  // Deduplicar por pn.id como segunda defensa (la consulta ya usa DISTINCT ON)
+  const uniqueNovelties = [...new Map(novelties.map((nov) => [nov.id, nov])).values()];
+  const novRows2 = uniqueNovelties
     .filter((nov) => nov.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA")
     .map((nov) => {
       const code  = s(nov.novelty_type);
@@ -1256,11 +1264,30 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
         descSal,
         descTrans,
         s(nov.support_status || "sin soporte"),
+        s(nov.status || "PENDIENTE"),
         nov.reviewed ? "Sí" : "No",
       ];
     });
   const wsNov = makeSheet(novHdr, novRows2, [8,9],
+<<<<<<< HEAD
     [10,28,14,26,20,12,12,5,13,13,14,8]);
+=======
+    [10,28,14,26,20,12,12,5,13,13,14,12,8]);
+
+  const coverHdr = ["Empleado reemplazante", "Documento", "Concepto", "Referencia", "Días", "Valor día", "Valor"];
+  const coverRows = (options.turns || [])
+    .filter((t) => t.cover_type === "INTERNA" && t.internal_employee_id)
+    .map((t) => [
+      s(t.internal_employee_name),
+      s(t.internal_document),
+      "Reemplazo incapacidad",
+      s(t.origin_employee_name),
+      n(t.covered_days),
+      n(t.calculated_day_value),
+      n(t.total_value),
+    ]);
+  const wsCover = makeSheet(coverHdr, coverRows, [5,6], [30,14,24,30,8,14,14]);
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
   // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
   const resHdr  = ["Concepto", "Valor"];
@@ -1342,9 +1369,43 @@ function buildGroupXlsx({ group, items, novelties, supports, covers, totals, cov
   ]);
   const wsTurn = makeSheet(turnHdr, turnRows, [12,13], [10,10,24,28,16,18,24,18,14,28,16,5,14,14,14,14]);
 
+  // ── Hoja 5: Turnos ──────────────────────────────────────────────────────────
+  const turns = Array.isArray(options.turns) ? options.turns : [];
+  const turnHdr = [
+    "Período", "Fecha turno", "Empleado con novedad", "Documento novedad",
+    "Tipo novedad", "Cubierto por", "Tipo cobertura", "Documento cobertura",
+    "Municipio", "Institución", "Sede", "Modalidad",
+    "Días cubiertos", "Valor día", "Valor total",
+    "Banco", "Cuenta",
+  ];
+  const turnMonCols = [13, 14];
+  const turnRows = turns.map((t) => [
+    s(group.period_id),
+    t.novelty_start ? s(t.novelty_start).slice(0, 10) : "",
+    s(t.origin_employee_name),
+    s(t.origin_document),
+    s(t.novelty_type),
+    t.cover_type === "INTERNA" ? s(t.internal_employee_name) : s(t.external_worker_name),
+    s(t.cover_type),
+    t.cover_type === "INTERNA" ? s(t.internal_document) : s(t.external_document),
+    s(t.municipality_name),
+    s(t.institution_name),
+    s(t.site_name),
+    s(t.modality),
+    n(t.covered_days),
+    n(t.calculated_day_value),
+    n(t.total_value),
+    t.cover_type === "EXTERNA" ? s(t.external_bank) : "",
+    t.cover_type === "EXTERNA" ? s(t.external_account_number) : "",
+  ]);
+  const wsTurn = makeSheet(turnHdr, turnRows, turnMonCols,
+    [8,12,32,14,26,32,14,14,20,28,20,10,8,14,14,20,18]);
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsNom, "Nómina");
   XLSX.utils.book_append_sheet(wb, wsNov, "Novedades");
+  XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
+  XLSX.utils.book_append_sheet(wb, wsCover, "Reemplazos");
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
   XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
@@ -1371,7 +1432,8 @@ async function handleGroupExport(req, res, url) {
 
         const data     = await operational.getPayrollGroupDetail(group.period_id, group.id);
         const coverage = await operational.getCoverageStatsForGroup(group.contract_id, group.municipality_id).catch(() => null);
-        const buf  = buildGroupXlsx({ ...data, coverage });
+        const turnsData = await operational.listGroupTurns(group.id).catch(() => ({ turns: [] }));
+        const buf  = buildGroupXlsx({ ...data, coverage, turns: turnsData.turns });
         const name = s(group.municipality_name || "municipio").replace(/[^a-z0-9\-_]/gi, "-");
         const filename = `nomina-${name}-${group.period_id}.xlsx`;
 
@@ -1383,6 +1445,28 @@ async function handleGroupExport(req, res, url) {
         innerRes.end(buf);
       } catch (err) {
         sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── Turnos cubiertos de un grupo ─────────────────────────────────────────────
+async function handleGroupTurns(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const parts = url.pathname.split("/").filter(Boolean);
+  const groupId = Number(parts[2]);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo inválido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const data = await operational.listGroupTurns(groupId);
+        sendJson(innerRes, 200, { ok: true, ...data });
+      } catch (err) {
+        sendJson(innerRes, 404, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -1506,6 +1590,10 @@ module.exports = {
   // Exportación por municipio
   handleGroupExport,
   handleGroupClose,
+<<<<<<< HEAD
   handleGroupReopen,
   handleGroupHistory,
+=======
+  handleGroupTurns,
+>>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 };
