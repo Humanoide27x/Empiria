@@ -1303,7 +1303,11 @@ function wireDateAutocalc(startId, endId, daysId) {
 // MODAL: REGISTRAR NOVEDAD
 // ─────────────────────────────────────────────────────────────────────────────
 function openNoveltyModal(itemId) {
-  const DATE_TYPES = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  // DATE_TYPES: single exact date, days auto-calculated by backend
+  const DATE_TYPES  = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  // RANGE_TYPES: start + end dates required (incapacidades can span many days)
+  const RANGE_TYPES = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL"]);
+
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
 <div class="nm-pay-dialog">
@@ -1319,7 +1323,8 @@ function openNoveltyModal(itemId) {
       </select>
     </div>
     <div id="novImpactInfo"></div>
-    <!-- Sección fecha exacta (solo INGRESO / RETIRO) -->
+
+    <!-- Sección 1: fecha exacta — solo FECHA_INGRESO / FECHA_RETIRO -->
     <div id="novDateSection" hidden>
       <div class="nm-pay-field">
         <label id="novDateLabel">Fecha exacta <span style="color:#EF4444">*</span></label>
@@ -1327,21 +1332,28 @@ function openNoveltyModal(itemId) {
         <small id="novDateHelp" style="color:#94A3B8"></small>
       </div>
     </div>
-    <!-- Sección fechas generales (resto de tipos) -->
-    <div id="novRangeSection">
+
+    <!-- Sección 2: rango de fechas — solo incapacidades -->
+    <div id="novRangeSection" hidden>
       <div class="nm-pay-form-grid">
-        <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date"></div>
-        <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date"></div>
+        <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart" type="date"></div>
+        <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd" type="date"></div>
         <div class="nm-pay-field">
           <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
           <input class="nm-pay-input" id="novDays" type="number" min="1" value="1">
         </div>
-        <div class="nm-pay-field">
-          <label>Soporte requerido</label>
-          <select class="nm-pay-select" id="novSupport"><option value="false">No</option><option value="true">Sí</option></select>
-        </div>
       </div>
     </div>
+
+    <!-- Sección 3: fecha de presentación — todos los demás tipos -->
+    <div id="novSingleSection" hidden>
+      <div class="nm-pay-field">
+        <label>Fecha de presentación <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" id="novSingle" type="date">
+        <small style="color:#94A3B8">Se registra como 1 día de novedad.</small>
+      </div>
+    </div>
+
     <div class="nm-pay-field"><label>Observaciones</label><textarea class="nm-pay-textarea" id="novDesc"></textarea></div>
     <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar novedad</button>
   </div>
@@ -1350,28 +1362,32 @@ function openNoveltyModal(itemId) {
   wireModalClose();
   wireDateAutocalc("novStart", "novEnd", "novDays");
 
-  const updateImpact = () => {
-    const code      = document.getElementById("novType")?.value;
-    const meta      = noveltyByCode(code);
-    const el        = document.getElementById("novImpactInfo");
-    const dateSection  = document.getElementById("novDateSection");
-    const rangeSection = document.getElementById("novRangeSection");
-    const dateLabel    = document.getElementById("novDateLabel");
-    const dateHelp     = document.getElementById("novDateHelp");
-    if (!el || !meta) return;
-    el.innerHTML = noveltyImpactNoticeHtml(meta);
-    const isDateType = DATE_TYPES.has(code);
-    dateSection.hidden  = !isDateType;
-    rangeSection.hidden = isDateType;
-    if (isDateType) {
+  const showSection = (code) => {
+    const isDate   = DATE_TYPES.has(code);
+    const isRange  = RANGE_TYPES.has(code);
+    const isSingle = !isDate && !isRange;
+    document.getElementById("novDateSection").hidden   = !isDate;
+    document.getElementById("novRangeSection").hidden  = !isRange;
+    document.getElementById("novSingleSection").hidden = !isSingle;
+    const dateLabel = document.getElementById("novDateLabel");
+    const dateHelp  = document.getElementById("novDateHelp");
+    if (isDate && dateLabel && dateHelp) {
       if (code === "FECHA_INGRESO") {
-        dateLabel.innerHTML = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
+        dateLabel.innerHTML  = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
         dateHelp.textContent = "La nómina se liquidará desde este día hasta el fin del período.";
       } else {
-        dateLabel.innerHTML = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
+        dateLabel.innerHTML  = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
         dateHelp.textContent = "La nómina se liquidará desde el inicio del período hasta este día.";
       }
     }
+  };
+
+  const updateImpact = () => {
+    const code = document.getElementById("novType")?.value;
+    const meta = noveltyByCode(code);
+    const el   = document.getElementById("novImpactInfo");
+    if (el && meta) el.innerHTML = noveltyImpactNoticeHtml(meta);
+    if (code) showSection(code);
   };
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
@@ -1383,33 +1399,32 @@ function openNoveltyModal(itemId) {
     const btn = document.getElementById("novSave");
     if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
     try {
-      const code = document.getElementById("novType").value;
-      const isDateType = DATE_TYPES.has(code);
+      const code    = document.getElementById("novType").value;
+      const obsText = document.getElementById("novDesc").value;
       let body;
-      if (isDateType) {
+
+      if (DATE_TYPES.has(code)) {
         const noveltyDate = document.getElementById("novDate").value;
         if (!noveltyDate) {
-          const label = code === "FECHA_INGRESO" ? "ingreso" : "retiro";
-          showError(`Debe ingresar la fecha exacta de ${label}.`);
+          showError(`Ingrese la fecha exacta de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`);
           return;
         }
-        body = {
-          novelty_type: code,
-          novelty_date: noveltyDate,
-          observations: document.getElementById("novDesc").value,
-        };
-      } else {
+        body = { novelty_type: code, novelty_date: noveltyDate, observations: obsText };
+
+      } else if (RANGE_TYPES.has(code)) {
+        const startDate = document.getElementById("novStart").value;
+        const endDate   = document.getElementById("novEnd").value;
+        if (!startDate) { showError("Indique la fecha de inicio."); return; }
         const days = Number(document.getElementById("novDays").value);
-        if (!days || days < 1) { showError("Los días deben ser mayor a 0"); return; }
-        body = {
-          novelty_type:     code,
-          start_date:       document.getElementById("novStart").value || null,
-          end_date:         document.getElementById("novEnd").value   || null,
-          days,
-          support_required: document.getElementById("novSupport").value === "true",
-          observations:     document.getElementById("novDesc").value,
-        };
+        if (!days || days < 1) { showError("Los días deben ser mayor a 0."); return; }
+        body = { novelty_type: code, start_date: startDate, end_date: endDate || startDate, days, observations: obsText };
+
+      } else {
+        const singleDate = document.getElementById("novSingle").value;
+        if (!singleDate) { showError("Indique la fecha de presentación de la novedad."); return; }
+        body = { novelty_type: code, start_date: singleDate, end_date: singleDate, days: 1, observations: obsText };
       }
+
       await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(body) });
       closeModal();
       await reloadWorkArea();
@@ -1697,9 +1712,15 @@ async function openCambioOperativoModal(itemId) {
 function openEditNoveltyModal(noveltyId) {
   const novelty = activeGroupDetail?.novelties?.find((x) => Number(x.id) === Number(noveltyId));
   if (!novelty) return;
-  const DATE_TYPES = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
-  const isDateType = DATE_TYPES.has(novelty.novelty_type);
-  const currentDate = String(novelty.start_date || "").slice(0, 10);
+
+  const DATE_TYPES  = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const RANGE_TYPES = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL"]);
+  const code0       = novelty.novelty_type;
+  const isDate0     = DATE_TYPES.has(code0);
+  const isRange0    = RANGE_TYPES.has(code0);
+  const startVal    = String(novelty.start_date || "").slice(0, 10);
+  const endVal      = String(novelty.end_date   || "").slice(0, 10);
+
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
 <div class="nm-pay-dialog">
@@ -1711,30 +1732,41 @@ function openEditNoveltyModal(noveltyId) {
     <div class="nm-pay-field">
       <label>Tipo de novedad</label>
       <select class="nm-pay-select" id="novType">
-        ${NOVELTY_TYPES.map((t) => `<option value="${t.code}" ${t.code === novelty.novelty_type ? "selected" : ""}>${t.name}</option>`).join("")}
+        ${NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA").map((t) => `<option value="${t.code}" ${t.code === code0 ? "selected" : ""}>${t.name}</option>`).join("")}
       </select>
     </div>
     <div id="novImpactInfo"></div>
-    <!-- Sección fecha exacta (solo INGRESO / RETIRO) -->
-    <div id="novDateSection" ${isDateType ? "" : "hidden"}>
+
+    <!-- Sección 1: fecha exacta — solo FECHA_INGRESO / FECHA_RETIRO -->
+    <div id="novDateSection" ${isDate0 ? "" : "hidden"}>
       <div class="nm-pay-field">
-        <label id="novDateLabel">${novelty.novelty_type === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
-        <input class="nm-pay-input" id="novDate" type="date" value="${escapeHtml(currentDate)}">
-        <small id="novDateHelp" style="color:#94A3B8">${novelty.novelty_type === "FECHA_INGRESO" ? "La nómina se liquidará desde este día hasta el fin del período." : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
+        <label id="novDateLabel">${code0 === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" id="novDate" type="date" value="${escapeHtml(startVal)}">
+        <small id="novDateHelp" style="color:#94A3B8">${code0 === "FECHA_INGRESO" ? "La nómina se liquidará desde este día hasta el fin del período." : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
       </div>
     </div>
-    <!-- Sección fechas generales -->
-    <div id="novRangeSection" ${isDateType ? "hidden" : ""}>
+
+    <!-- Sección 2: rango de fechas — solo incapacidades -->
+    <div id="novRangeSection" ${isRange0 ? "" : "hidden"}>
       <div class="nm-pay-form-grid">
-        <div class="nm-pay-field"><label>Fecha inicio</label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(currentDate)}"></div>
-        <div class="nm-pay-field"><label>Fecha fin</label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(String(novelty.end_date || "").slice(0, 10))}"></div>
+        <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart" type="date" value="${escapeHtml(startVal)}"></div>
+        <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd" type="date" value="${escapeHtml(endVal)}"></div>
         <div class="nm-pay-field">
           <label>Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
           <input class="nm-pay-input" id="novDays" type="number" min="1" value="${Number(novelty.days || 1)}">
         </div>
-        <div class="nm-pay-field"><label>Valor aplicado</label><input class="nm-pay-input" id="novValue" type="number" min="0" value="${Number(novelty.value || 0)}"></div>
       </div>
     </div>
+
+    <!-- Sección 3: fecha de presentación — todos los demás -->
+    <div id="novSingleSection" ${!isDate0 && !isRange0 ? "" : "hidden"}>
+      <div class="nm-pay-field">
+        <label>Fecha de presentación <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" id="novSingle" type="date" value="${escapeHtml(startVal)}">
+        <small style="color:#94A3B8">Se registra como 1 día de novedad.</small>
+      </div>
+    </div>
+
     <div class="nm-pay-field"><label>Observaciones</label><textarea class="nm-pay-textarea" id="novDesc">${escapeHtml(novelty.description || novelty.observations || "")}</textarea></div>
     <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar cambios</button>
   </div>
@@ -1743,28 +1775,29 @@ function openEditNoveltyModal(noveltyId) {
   wireModalClose();
   wireDateAutocalc("novStart", "novEnd", "novDays");
 
-  const updateImpact = () => {
-    const code         = document.getElementById("novType")?.value;
-    const meta         = noveltyByCode(code);
-    const el           = document.getElementById("novImpactInfo");
-    const dateSection  = document.getElementById("novDateSection");
-    const rangeSection = document.getElementById("novRangeSection");
-    const dateLabel    = document.getElementById("novDateLabel");
-    const dateHelp     = document.getElementById("novDateHelp");
-    if (!el || !meta) return;
-    el.innerHTML = noveltyImpactNoticeHtml(meta);
-    const isDate = DATE_TYPES.has(code);
-    dateSection.hidden  = !isDate;
-    rangeSection.hidden = isDate;
+  const showSection = (code) => {
+    const isDate   = DATE_TYPES.has(code);
+    const isRange  = RANGE_TYPES.has(code);
+    const isSingle = !isDate && !isRange;
+    document.getElementById("novDateSection").hidden   = !isDate;
+    document.getElementById("novRangeSection").hidden  = !isRange;
+    document.getElementById("novSingleSection").hidden = !isSingle;
+    const dateLabel = document.getElementById("novDateLabel");
+    const dateHelp  = document.getElementById("novDateHelp");
     if (isDate && dateLabel && dateHelp) {
-      if (code === "FECHA_INGRESO") {
-        dateLabel.innerHTML = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
-        dateHelp.textContent = "La nómina se liquidará desde este día hasta el fin del período.";
-      } else {
-        dateLabel.innerHTML = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
-        dateHelp.textContent = "La nómina se liquidará desde el inicio del período hasta este día.";
-      }
+      dateLabel.innerHTML  = `${code === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span>`;
+      dateHelp.textContent = code === "FECHA_INGRESO"
+        ? "La nómina se liquidará desde este día hasta el fin del período."
+        : "La nómina se liquidará desde el inicio del período hasta este día.";
     }
+  };
+
+  const updateImpact = () => {
+    const code = document.getElementById("novType")?.value;
+    const meta = noveltyByCode(code);
+    const el   = document.getElementById("novImpactInfo");
+    if (el && meta) el.innerHTML = noveltyImpactNoticeHtml(meta);
+    if (code) showSection(code);
   };
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
@@ -1776,31 +1809,28 @@ function openEditNoveltyModal(noveltyId) {
     const btn = document.getElementById("novSave");
     if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
     try {
-      const code   = document.getElementById("novType").value;
-      const isDate = DATE_TYPES.has(code);
+      const code    = document.getElementById("novType").value;
+      const obsText = document.getElementById("novDesc").value;
       let body;
-      if (isDate) {
+
+      if (DATE_TYPES.has(code)) {
         const noveltyDate = document.getElementById("novDate").value;
-        if (!noveltyDate) {
-          const label = code === "FECHA_INGRESO" ? "ingreso" : "retiro";
-          showError(`Debe ingresar la fecha exacta de ${label}.`);
-          return;
-        }
-        body = {
-          novelty_type: code,
-          novelty_date: noveltyDate,
-          description:  document.getElementById("novDesc").value,
-        };
+        if (!noveltyDate) { showError(`Ingrese la fecha exacta de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`); return; }
+        body = { novelty_type: code, novelty_date: noveltyDate, description: obsText };
+
+      } else if (RANGE_TYPES.has(code)) {
+        const startDate = document.getElementById("novStart").value;
+        if (!startDate) { showError("Indique la fecha de inicio."); return; }
+        const days = Number(document.getElementById("novDays").value);
+        if (!days || days < 1) { showError("Los días deben ser mayor a 0."); return; }
+        body = { novelty_type: code, start_date: startDate, end_date: document.getElementById("novEnd").value || startDate, days, description: obsText };
+
       } else {
-        body = {
-          novelty_type: code,
-          start_date:   document.getElementById("novStart").value || null,
-          end_date:     document.getElementById("novEnd").value   || null,
-          days:         Number(document.getElementById("novDays").value),
-          value:        Number(document.getElementById("novValue").value),
-          description:  document.getElementById("novDesc").value,
-        };
+        const singleDate = document.getElementById("novSingle").value;
+        if (!singleDate) { showError("Indique la fecha de presentación de la novedad."); return; }
+        body = { novelty_type: code, start_date: singleDate, end_date: singleDate, days: 1, description: obsText };
       }
+
       await apiFetch(`/payroll/novelties/${noveltyId}`, { method: "PATCH", body: JSON.stringify(body) });
       closeModal();
       await reloadWorkArea();
