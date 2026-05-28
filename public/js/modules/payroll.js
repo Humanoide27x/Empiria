@@ -4,23 +4,50 @@ import { escapeHtml } from "../utils.js";
 import { showSuccess, showError } from "../toast.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TIPOS OFICIALES DE NOVEDAD (12 — sincronizados con payroll_novelty_types)
+// TIPOS OFICIALES DE NOVEDAD (13 — sincronizados con payroll_novelty_types)
 // ─────────────────────────────────────────────────────────────────────────────
 const NOVELTY_TYPES = [
-  { code: "DIAS_NO_CLASE",                 name: "Días de No Clase",                 affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
-  { code: "CITA_MEDICA",                   name: "Cita Médica",                      affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "INCAPACIDAD_MEDICA",            name: "Incapacidad Médica",               affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
-  { code: "INCAPACIDAD_ACCIDENTE_LABORAL", name: "Incapacidad por Accidente Laboral",affects_salary: false, affects_transport: true,  requires_turn_cover: true  },
-  { code: "CALAMIDAD_FAMILIAR",            name: "Calamidad Familiar",               affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "LUTO",                          name: "Luto",                             affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "PERMISOS_NO_REMUNERADOS",       name: "Permisos No Remunerados",          affects_salary: true,  affects_transport: false, requires_turn_cover: false },
-  { code: "CITACION_COLEGIO",              name: "Citación en Colegio",              affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "LICENCIA_MATERNIDAD_PATERNIDAD",name: "Licencia de Maternidad/Paternidad",affects_salary: false, affects_transport: true,  requires_turn_cover: false },
-  { code: "SUSPENSION",                    name: "Suspensión",                       affects_salary: true,  affects_transport: false, requires_turn_cover: false },
-  { code: "FECHA_INGRESO",                 name: "Fecha de Ingreso",                 affects_salary: true,  affects_transport: false, requires_turn_cover: false },
-  { code: "FECHA_RETIRO",                  name: "Fecha de Retiro",                  affects_salary: true,  affects_transport: false, requires_turn_cover: false },
-  { code: "CAMBIO_OPERATIVO_COBERTURA",    name: "Cambio Operativo de Cobertura",    affects_salary: true,  affects_transport: true,  requires_turn_cover: false },
+  { code: "DIAS_NO_CLASE",                 name: "Días de No Clase",                  affects_salary: false, affects_transport: true,  affects_additional: false, requires_turn_cover: true  },
+  { code: "CITA_MEDICA",                   name: "Cita Médica",                       affects_salary: false, affects_transport: true,  affects_additional: false, requires_turn_cover: false },
+  { code: "CITA_MEDICA_FAMILIAR",          name: "Cita Médica de un Familiar",        affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "INCAPACIDAD_MEDICA",            name: "Incapacidad Médica",                affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: true  },
+  { code: "INCAPACIDAD_ACCIDENTE_LABORAL", name: "Incapacidad por Accidente Laboral", affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: true  },
+  { code: "CALAMIDAD_FAMILIAR",            name: "Calamidad Familiar",                affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "LUTO",                          name: "Luto",                              affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "PERMISOS_NO_REMUNERADOS",       name: "Permisos No Remunerados",           affects_salary: true,  affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "CITACION_COLEGIO",              name: "Citación en Colegio",               affects_salary: false, affects_transport: true,  affects_additional: false, requires_turn_cover: false },
+  { code: "LICENCIA_MATERNIDAD_PATERNIDAD",name: "Licencia de Maternidad/Paternidad", affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "SUSPENSION",                    name: "Suspensión",                        affects_salary: true,  affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
+  { code: "FECHA_INGRESO",                 name: "Fecha de Ingreso",                  affects_salary: true,  affects_transport: false, affects_additional: false, requires_turn_cover: false },
+  { code: "FECHA_RETIRO",                  name: "Fecha de Retiro",                   affects_salary: true,  affects_transport: false, affects_additional: false, requires_turn_cover: false },
+  { code: "CAMBIO_OPERATIVO_COBERTURA",    name: "Cambio Operativo de Cobertura",     affects_salary: true,  affects_transport: true,  affects_additional: false, requires_turn_cover: false },
 ];
+
+// Documentos de soporte requeridos por tipo de novedad (espejo del backend)
+const SUPPORT_REQUIREMENTS = {
+  CITA_MEDICA:                    ["COMPROBANTE_CITA_MEDICA"],
+  CITA_MEDICA_FAMILIAR:           ["COMPROBANTE_CITA_MEDICA"],
+  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA"],
+  INCAPACIDAD_ACCIDENTE_LABORAL:  ["INCAPACIDAD_MEDICA"],
+  PERMISOS_NO_REMUNERADOS:        ["AUTORIZACION_DESCUENTO"],
+  CITACION_COLEGIO:               ["COMPROBANTE_ASISTENCIA"],
+  CALAMIDAD_FAMILIAR:             ["COMPROBANTE_CALAMIDAD"],
+  LUTO:                           ["ACTA_DEFUNCION"],
+  LICENCIA_MATERNIDAD_PATERNIDAD: ["INCAPACIDAD_MEDICA"],
+};
+
+const SUPPORT_TYPE_LABELS = {
+  COMPROBANTE_CITA_MEDICA: "Comprobante de Cita Médica",
+  HISTORIA_CLINICA:        "Historia Clínica",
+  INCAPACIDAD_MEDICA:      "Incapacidad Médica",
+  AUTORIZACION_DESCUENTO:  "Autorización de Descuento",
+  COMPROBANTE_ASISTENCIA:  "Comprobante de Asistencia",
+  COMPROBANTE_CALAMIDAD:   "Comprobante de Calamidad",
+  ACTA_DEFUNCION:          "Acta de Defunción",
+  CEDULA_CIUDADANIA:       "Cédula de Ciudadanía",
+  CUENTA_COBRO:            "Cuenta de Cobro",
+  CERTIFICACION_BANCARIA:  "Certificación Bancaria",
+};
 
 function noveltyByCode(code) {
   return NOVELTY_TYPES.find((t) => t.code === String(code).toUpperCase()) || null;
@@ -37,9 +64,11 @@ let activeGroupId    = null;
 let activeGroupDetail = null;
 let activeGroupTurns  = null;  // null = sin cargar, [] = sin turnos
 let turnosFilter      = { type: "TODOS", search: "" };
+let supportsFilter    = { status: "", noveltyType: "", search: "" };
+let supportsViewer    = null;   // { url, name, type: "image"|"doc" }
 let periodMonth      = new Date().toISOString().slice(0, 7);
 let municipalitySearch = "";
-let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos"
+let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos" | "soportes"
 
 // ── Soportes tab state ────────────────────────────────────────────────────────
 let activePrimaryTab = "nomina"; // "nomina" | "soportes"
@@ -108,8 +137,9 @@ function noveltyImpactBadges(noveltyOrCode) {
   const meta = typeof noveltyOrCode === "string" ? noveltyByCode(noveltyOrCode) : noveltyOrCode;
   if (!meta) return "";
   const parts = [];
-  if (meta.affects_salary)    parts.push(`<span class="nm-badge-sal">↓ Salario</span>`);
-  if (meta.affects_transport) parts.push(`<span class="nm-badge-tra">↓ Transporte</span>`);
+  if (meta.affects_salary)     parts.push(`<span class="nm-badge-sal">↓ Salario</span>`);
+  if (meta.affects_transport)  parts.push(`<span class="nm-badge-tra">↓ Transporte</span>`);
+  if (meta.affects_additional) parts.push(`<span class="nm-badge-add">↓ Adicionales</span>`);
   return parts.join(" ");
 }
 function currentPositionData() {
@@ -119,16 +149,18 @@ function noveltyImpactText(noveltyOrCode) {
   const meta = typeof noveltyOrCode === "string" ? noveltyByCode(noveltyOrCode) : noveltyOrCode;
   if (!meta) return "Sin impacto economico";
   const parts = [];
-  if (meta.affects_salary) parts.push("descuenta salario");
-  if (meta.affects_transport) parts.push("descuenta transporte");
+  if (meta.affects_salary)     parts.push("descuenta salario");
+  if (meta.affects_transport)  parts.push("descuenta transporte");
+  if (meta.affects_additional) parts.push("descuenta adicionales");
   return parts.length ? parts.join(" · ") : "sin impacto economico";
 }
 function noveltyImpactChipsHtml(noveltyOrCode) {
   const meta = typeof noveltyOrCode === "string" ? noveltyByCode(noveltyOrCode) : noveltyOrCode;
   if (!meta) return "";
   const parts = [];
-  if (meta.affects_salary)    parts.push(`<span class="nm-badge-sal">Descuenta salario</span>`);
-  if (meta.affects_transport) parts.push(`<span class="nm-badge-tra">Descuenta transporte</span>`);
+  if (meta.affects_salary)     parts.push(`<span class="nm-badge-sal">Descuenta salario</span>`);
+  if (meta.affects_transport)  parts.push(`<span class="nm-badge-tra">Descuenta transporte</span>`);
+  if (meta.affects_additional) parts.push(`<span class="nm-badge-add">Descuenta adicionales</span>`);
   return parts.join(" ");
 }
 function noveltyImpactNoticeHtml(noveltyOrCode) {
@@ -261,6 +293,7 @@ function shell() {
 /* ── Badges de impacto ───────────────────────────────────────────────── */
 .nm-badge-sal{background:#FEE2E2;color:#991B1B;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700}
 .nm-badge-tra{background:#DBEAFE;color:#1E40AF;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700}
+.nm-badge-add{background:#F3E8FF;color:#7C3AED;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700}
 
 /* ── Desprendible ────────────────────────────────────────────────────── */
 .nm-pay-impact-note{display:flex;flex-direction:column;gap:4px}
@@ -349,6 +382,35 @@ function shell() {
 .nm-sup-row-active td{background:#ECFDF5!important}
 .nm-sup-table td{padding:5px 7px;font-size:12px}
 .nm-sup-table thead th{font-size:11px;padding:5px 7px;white-space:nowrap}
+
+/* ── Municipio: wrap con botón de revisión ───────────────────────── */
+.nm-pay-mun-wrap{display:flex;flex-direction:column;gap:2px;padding:2px 4px}
+.nm-pay-mun-actions{display:flex;gap:4px;padding:0 4px 2px;justify-content:flex-end}
+
+/* ── Soportes inline (pestaña Soportes dentro del grupo) ─────────── */
+.nm-sup-inline{display:flex;flex-direction:column;gap:0;overflow:auto;max-height:calc(100vh - 380px)}
+.nm-sup-inline-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex-wrap:wrap;flex:0 0 auto}
+.nm-sup-inline-stat{display:flex;flex-direction:column;align-items:center;min-width:56px;padding:4px 8px;border-radius:5px;background:#fff;border:1px solid #E2E8F0;font-size:11px}
+.nm-sup-inline-stat b{font-size:16px;font-weight:800;color:#0F172A;line-height:1.1}
+.nm-sup-inline-stat span{color:#64748B;text-transform:uppercase;letter-spacing:.03em}
+.nm-sup-inline-stat--ok b{color:#166534}
+.nm-sup-inline-stat--warn b{color:#92400E}
+.nm-sup-inline-progress{display:flex;align-items:center;gap:6px;flex:1 1 120px;min-width:120px;height:20px;position:relative;background:#E2E8F0;border-radius:999px;overflow:hidden}
+.nm-sup-inline-progress-bar{position:absolute;left:0;top:0;bottom:0;background:#22C55E;border-radius:999px;transition:width .3s}
+.nm-sup-inline-progress span{position:relative;z-index:1;font-size:11px;font-weight:700;padding-left:8px;color:#0F172A}
+.nm-sup-inline-alert{font-size:11px;font-weight:700;color:#92400E;background:#FEF3C7;padding:3px 8px;border-radius:4px}
+.nm-sup-inline-ok{font-size:11px;font-weight:700;color:#166534;background:#DCFCE7;padding:3px 8px;border-radius:4px}
+.nm-sup-inline-list{flex:1 1 auto;overflow:auto;padding:8px}
+.nm-sup-inline-group{background:#fff;border:1px solid #E2E8F0;border-radius:7px;margin-bottom:8px;overflow:hidden}
+.nm-sup-inline-nov-hd{display:flex;align-items:center;gap:8px;padding:7px 12px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex-wrap:wrap}
+.nm-sup-inline-nov-type{font-size:12px;font-weight:700;color:#0F172A}
+.nm-sup-inline-nov-emp{font-size:12px;color:#334155;background:#E2E8F0;padding:1px 7px;border-radius:999px}
+.nm-sup-inline-nov-date{font-size:11px;color:#64748B}
+.nm-sup-inline-nov-doc{font-size:11px;color:#94A3B8}
+.nm-sup-inline-docs{display:flex;flex-direction:column;gap:0}
+.nm-sup-inline-doc{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #F1F5F9;flex-wrap:wrap}
+.nm-sup-inline-doc:last-child{border-bottom:0}
+.nm-sup-inline-doc-label{font-size:12px;color:#334155;flex:1 1 160px}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -545,21 +607,31 @@ function renderMunicipalityPanel(position) {
     <input class="nm-pay-mun-search" id="nmPayMunSearch" placeholder="Buscar municipio" value="${escapeHtml(municipalitySearch)}">
   </div>
   <div class="nm-pay-mun-list">
-    ${filtered.length ? filtered.map((mun) => `
-      <button class="nm-pay-mun ${Number(mun.id) === Number(activeGroupId) ? "active" : ""}" data-group-id="${mun.id}">
-        <span class="nm-pay-mun-name">${escapeHtml(mun.municipality_name)}</span>
-        <span class="nm-pay-count">${mun.employees}</span>
-        <span class="nm-pay-mun-meta">${statusBadge(mun.status)}</span>
-        ${Number(mun.pending_supports || 0) ? `<span class="nm-pay-mun-alert">${Number(mun.pending_supports)} doc</span>` : ""}
-        ${(() => {
-          const rev = Number(mun.items_reviewed || 0);
-          const tot = Number(mun.employees || 0);
-          if (!tot) return "";
-          if (rev >= tot) return `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px">&#10003; ${tot}/${tot} rev.</span>`;
-          if (rev > 0) return `<span style="font-size:10px;padding:1px 5px;background:#FEF3C7;color:#92400E;border-radius:3px;display:inline-block">${rev}/${tot} rev.</span>`;
-          return "";
-        })()}
-      </button>`).join("") : `<div class="nm-pay-empty" style="padding:16px">Sin municipios.</div>`}
+    ${filtered.length ? filtered.map((mun) => {
+      const rev = Number(mun.items_reviewed || 0);
+      const tot = Number(mun.employees || 0);
+      const isReviewed = Boolean(mun.municipality_reviewed);
+      return `
+      <div class="nm-pay-mun-wrap">
+        <button class="nm-pay-mun ${Number(mun.id) === Number(activeGroupId) ? "active" : ""}" data-group-id="${mun.id}">
+          <span class="nm-pay-mun-name">${escapeHtml(mun.municipality_name)}</span>
+          <span class="nm-pay-count">${mun.employees}</span>
+          <span class="nm-pay-mun-meta">${statusBadge(mun.status)}</span>
+          ${Number(mun.pending_supports || 0) ? `<span class="nm-pay-mun-alert">${Number(mun.pending_supports)} doc</span>` : ""}
+          ${isReviewed ? `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px" title="Revisado por ${escapeHtml(mun.municipality_reviewed_by || '')}">&#10003; Revisado</span>` : ""}
+          ${(!isReviewed && tot > 0) ? (rev >= tot
+            ? `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px">&#10003; ${tot}/${tot} rev.</span>`
+            : rev > 0
+              ? `<span style="font-size:10px;padding:1px 5px;background:#FEF3C7;color:#92400E;border-radius:3px;display:inline-block">${rev}/${tot} rev.</span>`
+              : "") : ""}
+        </button>
+        <div class="nm-pay-mun-actions">
+          ${isReviewed
+            ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" data-mun-unreview="${escapeHtml(mun.municipality_name)}" title="Quitar estado revisado — conserva todos los datos">Reabrir</button>`
+            : `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" data-mun-review="${escapeHtml(mun.municipality_name)}" title="Marcar municipio como revisado">Revisar</button>`}
+        </div>
+      </div>`;
+    }).join("") : `<div class="nm-pay-empty" style="padding:16px">Sin municipios.</div>`}
   </div>
 </aside>`;
 }
@@ -569,7 +641,7 @@ function renderGroupDetail() {
     <div class="nm-pay-toolbar" style="border:0;padding:16px">
       <div class="nm-pay-empty" style="flex:1">Selecciona un municipio para ver su nómina.</div>
     </div>`;
-  const { group, items, novelties, covers, totals } = activeGroupDetail;
+  const { group, items, novelties, covers, supports, totals } = activeGroupDetail;
   const municipality = currentMunicipalityData();
   const municipalityName = municipality?.municipality_name || group?.municipality_name || "";
   const isClosed    = isGroupClosed(group);
@@ -639,6 +711,9 @@ ${recalcBanner}
     <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
       Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}
     </button>
+    <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">
+      Soportes${totals.pending_supports > 0 ? ` <span class="nm-pay-count" style="background:#FEF3C7;color:#92400E">${totals.pending_supports} pend.</span>` : (supports && supports.length ? ` <span class="nm-pay-count">${supports.length}</span>` : "")}
+    </button>
   </div>
   ${activeDetailTab === "nomina"
     ? (items.length
@@ -648,6 +723,8 @@ ${recalcBanner}
     ? (novelties.length
         ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
         : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)
+    : activeDetailTab === "soportes"
+    ? renderSupportsSection(supports || [], isClosed)
     : (activeGroupTurns === null
         ? `<div class="nm-pay-empty">Cargando turnos…</div>`
         : renderTurnosSection(activeGroupTurns, isClosed))}
@@ -762,10 +839,9 @@ function renderNoveltiesTable(novelties) {
       const meta = noveltyByCode(nov.novelty_type);
       const isReviewed     = Boolean(nov.reviewed);
       const isItemLocked   = Boolean(nov.item_reviewed);
-      const isLocked       = isReviewed || isItemLocked;
-      const lockTitle      = isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
-      // Impacto del afectado: nunca usar el valor del reemplazo como fallback.
-      const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? 0);
+      const isLocked       = groupLocked || isReviewed || isItemLocked;
+      const lockTitle      = groupLocked ? "Nómina cerrada — reabrir para editar" : isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
+      const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? nov.value ?? 0);
       const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
       const replacementText = Number(nov.replacement_amount || 0)
         ? `<br><small style="color:#047857">Reemplazo: ${escapeHtml(nov.replacement_employee_name || "interno")} · ${Number(nov.covered_days || 0)}d · +${fmtCOP(nov.replacement_amount)}</small>`
@@ -814,7 +890,70 @@ function renderNoveltiesTable(novelties) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TABLA DE TURNOS
+// TABLA DE TURNOS (embebida en pestaña Novedades — usa datos del grupo cargado)
+// ─────────────────────────────────────────────────────────────────────────────
+function renderTurnsTable(covers) {
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+  return `
+<table class="nm-pay-table">
+  <thead>
+    <tr>
+      <th>Empleado origen</th>
+      <th>Tipo novedad</th>
+      <th>Municipio / Institución</th>
+      <th>Cobertura</th>
+      <th>Quien cubrió</th>
+      <th class="num">Días</th>
+      <th class="num">Valor día</th>
+      <th class="num">Total</th>
+      <th>Acción</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${(covers || []).map((c) => {
+      const coverName = c.cover_type === "INTERNA"
+        ? (c.internal_cover_name || "—")
+        : (c.external_worker_name || "—");
+      const coverDoc  = c.cover_type === "INTERNA"
+        ? (c.internal_cover_doc || "")
+        : (c.external_worker_doc || "");
+      const coverBadge = c.cover_type === "INTERNA"
+        ? `<span class="nm-pay-badge" style="background:#DBEAFE;color:#1E40AF">INTERNA</span>`
+        : `<span class="nm-pay-badge" style="background:#FEF3C7;color:#92400E">EXTERNA</span>`;
+      return `
+      <tr>
+        <td>
+          <b>${escapeHtml(c.origin_employee_name || "—")}</b><br>
+          <small style="color:#64748B">${escapeHtml(c.origin_document || "")}</small>
+        </td>
+        <td>
+          <small>${escapeHtml(c.novelty_type_name || c.novelty_type || "—")}</small><br>
+          <small style="color:#94A3B8">${escapeHtml(String(c.novelty_start || "").slice(0,10))} – ${escapeHtml(String(c.novelty_end || "").slice(0,10))}</small>
+        </td>
+        <td>
+          <small>${escapeHtml(c.municipality_name || "—")}</small><br>
+          <small style="color:#64748B">${escapeHtml(c.institution_name || "—")} · ${escapeHtml(c.site_name || "—")}</small>
+        </td>
+        <td>${coverBadge}</td>
+        <td>
+          <b>${escapeHtml(coverName)}</b><br>
+          <small style="color:#64748B">${escapeHtml(coverDoc)}</small>
+        </td>
+        <td class="num">${Number(c.days || 0)}</td>
+        <td class="num">${fmtCOP(c.value_per_day)}</td>
+        <td class="num"><b>${fmtCOP(c.total_value)}</b></td>
+        <td>
+          ${c.cover_type === "EXTERNA"
+            ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${c.turn_cover_id}" title="Ver cuenta de cobro consolidada">Ver cta. cobro</button>`
+            : "—"}
+        </td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table>`;
+}
+
+// SECCIÓN TURNOS (pestaña dedicada con filtros y datos de listGroupTurns)
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTurnosSection(turns, isClosed) {
   const { type, search } = turnosFilter;
@@ -1001,6 +1140,56 @@ function wireStaticEvents() {
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
   document.getElementById("turnoFilter")?.addEventListener("change", (e) => { turnosFilter.type = e.target.value; render(); });
   document.getElementById("turnoSearch")?.addEventListener("input",  (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
+
+  // ── Revisión / reapertura de municipio ────────────────────────────────────
+  document.querySelectorAll("[data-mun-review]").forEach((btn) => btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const munName = btn.dataset.munReview;
+    if (!munName || !activePeriod) return;
+    btn.disabled = true;
+    try {
+      await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
+        method: "POST",
+        body: JSON.stringify({ municipality: munName, isComplete: true }),
+      });
+      showSuccess(`Municipio "${munName}" marcado como revisado`);
+      await reloadWorkArea();
+    } catch (err) { showError(err.message); btn.disabled = false; }
+  }));
+  document.querySelectorAll("[data-mun-unreview]").forEach((btn) => btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const munName = btn.dataset.munUnreview;
+    if (!munName || !activePeriod) return;
+    btn.disabled = true;
+    try {
+      await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
+        method: "POST",
+        body: JSON.stringify({ municipality: munName, isComplete: false }),
+      });
+      showSuccess(`Revisión de "${munName}" removida — datos conservados`);
+      await reloadWorkArea();
+    } catch (err) { showError(err.message); btn.disabled = false; }
+  }));
+
+  // ── Upload en pestaña soportes inline del grupo ───────────────────────────
+  document.querySelectorAll("[data-upload-support]").forEach((input) => input.addEventListener("change", async (e) => {
+    const supId     = Number(input.dataset.uploadSupport);
+    const noveltyId = Number(input.dataset.noveltyId);
+    const file      = e.target.files?.[0];
+    if (!file || (!supId && !noveltyId)) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("noveltyId", String(noveltyId));
+    try {
+      const up = await apiFetch("/payroll/supports/upload", { method: "POST", body: form, noContentType: true });
+      await apiFetch("/payroll/supports", {
+        method: "POST",
+        body: JSON.stringify({ id: supId || undefined, novelty_id: noveltyId, file_url: up.data.url, file_name: up.data.fileName, status: "cargado" }),
+      });
+      showSuccess("Soporte cargado correctamente");
+      await reloadDetailOnly();
+    } catch (err) { showError("Error cargando soporte: " + err.message); }
+  }));
 }
 
 async function removeCover(noveltyId) {
@@ -1877,23 +2066,47 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
   const { employee, earnings, deductions, net, worked_days, covers, period, cambio_operativo, payslip, performed_covers } = data;
   const fmt = fmtCOP;
 
-  // ── Novedades agrupadas ──────────────────────────────────────────────────
+  // ── REPORTE DE NOVEDADES ─────────────────────────────────────────────────
   let novSectionHtml = "";
-  if (payslip && !cambio_operativo) {
-    const salNovs  = payslip.salary_affecting_novelties    || [];
-    const tranNovs = payslip.transport_affecting_novelties || [];
-    if (salNovs.length || tranNovs.length) {
-      let inner = "";
-      if (salNovs.length) {
-        inner += `<div class="nov-h nov-h--sal">Reducen salario, transporte y adicionales</div>`;
-        salNovs.forEach((nov) => { inner += `<div class="nov-item"><span>${escapeHtml(nov.name)}</span><span>${nov.days}d</span></div>`; });
+  const allNovs = (data.novelties || []).filter((n) => n.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA");
+  if (!cambio_operativo && allNovs.length) {
+    // Consolidar por tipo: misma novedad en fechas distintas → una sola línea
+    const groups = {};
+    allNovs.forEach((n) => {
+      const key = n.novelty_type;
+      if (!groups[key]) {
+        groups[key] = {
+          name:             n.novelty_name || n.novelty_type,
+          days:             0,
+          start_date:       n.start_date,
+          end_date:         n.end_date,
+          affects_salary:   n.affects_salary,
+          affects_transport: n.affects_transport,
+        };
       }
-      if (tranNovs.length) {
-        inner += `<div class="nov-h nov-h--tra">Afectan transporte y adicionales</div>`;
-        tranNovs.forEach((nov) => { inner += `<div class="nov-item"><span>${escapeHtml(nov.name)}</span><span>${nov.days}d</span></div>`; });
-      }
-      novSectionHtml = `<div class="section">${inner}</div>`;
-    }
+      groups[key].days += Number(n.days || 0);
+      if (n.start_date && (!groups[key].start_date || n.start_date < groups[key].start_date))
+        groups[key].start_date = n.start_date;
+      if (n.end_date && n.end_date > groups[key].end_date)
+        groups[key].end_date = n.end_date;
+    });
+    const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
+    const rows = Object.values(groups).map((g) => {
+      const badgeCls = g.affects_salary
+        ? "nov-badge--sal"
+        : g.affects_transport ? "nov-badge--tra" : "nov-badge--other";
+      const dateRange = (g.start_date || g.end_date)
+        ? `${fmtDate(g.start_date)} — ${fmtDate(g.end_date)}`
+        : "";
+      return `<div class="nov-report-row">
+        <div>
+          <div class="nov-report-name">${escapeHtml(g.name)}</div>
+          ${dateRange ? `<div class="nov-report-date">${dateRange}</div>` : ""}
+        </div>
+        <span class="nov-report-badge ${badgeCls}">${g.days}d</span>
+      </div>`;
+    }).join("");
+    novSectionHtml = `<div class="section"><div class="section-h">Reporte de Novedades</div>${rows}</div>`;
   }
 
   // ── Devengados ───────────────────────────────────────────────────────────
@@ -1914,7 +2127,6 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       ${Number(earnings.other_recargos_value) ? `<div class="row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
   }
 
-  // Coberturas internas realizadas POR este empleado (suman a su devengado)
   const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
     `<div class="row"><span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
@@ -1944,10 +2156,13 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
   .section-net{border:none}
   .section-net .section-h{background:#ECFDF5;color:#0F766E}
   .section-net .row.total{font-size:17px;padding:14px 20px;color:#0F766E}
-  .nov-h{padding:6px 20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
-  .nov-h--sal{background:#FFF1F2;color:#BE123C;border-left:3px solid #F43F5E}
-  .nov-h--tra{background:#FFFBEB;color:#B45309;border-left:3px solid #F59E0B}
-  .nov-item{display:flex;justify-content:space-between;padding:4px 20px 4px 26px;font-size:12px;color:#475569;border-top:1px solid #F1F5F9}
+  .nov-report-row{display:flex;justify-content:space-between;align-items:center;padding:7px 20px;border-top:1px solid #F1F5F9}
+  .nov-report-name{font-size:13px;color:#1E293B;font-weight:500}
+  .nov-report-date{font-size:11px;color:#64748B;margin-top:2px}
+  .nov-report-badge{font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;white-space:nowrap}
+  .nov-badge--sal{background:#FEE2E2;color:#B91C1C}
+  .nov-badge--tra{background:#FEF3C7;color:#B45309}
+  .nov-badge--other{background:#F1F5F9;color:#475569}
   .cambio-label{padding:8px 20px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#7C3AED}
   .row.cambio{border-left:3px solid #DDD6FE;padding-left:17px;margin-left:20px}
   .slip-footer{padding:10px 20px;font-size:11px;color:#94A3B8;text-align:center}
@@ -2033,27 +2248,50 @@ async function openPayslipModal(itemId) {
   <span style="color:#64748B">${escapeHtml(employee.modality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.work_time || "")} &nbsp;·&nbsp; Período: <b>${escapeHtml(period.label || "")}</b>${data.salary_category ? ` &nbsp;·&nbsp; ${salaryCategoryBadge(data.salary_category)}` : ""}</span>
 </div>`;
 
-    // ── Novedades agrupadas (solo si no es cambio operativo) ───────────────
+    // ── REPORTE DE NOVEDADES (modal) ─────────────────────────────────────────
     let novSectionHtml = "";
-    if (payslip && !cambio_operativo) {
-      const salNovs  = payslip.salary_affecting_novelties    || [];
-      const tranNovs = payslip.transport_affecting_novelties || [];
-      if (salNovs.length || tranNovs.length) {
-        let inner = "";
-        if (salNovs.length) {
-          inner += `<div class="nm-slip-nov-h nm-slip-nov-h--sal">Reducen salario, transporte y adicionales</div>`;
-          salNovs.forEach((nov) => {
-            inner += `<div class="nm-slip-nov-item"><span>${escapeHtml(nov.name)}</span><span style="color:#BE123C;font-weight:600">${nov.days}d</span></div>`;
-          });
+    const allNovs = (data.novelties || []).filter((n) => n.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA");
+    if (!cambio_operativo && allNovs.length) {
+      const groups = {};
+      allNovs.forEach((n) => {
+        const key = n.novelty_type;
+        if (!groups[key]) {
+          groups[key] = {
+            name:              n.novelty_name || n.novelty_type,
+            days:              0,
+            start_date:        n.start_date,
+            end_date:          n.end_date,
+            affects_salary:    n.affects_salary,
+            affects_transport: n.affects_transport,
+          };
         }
-        if (tranNovs.length) {
-          inner += `<div class="nm-slip-nov-h nm-slip-nov-h--tra">Afectan transporte y adicionales</div>`;
-          tranNovs.forEach((nov) => {
-            inner += `<div class="nm-slip-nov-item"><span>${escapeHtml(nov.name)}</span><span style="color:#B45309;font-weight:600">${nov.days}d</span></div>`;
-          });
-        }
-        novSectionHtml = `<div class="nm-slip-section">${inner}</div>`;
-      }
+        groups[key].days += Number(n.days || 0);
+        if (n.start_date && (!groups[key].start_date || n.start_date < groups[key].start_date))
+          groups[key].start_date = n.start_date;
+        if (n.end_date && n.end_date > groups[key].end_date)
+          groups[key].end_date = n.end_date;
+      });
+      const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
+      const novRows = Object.values(groups).map((g) => {
+        const badgeColor = g.affects_salary
+          ? "background:#FEE2E2;color:#B91C1C"
+          : g.affects_transport ? "background:#FEF3C7;color:#B45309" : "background:#F1F5F9;color:#475569";
+        const dateRange = (g.start_date || g.end_date)
+          ? `<div style="font-size:11px;color:#64748B;margin-top:1px">${fmtDate(g.start_date)} — ${fmtDate(g.end_date)}</div>`
+          : "";
+        return `<div class="nm-slip-row" style="align-items:center">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:#1E293B">${escapeHtml(g.name)}</div>
+            ${dateRange}
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;white-space:nowrap;${badgeColor}">${g.days}d</span>
+        </div>`;
+      }).join("");
+      novSectionHtml = `
+        <div class="nm-slip-section">
+          <div class="nm-slip-section-h">Reporte de Novedades</div>
+          ${novRows}
+        </div>`;
     }
 
     // ── Devengados ─────────────────────────────────────────────────────────
@@ -2080,7 +2318,6 @@ async function openPayslipModal(itemId) {
         ${Number(earnings.other_recargos_value) ? `<div class="nm-slip-row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
     }
 
-    // Coberturas internas que realizó este empleado (suman a su devengado)
     const performedCoverHtml = (data.performed_covers || []).map((c) => `
       <div class="nm-slip-row">
         <span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
@@ -2567,6 +2804,99 @@ function supportStatusBadge(status) {
   return `<span class="nm-sup-badge nm-sup-badge--${escapeHtml(s)}">${escapeHtml(labels[s] || s)}</span>`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PESTAÑA SOPORTES INLINE (dentro del detalle de grupo)
+// ─────────────────────────────────────────────────────────────────────────────
+function supportTypeName(code) {
+  return SUPPORT_TYPE_LABELS[code] || escapeHtml(code || "—");
+}
+
+function renderSupportsSection(supports, isClosed) {
+  if (!supports || !supports.length) {
+    return `<div class="nm-pay-empty" style="padding:20px">
+      Sin novedades con soportes requeridos en este grupo.<br>
+      <small style="color:#94A3B8">Los soportes se crean automáticamente cuando una novedad requiere documentación.</small>
+    </div>`;
+  }
+
+  // Agrupar por novelty_id
+  const byNovelty = new Map();
+  for (const s of supports) {
+    const key = String(s.novelty_id);
+    if (!byNovelty.has(key)) byNovelty.set(key, { meta: s, docs: [] });
+    if (s.support_id || s.id) byNovelty.get(key).docs.push(s);
+  }
+  // Novelties que vienen del UNION (sin soporte real aún)
+  for (const s of supports) {
+    const key = String(s.novelty_id);
+    if (byNovelty.has(key) && !byNovelty.get(key).docs.length) {
+      byNovelty.get(key).docs.push(s);
+    }
+  }
+
+  // Estadísticas
+  const allDocs = [...byNovelty.values()].flatMap((g) => g.docs);
+  const total    = allDocs.filter((d) => d.support_id || d.id).length;
+  const approved = allDocs.filter((d) => (d.status || d.support_status) === "aprobado").length;
+  const missing  = allDocs.filter((d) => !d.file_url || d.file_url === "").length;
+  const pct      = total > 0 ? Math.round((approved / total) * 100) : 0;
+  const hasMissing = missing > 0;
+
+  return `
+<div class="nm-sup-inline">
+  <!-- Barra resumen -->
+  <div class="nm-sup-inline-bar">
+    <div class="nm-sup-inline-stat nm-sup-inline-stat--ok"><b>${approved}</b><span>aprobados</span></div>
+    <div class="nm-sup-inline-stat ${hasMissing ? "nm-sup-inline-stat--warn" : "nm-sup-inline-stat--ok"}"><b>${missing}</b><span>sin archivo</span></div>
+    <div class="nm-sup-inline-stat"><b>${total}</b><span>total docs</span></div>
+    <div class="nm-sup-inline-progress" title="${pct}% aprobados">
+      <div class="nm-sup-inline-progress-bar" style="width:${pct}%"></div>
+      <span>${pct}%</span>
+    </div>
+    ${hasMissing ? `<div class="nm-sup-inline-alert">&#9888; Faltan ${missing} documento${missing !== 1 ? "s" : ""} — complete antes de cerrar</div>` : `<div class="nm-sup-inline-ok">&#10003; Documentación completa</div>`}
+  </div>
+
+  <!-- Filas por novedad -->
+  <div class="nm-sup-inline-list">
+    ${[...byNovelty.values()].map(({ meta, docs }) => {
+      const nm = noveltyByCode(meta.novelty_type);
+      const novDate = String(meta.novelty_date || "").slice(0, 10);
+      return `
+<div class="nm-sup-inline-group">
+  <div class="nm-sup-inline-nov-hd">
+    <span class="nm-sup-inline-nov-type">${escapeHtml(nm?.name || meta.novelty_type || "—")}</span>
+    <span class="nm-sup-inline-nov-emp">${escapeHtml(meta.employee_name || "—")}</span>
+    ${novDate ? `<span class="nm-sup-inline-nov-date">${novDate}</span>` : ""}
+    <span class="nm-sup-inline-nov-doc">${escapeHtml(meta.document_number || "")}</span>
+  </div>
+  <div class="nm-sup-inline-docs">
+    ${docs.map((d) => {
+      const supId  = d.support_id || d.id;
+      const status = d.status || d.support_status || "pendiente";
+      const hasFile = Boolean(d.file_url && d.file_url !== "");
+      const label  = supportTypeName(d.support_type || meta.novelty_type);
+      return `
+<div class="nm-sup-inline-doc">
+  <span class="nm-sup-inline-doc-label">${escapeHtml(label)}</span>
+  <span>${supportStatusBadge(status)}</span>
+  ${hasFile
+    ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${supId}" title="Ver archivo">&#128206; Ver</button>
+       <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(d.file_url)}" download="${escapeHtml(d.file_name || "soporte")}" target="_blank">&#8615; Descargar</a>`
+    : supId && !isClosed
+      ? `<label class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" style="cursor:pointer">
+           &#8593; Cargar
+           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none" data-upload-support="${supId}" data-novelty-id="${meta.novelty_id}">
+         </label>`
+      : `<span style="font-size:11px;color:#94A3B8">Sin archivo</span>`}
+</div>`;
+    }).join("")}
+  </div>
+</div>`;
+    }).join("")}
+  </div>
+</div>`;
+}
+
 function renderSupportsShell() {
   if (!activePeriod) {
     return `<div style="padding:20px"><div class="nm-pay-empty">Selecciona un periodo de nómina para ver sus soportes.</div></div>`;
@@ -2672,10 +3002,11 @@ function renderSupportsTable(data) {
   <td style="font-size:11px">${escapeHtml(s.municipality_name || "—")}</td>
   <td style="font-size:11px"><small>${escapeHtml(s.institution_name || "—")}</small></td>
   <td style="font-size:11px;white-space:nowrap">${escapeHtml(String(s.novelty_date || "—").slice(0, 10))}</td>
-  <td style="font-size:11px">${escapeHtml(s.support_type || "—")}</td>
+  <td style="font-size:11px">${escapeHtml(SUPPORT_TYPE_LABELS[s.support_type] || s.support_type || "—")}</td>
   <td>
     ${hasFile
-      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${viewKey}" title="${escapeHtml(s.file_name || "Ver archivo")}">&#128206; Ver</button>`
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${viewKey}" title="${escapeHtml(s.file_name || "Ver archivo")}">&#128206; Ver</button>
+         <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(s.file_url)}" download="${escapeHtml(s.file_name || "soporte")}" target="_blank" style="text-decoration:none">&#8615;</a>`
       : supId
         ? `<label class="nm-pay-btn nm-pay-btn--sm" style="cursor:pointer" title="Cargar archivo para este soporte">
              &#8593; Cargar

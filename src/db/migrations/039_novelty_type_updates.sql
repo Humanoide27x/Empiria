@@ -53,9 +53,9 @@ ON CONFLICT (code) DO UPDATE SET
 
 -- ── 3. Columnas de auditoría de des-revisión en payroll_municipality_status ──
 ALTER TABLE payroll_municipality_status
-  ADD COLUMN IF NOT EXISTS unreviewed_by      INTEGER,
-  ADD COLUMN IF NOT EXISTS unreviewed_by_name TEXT,
-  ADD COLUMN IF NOT EXISTS unreviewed_at      TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS unreviewed_by_user_id INTEGER,
+  ADD COLUMN IF NOT EXISTS unreviewed_by_name     TEXT,
+  ADD COLUMN IF NOT EXISTS unreviewed_at          TIMESTAMPTZ;
 
 -- ── 4. Tabla de documentos de trabajadores externos (turnos externos) ────────
 CREATE TABLE IF NOT EXISTS external_worker_documents (

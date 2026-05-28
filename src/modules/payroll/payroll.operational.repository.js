@@ -31,6 +31,7 @@ const OFFICIAL_NOVELTY_CODES = Object.freeze([
   "SUSPENSION",
   "FECHA_INGRESO",
   "FECHA_RETIRO",
+  "CITA_MEDICA_FAMILIAR",
   "CAMBIO_OPERATIVO_COBERTURA",
 ]);
 
@@ -42,17 +43,62 @@ const SALARY_AFFECTING = new Set([
   "FECHA_RETIRO",    // ajusta fin del período
 ]);
 
-// Novedades que reducen auxilio de transporte (sin afectar salario)
+// Novedades que reducen auxilio de transporte
 const TRANSPORT_AFFECTING = new Set([
   "DIAS_NO_CLASE",
   "CITA_MEDICA",
+  "CITA_MEDICA_FAMILIAR",
   "INCAPACIDAD_MEDICA",
   "INCAPACIDAD_ACCIDENTE_LABORAL",
   "CALAMIDAD_FAMILIAR",
   "LUTO",
   "CITACION_COLEGIO",
   "LICENCIA_MATERNIDAD_PATERNIDAD",
+  "PERMISOS_NO_REMUNERADOS",
+  "SUSPENSION",
 ]);
+
+// Novedades que reducen recargos/adicionales
+const ADDITIONAL_AFFECTING = new Set([
+  "INCAPACIDAD_MEDICA",
+  "INCAPACIDAD_ACCIDENTE_LABORAL",
+  "CALAMIDAD_FAMILIAR",
+  "LUTO",
+  "LICENCIA_MATERNIDAD_PATERNIDAD",
+  "PERMISOS_NO_REMUNERADOS",
+  "SUSPENSION",
+  "CITA_MEDICA_FAMILIAR",
+]);
+
+// Documentos de soporte requeridos por tipo de novedad
+const SUPPORT_REQUIREMENTS = Object.freeze({
+  CITA_MEDICA:                    ["COMPROBANTE_CITA_MEDICA"],
+  CITA_MEDICA_FAMILIAR:           ["COMPROBANTE_CITA_MEDICA"],
+  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA"],
+  INCAPACIDAD_ACCIDENTE_LABORAL:  ["INCAPACIDAD_MEDICA"],
+  PERMISOS_NO_REMUNERADOS:        ["AUTORIZACION_DESCUENTO"],
+  CITACION_COLEGIO:               ["COMPROBANTE_ASISTENCIA"],
+  CALAMIDAD_FAMILIAR:             ["COMPROBANTE_CALAMIDAD"],
+  LUTO:                           ["ACTA_DEFUNCION"],
+  LICENCIA_MATERNIDAD_PATERNIDAD: ["INCAPACIDAD_MEDICA"],
+  DIAS_NO_CLASE:                  [],
+  SUSPENSION:                     [],
+  FECHA_INGRESO:                  [],
+  FECHA_RETIRO:                   [],
+});
+
+const SUPPORT_TYPE_LABELS = Object.freeze({
+  COMPROBANTE_CITA_MEDICA: "Comprobante de Cita Médica",
+  HISTORIA_CLINICA:        "Historia Clínica",
+  INCAPACIDAD_MEDICA:      "Incapacidad Médica",
+  AUTORIZACION_DESCUENTO:  "Autorización de Descuento",
+  COMPROBANTE_ASISTENCIA:  "Comprobante de Asistencia",
+  COMPROBANTE_CALAMIDAD:   "Comprobante de Calamidad",
+  ACTA_DEFUNCION:          "Acta de Defunción",
+  CEDULA_CIUDADANIA:       "Cédula de Ciudadanía",
+  CUENTA_COBRO:            "Cuenta de Cobro",
+  CERTIFICACION_BANCARIA:  "Certificación Bancaria",
+});
 
 const MEDICAL_INCAPACITY_TYPES = new Set([
   "INCAPACIDAD_MEDICA",
@@ -586,6 +632,17 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
     transportNoveltyDetail.push({ code: nov.novelty_type, days, amount });
   }
 
+  // ── Descuentos por novedades que afectan ADICIONALES (recargos) ─────────
+  let otherDiscount = 0;
+  const otherNoveltyDetail = [];
+  for (const nov of novelties) {
+    if (!ADDITIONAL_AFFECTING.has(nov.novelty_type)) continue;
+    const days   = Math.min(n(nov.days), workedDays);
+    const amount = Math.round(dailyOther * days);
+    otherDiscount += amount;
+    otherNoveltyDetail.push({ code: nov.novelty_type, days, amount });
+  }
+
   // ── Coberturas internas (suman a este empleado si él cubrió a otro) ───────
   const internalCoverValue = covers
     .filter(
@@ -605,7 +662,7 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
   // ── Totales ───────────────────────────────────────────────────────────────
   const effectiveSalary    = Math.max(0, baseSalary    - salaryDiscount);
   const effectiveTransport = Math.max(0, auxTransporte - transportDiscount);
-  const effectiveOther     = otherEarnings + internalCoverValue;
+  const effectiveOther     = Math.max(0, otherEarnings - otherDiscount) + internalCoverValue;
 
   const totalDevengado = effectiveSalary + effectiveTransport + effectiveOther;
 
@@ -640,6 +697,8 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
       transport_discount:      transportDiscount,
       transport_discount_days: transportDiscountDays,
       transport_novelties:     transportNoveltyDetail,
+      other_discount:          otherDiscount,
+      other_novelties:         otherNoveltyDetail,
       internal_cover_value:    internalCoverValue,
       replacement_amount:      internalCoverValue,
       replacement_days:        internalCoverDays,
@@ -954,11 +1013,16 @@ async function listPayrollGroups(periodId) {
             COALESCE(is1.items_reviewed, 0)    AS items_reviewed,
             COALESCE(is1.total_devengado, 0)   AS total_devengado,
             COALESCE(is1.total_deducciones, 0) AS total_deducciones,
-            COALESCE(is1.neto, 0)              AS neto
+            COALESCE(is1.neto, 0)              AS neto,
+            COALESCE(pms.is_complete, false)   AS municipality_reviewed,
+            pms.completed_by_name              AS municipality_reviewed_by,
+            pms.completed_at                   AS municipality_reviewed_at
        FROM payroll_groups pg
        LEFT JOIN municipalities m ON m.id = pg.municipality_id
        LEFT JOIN item_stats is1   ON is1.group_id = pg.id
        LEFT JOIN novelty_stats ns1 ON ns1.group_id = pg.id
+       LEFT JOIN payroll_municipality_status pms
+              ON pms.period_id = pg.period_id AND pms.municipality = COALESCE(m.name, '')
       WHERE pg.period_id = $1
       ORDER BY UPPER(pg.operational_position), m.name NULLS LAST`,
     [periodId]
@@ -993,9 +1057,12 @@ async function listPayrollGroups(periodId) {
       reviewed:          Number(row.reviewed || 0),
       items_reviewed:    Number(row.items_reviewed || 0),
       pending_supports:  Number(row.pending_supports || 0),
-      total_devengado:   Number(row.total_devengado || 0),
-      total_deducciones: Number(row.total_deducciones || 0),
-      neto:              Number(row.neto || 0),
+      total_devengado:       Number(row.total_devengado || 0),
+      total_deducciones:     Number(row.total_deducciones || 0),
+      neto:                  Number(row.neto || 0),
+      municipality_reviewed: Boolean(row.municipality_reviewed),
+      municipality_reviewed_by:  row.municipality_reviewed_by || null,
+      municipality_reviewed_at:  row.municipality_reviewed_at || null,
     };
     const pos = positions.get(key);
     pos.employees         += item.employees;
@@ -1273,6 +1340,7 @@ async function getPayrollGroupDetail(periodId, groupId) {
               pnt.name AS novelty_name,
               pnt.affects_salary, pnt.affects_transport, pnt.requires_turn_cover,
               ptc.id AS turn_cover_id,
+              ptc.cover_type,
               ptc.internal_employee_id AS replacement_employee_id,
               ptc.days AS covered_days,
               ptc.total_value AS replacement_amount,
@@ -1589,19 +1657,40 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   );
 
   if (supportRequired) {
-    await createSupport(
-      {
-        novelty_id:        inserted[0].id,
-        employee_id:       item.employee_id,
-        payroll_period_id: item.period_id,
-        municipality_id:   item.municipality_id,
-        support_type:      typeRaw,
-        required:          true,
-        status:            "pendiente",
-        observations:      "Soporte requerido por novedad",
-      },
-      userId
-    );
+    const requiredDocs = SUPPORT_REQUIREMENTS[typeRaw];
+    if (requiredDocs && requiredDocs.length > 0) {
+      // Create one support record per specific document type required
+      for (const docType of requiredDocs) {
+        await createSupport(
+          {
+            novelty_id:        inserted[0].id,
+            employee_id:       item.employee_id,
+            payroll_period_id: item.period_id,
+            municipality_id:   item.municipality_id,
+            support_type:      docType,
+            required:          true,
+            status:            "pendiente",
+            observations:      SUPPORT_TYPE_LABELS[docType] || docType,
+          },
+          userId
+        );
+      }
+    } else {
+      // Fallback: one generic support record using the novelty type code
+      await createSupport(
+        {
+          novelty_id:        inserted[0].id,
+          employee_id:       item.employee_id,
+          payroll_period_id: item.period_id,
+          municipality_id:   item.municipality_id,
+          support_type:      typeRaw,
+          required:          true,
+          status:            "pendiente",
+          observations:      "Soporte requerido por novedad",
+        },
+        userId
+      );
+    }
   }
 
   // Recalcular el item inmediatamente para reflejar el impacto de la novedad
@@ -1930,19 +2019,17 @@ async function setNoveltyReviewed(noveltyId, reviewed, payload = {}, user = {}) 
 // ─────────────────────────────────────────────────────────────────────────────
 async function createTurnCover(noveltyId, payload = {}, userId) {
   const { rows: novRows } = await pool.query(
-    `SELECT pn.*, pi.group_id, pg.status AS group_status
+    `SELECT pn.*, pi.group_id
        FROM payroll_novelties pn
        LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
-       LEFT JOIN payroll_groups pg ON pg.id = pi.group_id
       WHERE pn.id = $1`,
     [noveltyId]
   );
   const novelty = novRows[0];
   if (!novelty) throw new Error("Novedad no encontrada");
-  if (novelty.group_status === "cerrada") {
-    const err = new Error("No se puede modificar una nómina cerrada.");
-    err.httpStatus = 403;
-    throw err;
+  if (novelty.group_id) {
+    const group = await getGroup(novelty.group_id);
+    assertGroupEditable(group);
   }
   if (novelty.reviewed) {
     throw new Error(
@@ -2228,13 +2315,25 @@ async function updateTurnCoverBankInfo(coverId, payload = {}, user = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF HTML: CUENTA DE COBRO PARA EXTERNO
+// PDF HTML: CUENTA DE COBRO CONSOLIDADA (todos los turnos del trabajador en el período)
+// Se invoca con cualquier coverId de ese trabajador; consolida automáticamente.
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildChargeAccountHtml(coverId) {
+  // 1. Obtener worker_id y period_id desde el cover indicado
+  const { rows: anchorRows } = await pool.query(
+    `SELECT ptc.external_worker_id, ptc.payroll_period_id
+       FROM payroll_turn_covers ptc
+      WHERE ptc.id = $1 AND ptc.cover_type = 'EXTERNA'
+      LIMIT 1`,
+    [coverId]
+  );
+  const anchor = anchorRows[0];
+  if (!anchor) throw new Error("Cuenta de cobro no encontrada o el turno no es externo");
+
+  // 2. Traer TODOS los turnos de ese trabajador en ese período
   const { rows } = await pool.query(
     `SELECT ptc.*,
             pn.novelty_type, pn.start_date, pn.end_date, pn.days AS nov_days,
-            pn.observations AS nov_obs,
             pnt.name AS novelty_type_name,
             etw.full_name, etw.document_number, etw.bank,
             etw.account_type, etw.account_number,
@@ -2247,40 +2346,52 @@ async function buildChargeAccountHtml(coverId) {
             pp.label AS period_label, pp.period_start, pp.period_end,
             e.gestor_zona
        FROM payroll_turn_covers ptc
-       JOIN payroll_novelties pn      ON pn.id = ptc.novelty_id
-       JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
-       JOIN payroll_items pi           ON pi.id = ptc.payroll_item_id
-       JOIN payroll_periods pp         ON pp.id = ptc.payroll_period_id
+       JOIN payroll_novelties pn       ON pn.id  = ptc.novelty_id
+       JOIN external_turn_workers etw  ON etw.id = ptc.external_worker_id
+       JOIN payroll_items pi            ON pi.id  = ptc.payroll_item_id
+       JOIN payroll_periods pp          ON pp.id  = ptc.payroll_period_id
        LEFT JOIN payroll_novelty_types pnt ON pnt.code = pn.novelty_type
-       LEFT JOIN municipalities m      ON m.id = pi.municipality_id
-       LEFT JOIN institutions i        ON i.id = pi.institution_id
-       LEFT JOIN educational_sites s   ON s.id = pi.site_id
-       LEFT JOIN employees e           ON e.id = pi.employee_id
-      WHERE ptc.id = $1 AND ptc.cover_type = 'EXTERNA'
-      LIMIT 1`,
-    [coverId]
+       LEFT JOIN municipalities m       ON m.id = pi.municipality_id
+       LEFT JOIN institutions i         ON i.id = pi.institution_id
+       LEFT JOIN educational_sites s    ON s.id = pi.site_id
+      WHERE ptc.external_worker_id = $1
+        AND ptc.payroll_period_id  = $2
+        AND ptc.cover_type = 'EXTERNA'
+      ORDER BY COALESCE(pn.start_date, ptc.created_at)`,
+    [anchor.external_worker_id, anchor.payroll_period_id]
   );
-  const r = rows[0];
-  if (!r) throw new Error("Cuenta de cobro no encontrada o el turno no es externo");
 
-  if (!r.full_name || !r.document_number || !r.days || !r.value_per_day || !r.total_value) {
-    throw new Error("Datos incompletos para generar la cuenta de cobro (nombre, cédula, días o valor faltante)");
+  if (!rows.length) throw new Error("No se encontraron turnos externos para este trabajador en el período");
+  const w = rows[0]; // datos del beneficiario (iguales en todos los registros)
+  if (!w.full_name || !w.document_number) {
+    throw new Error("Datos incompletos para generar la cuenta de cobro (nombre o cédula faltante)");
   }
 
   const fmt = (v) =>
-    Number(v || 0).toLocaleString("es-CO", {
-      style: "currency",
-      currency: "COP",
-      maximumFractionDigits: 0,
-    });
+    Number(v || 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-  const today = new Date().toLocaleDateString("es-CO", {
-    day: "2-digit", month: "long", year: "numeric",
-  });
+  const today = new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
+  const totalAPagar = rows.reduce((s, r) => s + Number(r.total_value || 0), 0);
+  const totalDias   = rows.reduce((s, r) => s + Number(r.days || r.nov_days || 0), 0);
 
-  const noveltyLabel = r.novelty_type_name || r.novelty_type || "—";
+  const introText = rows.length === 1
+    ? `cubrimiento de <strong>1 turno externo</strong>`
+    : `cubrimiento de <strong>${rows.length} turnos externos</strong>`;
 
-  const gestorName = (r.gestor_zona || "").trim().toUpperCase();
+  const detailRows = rows.map((r, i) => `
+  <tr>
+    <td style="text-align:center;font-weight:700">${i + 1}</td>
+    <td>${r.origin_employee_name || "—"}<br><small style="color:#6B7280">CC ${r.origin_doc || "—"}</small></td>
+    <td>${r.municipality_name || "—"}<br><small style="color:#6B7280">${r.institution_name || ""} · ${r.site_name || ""}</small></td>
+    <td>${r.modality || "—"}</td>
+    <td>${r.novelty_type_name || r.novelty_type || "—"}</td>
+    <td>${r.start_date ? String(r.start_date).slice(0,10) : "—"}<br><small style="color:#6B7280">al ${r.end_date ? String(r.end_date).slice(0,10) : "—"}</small></td>
+    <td style="text-align:center">${Number(r.days || r.nov_days || 0)}</td>
+    <td style="text-align:right">${fmt(r.value_per_day)}</td>
+    <td style="text-align:right;font-weight:700">${fmt(r.total_value)}</td>
+  </tr>`).join("");
+
+  const gestorName = (w.gestor_zona || "").trim().toUpperCase();
   const gestorBlock = gestorName
     ? `<p><strong>${gestorName}</strong></p><p>Gestor de Zona</p>`
     : `<p><strong>GESTOR DE ZONA</strong></p>`;
@@ -2289,83 +2400,91 @@ async function buildChargeAccountHtml(coverId) {
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Cuenta de Cobro — ${r.full_name || ""}</title>
+<title>Cuenta de Cobro — ${w.full_name}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111;padding:30px;max-width:720px;margin:auto}
+  body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111;padding:30px;max-width:820px;margin:auto}
   h1{font-size:22px;text-align:center;font-weight:900;letter-spacing:1px;margin-bottom:4px}
-  .sub{text-align:center;font-size:12px;color:#555;margin-bottom:12px}
+  .sub{text-align:center;font-size:12px;color:#555;margin-bottom:14px}
   .parrafo{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.7}
   table{width:100%;border-collapse:collapse;margin-bottom:16px}
-  td,th{padding:7px 10px;border:1px solid #d1d5db}
-  th{background:#f3f4f6;font-weight:700;text-align:left;width:42%}
-  .total-row td{font-weight:700;font-size:15px;background:#d1fae5;border-color:#6ee7b7}
+  td,th{padding:7px 10px;border:1px solid #d1d5db;vertical-align:top}
+  th{background:#f3f4f6;font-weight:700;text-align:left}
+  .th-w{width:38%}
+  .total-row td{font-weight:700;font-size:15px;background:#d1fae5;border-color:#6ee7b7;text-align:right}
   .sec-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#374151;padding:6px 0 4px}
-  .firma{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:48px}
-  .firma-box{border-top:2px solid #374151;padding-top:8px;text-align:center;font-size:12px;line-height:1.8}
+  .firma{margin-top:48px;display:grid;grid-template-columns:1fr 1fr;gap:48px}
+  .firma-box{border-top:2px solid #374151;padding-top:8px;text-align:center;font-size:12px;line-height:1.9}
   @media print{body{padding:10px}.no-print{display:none}}
 </style>
 </head>
 <body>
-<div class="no-print" style="margin-bottom:16px;display:flex;gap:8px">
+<div class="no-print" style="margin-bottom:16px">
   <button onclick="window.print()" style="padding:8px 16px;cursor:pointer;background:#0F766E;color:#fff;border:none;border-radius:6px;font-size:13px">
     Imprimir / Guardar como PDF
   </button>
 </div>
 
 <h1>CUENTA DE COBRO</h1>
-<div class="sub">Fecha de generación: ${today} &nbsp;·&nbsp; Período: ${r.period_label || ""}</div>
+<div class="sub">Fecha de generación: ${today} &nbsp;·&nbsp; Período: ${w.period_label || ""}</div>
 
 <div class="parrafo">
-  Yo, <strong>${r.full_name || ""}</strong>, identificado(a) con cédula de ciudadanía No.&nbsp;<strong>${r.document_number || ""}</strong>,
-  presento cuenta de cobro por concepto de <strong>cubrimiento de turno externo</strong> en el
+  Yo, <strong>${w.full_name}</strong>, identificado(a) con cédula de ciudadanía No.&nbsp;<strong>${w.document_number}</strong>,
+  presento cuenta de cobro por concepto de ${introText} en el
   Programa de Alimentación Escolar (PAE), correspondiente al período
-  <strong>${r.period_label || ""}</strong>.
+  <strong>${w.period_label || ""}</strong>.
 </div>
 
 <div class="sec-title">Datos del beneficiario</div>
 <table>
-  <tr><th>Nombre completo</th><td>${r.full_name || ""}</td></tr>
-  <tr><th>Cédula de ciudadanía</th><td>${r.document_number || ""}</td></tr>
-  <tr><th>Banco</th><td>${r.bank || "—"}</td></tr>
-  <tr><th>Tipo de cuenta</th><td>${r.account_type || "—"}</td></tr>
-  <tr><th>Número de cuenta</th><td>${r.account_number || "—"}</td></tr>
+  <tr><th class="th-w">Nombre completo</th><td>${w.full_name}</td></tr>
+  <tr><th class="th-w">Cédula de ciudadanía</th><td>${w.document_number}</td></tr>
+  <tr><th class="th-w">Banco</th><td>${w.bank || "—"}</td></tr>
+  <tr><th class="th-w">Tipo de cuenta</th><td>${w.account_type || "—"}</td></tr>
+  <tr><th class="th-w">Número de cuenta</th><td>${w.account_number || "—"}</td></tr>
 </table>
 
-<div class="sec-title">Detalle del servicio</div>
+<div class="sec-title">Detalle de servicios prestados</div>
 <table>
-  <tr><th>Municipio</th><td>${r.municipality_name || "—"}</td></tr>
-  <tr><th>Institución</th><td>${r.institution_name || "—"}</td></tr>
-  <tr><th>Sede</th><td>${r.site_name || "—"}</td></tr>
-  <tr><th>Modalidad</th><td>${r.modality || "—"}</td></tr>
-  <tr><th>Empleado reemplazado</th><td>${r.origin_employee_name || "—"} ${r.origin_doc ? `(CC ${r.origin_doc})` : ""}</td></tr>
-  <tr><th>Tipo de novedad cubierta</th><td>${noveltyLabel}</td></tr>
-  <tr><th>Días cubiertos</th><td>${r.days || r.nov_days || 0}</td></tr>
-  <tr><th>Fechas de la novedad</th><td>${r.start_date ? String(r.start_date).slice(0,10) : "—"} al ${r.end_date ? String(r.end_date).slice(0,10) : "—"}</td></tr>
-  <tr><th>Período de nómina</th><td>${r.period_label || ""} (${r.period_start ? String(r.period_start).slice(0,10) : ""} — ${r.period_end ? String(r.period_end).slice(0,10) : ""})</td></tr>
-</table>
-
-<div class="sec-title">Valor del servicio</div>
-<table>
-  <tr><th>Concepto</th><td>Cobertura de turno externo — PAE</td></tr>
-  <tr><th>Valor día</th><td>${fmt(r.value_per_day)}</td></tr>
-  <tr><th>Días cubiertos</th><td>${r.days || r.nov_days || 0}</td></tr>
-  <tr class="total-row"><td><strong>TOTAL A PAGAR</strong></td><td><strong>${fmt(r.total_value)}</strong></td></tr>
+  <thead>
+    <tr>
+      <th style="width:30px;text-align:center">#</th>
+      <th>Empleado reemplazado</th>
+      <th>Municipio / Sede</th>
+      <th>Modalidad</th>
+      <th>Tipo de novedad</th>
+      <th>Fechas</th>
+      <th style="text-align:center">Días</th>
+      <th style="text-align:right">Valor día</th>
+      <th style="text-align:right">Subtotal</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${detailRows}
+  </tbody>
+  <tfoot>
+    <tr class="total-row">
+      <td colspan="6" style="text-align:left;font-weight:700">TOTAL A PAGAR</td>
+      <td style="text-align:center;font-weight:700">${totalDias}</td>
+      <td></td>
+      <td style="text-align:right;font-weight:700">${fmt(totalAPagar)}</td>
+    </tr>
+  </tfoot>
 </table>
 
 <div class="firma">
   <div class="firma-box">
     <p>&nbsp;</p>
     <p>&nbsp;</p>
-    <p><strong>${r.full_name || "Beneficiario"}</strong></p>
-    <p>C.C. ${r.document_number || ""}</p>
+    <p><strong>${w.full_name}</strong></p>
+    <p>C.C. ${w.document_number}</p>
     <p>Firma del beneficiario</p>
   </div>
   <div class="firma-box">
     <p>&nbsp;</p>
     <p>&nbsp;</p>
     ${gestorBlock}
-    <p>Firma del gestor de zona</p>
+    <p>Firma y sello del contratante</p>
   </div>
 </div>
 </body>
@@ -2992,6 +3111,9 @@ module.exports = {
   OFFICIAL_NOVELTY_CODES,
   SALARY_AFFECTING,
   TRANSPORT_AFFECTING,
+  ADDITIONAL_AFFECTING,
+  SUPPORT_REQUIREMENTS,
+  SUPPORT_TYPE_LABELS,
   normalizeNoveltyType,
   setItemReviewed,
   recalculatePayrollItem,

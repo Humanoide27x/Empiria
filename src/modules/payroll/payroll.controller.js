@@ -1036,21 +1036,41 @@ async function handleMunicipalityStatus(req, res, url) {
           sendJson(innerRes, 400, { ok: false, message: "Municipio requerido" }); return;
         }
         const isComplete = Boolean(body.isComplete !== false);
+        const userName = user.username || user.name || "";
+        const userId   = user.id || null;
         try {
           await pool.query(
             `INSERT INTO payroll_municipality_status
-               (period_id, municipality, is_complete, completed_by_user_id, completed_by_name, completed_at, notes, updated_at)
-             VALUES ($1, $2, $3, $4, $5, NOW(), $6, NOW())
+               (period_id, municipality, is_complete,
+                completed_by_user_id, completed_by_name, completed_at,
+                unreviewed_by_user_id, unreviewed_by_name, unreviewed_at,
+                notes, updated_at)
+             VALUES ($1, $2, $3,
+               CASE WHEN $3 THEN $4 ELSE NULL END,
+               CASE WHEN $3 THEN $5 ELSE NULL END,
+               CASE WHEN $3 THEN NOW() ELSE NULL END,
+               CASE WHEN NOT $3 THEN $4 ELSE NULL END,
+               CASE WHEN NOT $3 THEN $5 ELSE NULL END,
+               CASE WHEN NOT $3 THEN NOW() ELSE NULL END,
+               $6, NOW())
              ON CONFLICT (period_id, municipality) DO UPDATE SET
-               is_complete = EXCLUDED.is_complete,
-               completed_by_user_id = EXCLUDED.completed_by_user_id,
-               completed_by_name = EXCLUDED.completed_by_name,
-               completed_at = CASE WHEN EXCLUDED.is_complete THEN NOW() ELSE NULL END,
-               notes = COALESCE(EXCLUDED.notes, payroll_municipality_status.notes),
+               is_complete           = EXCLUDED.is_complete,
+               -- When marking complete: record completer, clear unreview info
+               completed_by_user_id  = CASE WHEN EXCLUDED.is_complete THEN $4
+                                            ELSE payroll_municipality_status.completed_by_user_id END,
+               completed_by_name     = CASE WHEN EXCLUDED.is_complete THEN $5
+                                            ELSE payroll_municipality_status.completed_by_name END,
+               completed_at          = CASE WHEN EXCLUDED.is_complete THEN NOW()
+                                            ELSE payroll_municipality_status.completed_at END,
+               -- When unreviewing: record who unreviewed, preserve completer info
+               unreviewed_by_user_id = CASE WHEN NOT EXCLUDED.is_complete THEN $4 ELSE NULL END,
+               unreviewed_by_name    = CASE WHEN NOT EXCLUDED.is_complete THEN $5 ELSE NULL END,
+               unreviewed_at         = CASE WHEN NOT EXCLUDED.is_complete THEN NOW() ELSE NULL END,
+               notes      = COALESCE(EXCLUDED.notes, payroll_municipality_status.notes),
                updated_at = NOW()`,
-            [periodId, municipality, isComplete, user.id || null, user.username || user.name || "", body.notes || null]
+            [periodId, municipality, isComplete, userId, userName, body.notes || null]
           );
-          sendJson(innerRes, 200, { ok: true, message: isComplete ? "Municipio marcado como completado" : "Estado actualizado" });
+          sendJson(innerRes, 200, { ok: true, message: isComplete ? "Municipio marcado como revisado" : "Revisión removida — municipio reabierto" });
         } catch (err) {
           sendJson(innerRes, 500, { ok: false, message: err.message });
         }
@@ -1151,6 +1171,7 @@ async function handlePaySlip(req, res, url) {
 // ─────────────────────────────────────────────────────────────────────────────
 function buildGroupXlsx(options) {
   const { group, items, novelties, supports, totals, coverage } = options;
+  const covers = options.covers || [];
   function n(v) { return Number(v || 0); }
   function s(v) { return String(v == null ? "" : v); }
 
@@ -1294,7 +1315,7 @@ function buildGroupXlsx(options) {
     [10,28,14,26,20,12,12,5,13,13,14,12,8]);
 
   const coverHdr = ["Empleado reemplazante", "Documento", "Concepto", "Referencia", "Días", "Valor día", "Valor"];
-  const coverRows = (options.turns || [])
+  const coverRows2 = (options.turns || [])
     .filter((t) => t.cover_type === "INTERNA" && t.internal_employee_id)
     .map((t) => [
       s(t.internal_employee_name),
@@ -1305,7 +1326,7 @@ function buildGroupXlsx(options) {
       n(t.calculated_day_value),
       n(t.total_value),
     ]);
-  const wsCover = makeSheet(coverHdr, coverRows, [5,6], [30,14,24,30,8,14,14]);
+  const wsCover = makeSheet(coverHdr, coverRows2, [5,6], [30,14,24,30,8,14,14]);
 
   // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
   const resHdr  = ["Concepto", "Valor"];
@@ -1359,7 +1380,7 @@ function buildGroupXlsx(options) {
   ]);
   const wsSup = makeSheet(supHdr, supRows, [], [12,12,28,14,22,16,20,12,18,24,36]);
 
-  // ── Hoja 5: Turnos externos e internos ──────────────────────────────────────
+  // ── Hoja 5: Turnos ──────────────────────────────────────────────────────────
   const turns = Array.isArray(options.turns) ? options.turns : [];
   const turnHdr = [
     "Período", "Fecha turno", "Empleado con novedad", "Documento novedad",
@@ -1394,8 +1415,8 @@ function buildGroupXlsx(options) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsNom, "Nómina");
   XLSX.utils.book_append_sheet(wb, wsNov, "Novedades");
-  XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
   XLSX.utils.book_append_sheet(wb, wsCover, "Reemplazos");
+  XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
 
