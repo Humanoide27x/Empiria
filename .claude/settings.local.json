@@ -95,7 +95,10 @@
       "Bash(Select-Object -ExpandProperty Name)",
       "Bash(Select-String -Path \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\public\\\\js\\\\modules\\\\payroll.js\" -Pattern \"summaryTotals|renderInlineTabs|nm-pay-tabs-inline\")",
       "Bash(Select-Object LineNumber, Line)",
-      "Bash(echo \"Exit: $?\")"
+      "Bash(echo \"Exit: $?\")",
+      "Bash(python3 *)",
+      "Bash(pkill -f \"node app.js\")",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }

@@ -37,7 +37,13 @@ let activeGroupId    = null;
 let activeGroupDetail = null;
 let periodMonth      = new Date().toISOString().slice(0, 7);
 let municipalitySearch = "";
-let activeDetailTab  = "nomina"; // "nomina" | "novedades"
+let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos"
+
+// ── Soportes tab state ────────────────────────────────────────────────────────
+let activePrimaryTab = "nomina"; // "nomina" | "soportes"
+let supportsData     = [];
+let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
+let viewerSupportId  = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -61,13 +67,30 @@ function normalized(value) {
   return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 }
 function statusBadge(status) {
-  const s = String(status || "pendiente");
+  const s = String(status || "IN_REVIEW");
   const label = {
-    pendiente: "Pendiente", en_revision: "En revision",
+    pendiente: "Pendiente", en_revision: "En revisión",
     revisada: "Revisada", cerrada: "Cerrada",
-    BORRADOR: "Borrador", CALCULADO: "Calculado", CERRADO: "Cerrado",
+    DRAFT: "Borrador", IN_REVIEW: "En revisión", CLOSED: "Cerrada",
+    REOPENED: "Reabierta", SENT: "Enviada", PAID: "Pagada",
   }[s] || s;
-  return `<span class="nm-pay-badge nm-pay-badge--${escapeHtml(s.toLowerCase())}">${escapeHtml(label)}</span>`;
+  const cls = {
+    DRAFT: "draft", IN_REVIEW: "en_revision", CLOSED: "cerrada",
+    REOPENED: "reopened", SENT: "sent", PAID: "paid",
+    pendiente: "pendiente", en_revision: "en_revision", revisada: "revisada", cerrada: "cerrada",
+  }[s] || s.toLowerCase();
+  return `<span class="nm-pay-badge nm-pay-badge--${escapeHtml(cls)}">${escapeHtml(label)}</span>`;
+}
+function isGroupClosed(group) {
+  return group?.status === "CLOSED" || group?.status === "cerrada";
+}
+function isGroupReopened(group) {
+  return group?.status === "REOPENED";
+}
+function isGroupEditable(group) {
+  const s = group?.status;
+  return !s || s === "DRAFT" || s === "IN_REVIEW" || s === "REOPENED" ||
+         s === "pendiente" || s === "en_revision" || s === "revisada";
 }
 function pendingSupportBadge(count) {
   const total = Number(count || 0);
@@ -187,8 +210,26 @@ function shell() {
 .nm-pay-table td.num,.nm-pay-table thead th.num{text-align:right}
 .nm-pay-badge,.nm-pay-doc,.nm-pay-ok{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}
 .nm-pay-badge{background:#E2E8F0;color:#334155}
+.nm-pay-badge--in_review{background:#DBEAFE;color:#1E40AF}
+.nm-pay-badge--en_revision{background:#DBEAFE;color:#1E40AF}
+.nm-pay-badge--closed,.nm-pay-badge--cerrada{background:#1E293B;color:#F8FAFC}
+.nm-pay-badge--reopened{background:#FEF3C7;color:#92400E;animation:nm-blink .8s ease infinite alternate}
+.nm-pay-badge--sent{background:#DCFCE7;color:#166534}
+.nm-pay-badge--paid{background:#F3E8FF;color:#7C3AED}
+.nm-pay-badge--draft,.nm-pay-badge--pendiente{background:#F1F5F9;color:#64748B}
+.nm-pay-badge--revisada{background:#D1FAE5;color:#065F46}
+@keyframes nm-blink{from{opacity:1}to{opacity:.65}}
 .nm-pay-doc{background:#FEF3C7;color:#92400E}
 .nm-pay-ok{background:#DCFCE7;color:#166534}
+/* Banners de estado */
+.nm-banner{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:8px;border:1px solid transparent}
+.nm-banner--closed{background:#F1F5F9;border-color:#CBD5E1;color:#334155}
+.nm-banner--reopened{background:#FFFBEB;border-color:#F59E0B;color:#92400E}
+.nm-banner--recalc{background:#FFF7ED;border-color:#FB923C;color:#7C2D12}
+.nm-banner__icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.nm-banner__body{flex:1}
+.nm-banner__title{font-weight:700;margin-bottom:2px}
+.nm-banner__detail{font-size:12px;opacity:.8}
 .nm-pay-empty{padding:20px;text-align:center;color:#64748B;border:1px dashed #CBD5E1;border-radius:6px;background:#F8FAFC;font-size:13px}
 
 /* ── Pestañas internas de detalle (Nómina | Novedades) ───────────────── */
@@ -254,7 +295,54 @@ function shell() {
   .nm-pay-workspace{flex-direction:column}
   .nm-pay-municipality-panel{width:auto;flex:0 0 auto;max-height:180px;border-right:0;border-bottom:1px solid #E2E8F0}
   .nm-pay-table{font-size:12px}
+  .nm-sup-viewer-panel{display:none}
 }
+
+/* ── Pestañas primarias (Nómina | Soportes) ──────────────────────── */
+.nm-primary-tabs{display:flex;gap:0;border-bottom:2px solid #E2E8F0;background:#fff;flex:0 0 auto;padding:0 10px}
+.nm-primary-tab{border:0;background:none;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;color:#64748B;border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap}
+.nm-primary-tab:hover{color:#0F766E}
+.nm-primary-tab.active{color:#0F766E;border-bottom-color:#0F766E}
+.nm-primary-tab .nm-pay-count{background:#FEF3C7;color:#92400E;font-size:11px;display:inline-flex;min-width:16px;height:16px;align-items:center;justify-content:center;border-radius:999px;margin-left:4px;padding:0 4px}
+
+/* ── Vista de Soportes ──────────────────────────────────────────── */
+.nm-sup-view{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.nm-sup-filters{display:flex;gap:6px;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;flex:0 0 auto;align-items:center}
+.nm-sup-filters label{font-size:11px;font-weight:700;color:#475569}
+.nm-sup-metrics{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #E2E8F0;background:#fff;flex:0 0 auto}
+.nm-sup-metric{padding:8px 12px;border-right:1px solid #E2E8F0;text-align:center}
+.nm-sup-metric:last-child{border-right:0}
+.nm-sup-metric span{display:block;font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.03em}
+.nm-sup-metric b{display:block;font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
+.nm-sup-metric--pending b{color:#D97706}
+.nm-sup-metric--approved b{color:#166534}
+.nm-sup-metric--rejected b{color:#B91C1C}
+.nm-sup-metric--nofile b{color:#64748B}
+
+/* ── Layout tabla + visor ────────────────────────────────────────── */
+.nm-sup-body{flex:1 1 auto;min-height:0;overflow:hidden;display:flex}
+.nm-sup-table-panel{flex:1 1 auto;min-width:0;overflow:auto}
+.nm-sup-viewer-panel{width:400px;flex:0 0 400px;border-left:1px solid #E2E8F0;display:flex;flex-direction:column;background:#fff}
+.nm-sup-viewer-panel[hidden]{display:none!important}
+.nm-sup-viewer-head{padding:8px 10px;border-bottom:1px solid #E2E8F0;font-size:12px;font-weight:700;color:#334155;display:flex;justify-content:space-between;align-items:center;flex:0 0 auto;background:#F8FAFC;gap:6px}
+.nm-sup-viewer-head span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
+.nm-sup-viewer-body{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#F1F5F9;position:relative}
+.nm-sup-viewer-iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.nm-sup-viewer-img{max-width:100%;max-height:100%;object-fit:contain;padding:8px}
+.nm-sup-review-panel{flex:0 0 auto;border-top:1px solid #E2E8F0;padding:10px;display:flex;flex-direction:column;gap:6px;background:#fff}
+
+/* ── Badges de estado de soporte ────────────────────────────────── */
+.nm-sup-badge{display:inline-flex;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;white-space:nowrap}
+.nm-sup-badge--pendiente{background:#FEF3C7;color:#92400E}
+.nm-sup-badge--cargado{background:#DBEAFE;color:#1E40AF}
+.nm-sup-badge--aprobado{background:#DCFCE7;color:#166534}
+.nm-sup-badge--rechazado{background:#FEE2E2;color:#991B1B}
+.nm-sup-badge--correccion_solicitada{background:#FFEDD5;color:#C2410C}
+
+/* ── Tabla de soportes ───────────────────────────────────────────── */
+.nm-sup-row-active td{background:#ECFDF5!important}
+.nm-sup-table td{padding:5px 7px;font-size:12px}
+.nm-sup-table thead th{font-size:11px;padding:5px 7px;white-space:nowrap}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -358,8 +446,6 @@ function renderCargoTabsBar() {
 function render() {
   const root = document.getElementById("nmPayRoot");
   if (!root) return;
-  const totals = municipalityTotals();
-  const ctx    = kpiContextLabel();
   root.innerHTML = `
 <div class="nm-pay-card-main">
 
@@ -373,9 +459,35 @@ function render() {
   </select>
   <div class="nm-pay-head-spacer"></div>
   ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" id="nmPayCreate">+ Periodo</button>` : ""}
-  <button class="nm-pay-btn nm-pay-btn--sm" id="nmPaySupports">Soportes</button>
 </div>
 
+<!-- ── Pestañas primarias: Nómina | Soportes ──────────────────────── -->
+${renderPrimaryTabs()}
+
+${activePrimaryTab === "soportes" ? renderSupportsShell() : renderNominaPanel()}
+</div>
+`;
+  wireStaticEvents();
+}
+
+function renderPrimaryTabs() {
+  if (!activePeriod) return "";
+  const pendingCount = activePrimaryTab === "soportes"
+    ? supportsData.filter((s) => (s.status || s.support_status) === "pendiente").length
+    : groupsState.positions.reduce((s, p) => s + Number(p.pending_supports || 0), 0);
+  return `
+<div class="nm-primary-tabs">
+  <button class="nm-primary-tab ${activePrimaryTab === "nomina" ? "active" : ""}" data-primary-tab="nomina">Nómina</button>
+  <button class="nm-primary-tab ${activePrimaryTab === "soportes" ? "active" : ""}" data-primary-tab="soportes">
+    Soportes${pendingCount > 0 ? ` <span class="nm-pay-count">${pendingCount}</span>` : ""}
+  </button>
+</div>`;
+}
+
+function renderNominaPanel() {
+  const totals = municipalityTotals();
+  const ctx    = kpiContextLabel();
+  return `
 <!-- ── Pestañas de cargo: fila propia ─────────────────────────────── -->
 ${renderCargoTabsBar()}
 
@@ -389,10 +501,7 @@ ${renderCargoTabsBar()}
   <div class="nm-pay-kpi"><span>Neto</span><b>${fmtCOP(totals.neto)}</b></div>
 </div>
 
-${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nómina.</div></div>`}
-</div>
-`;
-  wireStaticEvents();
+${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nómina.</div></div>`}`;
 }
 
 function renderOperationalBody() {
@@ -436,41 +545,88 @@ function renderGroupDetail() {
     <div class="nm-pay-toolbar" style="border:0;padding:16px">
       <div class="nm-pay-empty" style="flex:1">Selecciona un municipio para ver su nómina.</div>
     </div>`;
-  const { group, items, novelties, totals } = activeGroupDetail;
+  const { group, items, novelties, covers, totals } = activeGroupDetail;
   const municipality = currentMunicipalityData();
   const municipalityName = municipality?.municipality_name || group?.municipality_name || "";
-  const isClosed = group?.status === "cerrada";
+  const isClosed    = isGroupClosed(group);
+  const isReopened  = isGroupReopened(group);
+  const editable    = isGroupEditable(group);
   const allReviewed = totals.employees > 0 && totals.items_reviewed === totals.employees;
-  const showCloseBtn = allReviewed && !isClosed;
+  const needsRecalc = Boolean(group?.needs_recalculation);
+  const version     = Number(group?.version_number || 1);
+  const canClose    = allReviewed && editable && !needsRecalc;
+  const canReopen   = isClosed && isTH();
+
+  const bannerHtml = (() => {
+    if (isClosed) return `
+<div class="nm-banner nm-banner--closed">
+  <span class="nm-banner__icon">🔒</span>
+  <div class="nm-banner__body">
+    <div class="nm-banner__title">Nómina cerrada — v${version}</div>
+    <div class="nm-banner__detail">Cerrada el ${group.closed_at ? new Date(group.closed_at).toLocaleString("es-CO") : "—"}. Solo lectura.</div>
+  </div>
+  ${canReopen ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayReopen" style="align-self:center;flex-shrink:0">Reabrir nómina</button>` : ""}
+</div>`;
+    if (isReopened) return `
+<div class="nm-banner nm-banner--reopened">
+  <span class="nm-banner__icon">⚠</span>
+  <div class="nm-banner__body">
+    <div class="nm-banner__title">Nómina reabierta para corrección — v${version}</div>
+    <div class="nm-banner__detail">Motivo: ${escapeHtml(group.reopen_reason || "—")} · Reabierta el ${group.reopened_at ? new Date(group.reopened_at).toLocaleString("es-CO") : "—"}</div>
+  </div>
+</div>`;
+    return "";
+  })();
+
+  const recalcBanner = (needsRecalc && !isClosed) ? `
+<div class="nm-banner nm-banner--recalc">
+  <span class="nm-banner__icon">⟳</span>
+  <div class="nm-banner__body">
+    <div class="nm-banner__title">Recalculación pendiente</div>
+    <div class="nm-banner__detail">Se realizaron cambios. Recalcule antes de cerrar nuevamente.</div>
+  </div>
+</div>` : "";
+
   return `
 <!-- Toolbar fijo (sin sticky, el contenedor flex lo mantiene arriba) -->
 <div class="nm-pay-toolbar">
   <div>
     <h3 class="nm-pay-section-title">${escapeHtml(municipalityName || "Municipio")}</h3>
-    <div class="nm-pay-section-meta">${escapeHtml(group?.operational_position || activePosition)} · ${statusBadge(group?.status)} ${pendingSupportBadge(totals.pending_supports)}</div>
+    <div class="nm-pay-section-meta">${escapeHtml(group?.operational_position || activePosition)} · ${statusBadge(group?.status)} v${version} ${pendingSupportBadge(totals.pending_supports)}</div>
   </div>
   <div class="nm-pay-actions">
-    ${isClosed ? "" : `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCalculate">Calcular</button>`}
+    ${editable ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCalculate">${isReopened ? "Recalcular" : "Calcular"}</button>` : ""}
     <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayExport">Exportar</button>
-    ${showCloseBtn ? `<button class="nm-pay-btn nm-pay-btn--warning nm-pay-btn--sm" id="nmPayClose">Cerrar y enviar nómina</button>` : ""}
+    <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayHistory" title="Historial de cambios">Historial</button>
+    ${canClose ? `<button class="nm-pay-btn nm-pay-btn--warning nm-pay-btn--sm" id="nmPayClose">${isReopened ? "Cerrar nuevamente" : "Cerrar y enviar nómina"}</button>` : ""}
+    ${isClosed && canReopen ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayReopen">Reabrir nómina</button>` : ""}
   </div>
 </div>
+${bannerHtml}
+${recalcBanner}
 
-<!-- Cuerpo scrollable con pestañas Nómina / Novedades -->
+<!-- Cuerpo scrollable con pestañas Nómina / Novedades / Turnos -->
 <div class="nm-pay-scroll-body">
   <div class="nm-detail-tabs">
     <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nómina</button>
     <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
+      Turnos <span class="nm-pay-count">${(covers || []).length}</span>
+    </button>
   </div>
   ${activeDetailTab === "nomina"
     ? (items.length
         ? renderItemsTable(items)
         : `<div class="nm-pay-empty">Pulsa "Calcular" para cargar los empleados activos.</div>`)
-    : (novelties.length
-        ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
-        : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)}
+    : activeDetailTab === "turnos"
+      ? ((covers || []).length
+          ? `<div class="nm-pay-table-wrap">${renderTurnsTable(covers)}</div>`
+          : `<div class="nm-pay-empty">Sin turnos registrados en este municipio.</div>`)
+      : (novelties.length
+          ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
+          : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)}
 </div>`;
 }
 
@@ -490,6 +646,12 @@ function salaryCategoryBadge(code) {
 }
 
 function renderItemsTable(items) {
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+  const extCoverItemIds = new Set(
+    ((activeGroupDetail?.covers) || [])
+      .filter((c) => c.cover_type === "EXTERNA")
+      .map((c) => c.payroll_item_id)
+  );
   return `
 <div class="nm-pay-table-wrap">
 <table class="nm-pay-table">
@@ -503,6 +665,8 @@ function renderItemsTable(items) {
   <tbody>
     ${items.map((item) => {
       const isReviewed = Boolean(item.reviewed);
+      const locked = groupLocked || isReviewed;
+      const hasExtCover = extCoverItemIds.has(item.id);
       return `
       <tr class="${isReviewed ? "item-reviewed-row" : ""}">
         <td>
@@ -514,21 +678,27 @@ function renderItemsTable(items) {
           <small>${escapeHtml(item.site_name || "-")}</small><br>
           <small>${escapeHtml(item.modality || "-")} · ${escapeHtml(item.work_time_type || "-")} &nbsp;${salaryCategoryBadge(item.salary_category)}</small>
         </td>
-        <td class="num">${fmtCOP(item.total_devengado)}</td>
+        <td class="num">
+          ${fmtCOP(item.total_devengado)}
+          ${hasExtCover ? `<br><small style="color:#92400E;font-size:10px;font-weight:600">Turno ext. registrado</small>` : ""}
+        </td>
         <td class="num">${fmtCOP(item.total_deducciones)}</td>
         <td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td>
         <td>${Number(item.novelty_count || 0) ? `${Number(item.reviewed_count || 0)}/${Number(item.novelty_count || 0)} rev.` : "—"}</td>
         <td>
-          ${isReviewed
+          ${groupLocked
             ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
-               <span style="display:block;margin-top:3px;font-size:10px;color:#64748B">Bloqueado</span>`
-            : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button>
-               <button class="nm-pay-btn nm-pay-btn--sm" data-cambio-operativo="${item.id}" title="Registrar cambio temporal/definitivo de modalidad, sede o jornada">Cambio op.</button>
-               <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>`}
+               <span style="display:block;margin-top:3px;font-size:10px;color:#94A3B8">Bloqueado por cierre</span>`
+            : locked
+              ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                 <span style="display:block;margin-top:3px;font-size:10px;color:#64748B">Bloqueado</span>`
+              : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button>
+                 <button class="nm-pay-btn nm-pay-btn--sm" data-cambio-operativo="${item.id}" title="Registrar cambio temporal/definitivo de modalidad, sede o jornada">Cambio op.</button>
+                 <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>`}
         </td>
         <td>
           <label class="nm-item-review-label" title="${isReviewed ? `Revisado · Para editar quite la marca` : `Marcar como revisado y bloquear`}">
-            <input type="checkbox" class="nm-item-review-cb" data-item-reviewed="${item.id}" ${isReviewed ? "checked" : ""}>
+            <input type="checkbox" class="nm-item-review-cb" data-item-reviewed="${item.id}" ${isReviewed ? "checked" : ""} ${groupLocked ? "disabled" : ""}>
             ${isReviewed
               ? `<span class="nm-item-reviewed-badge">&#10003; Revisada</span>`
               : `<span style="font-size:11px;color:#94A3B8">Pendiente</span>`}
@@ -545,6 +715,7 @@ function renderItemsTable(items) {
 // TABLA DE NOVEDADES
 // ─────────────────────────────────────────────────────────────────────────────
 function renderNoveltiesTable(novelties) {
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
   return `
 <table class="nm-pay-table">
   <thead>
@@ -559,8 +730,8 @@ function renderNoveltiesTable(novelties) {
       const meta = noveltyByCode(nov.novelty_type);
       const isReviewed     = Boolean(nov.reviewed);
       const isItemLocked   = Boolean(nov.item_reviewed);
-      const isLocked       = isReviewed || isItemLocked;
-      const lockTitle      = isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
+      const isLocked       = groupLocked || isReviewed || isItemLocked;
+      const lockTitle      = groupLocked ? "Nómina cerrada — reabrir para editar" : isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
       // Impacto económico: usa computed_impact si viene del API, si no: nov.value
       const impactAmt      = Number(nov.computed_impact || nov.value || 0);
       const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
@@ -587,8 +758,8 @@ function renderNoveltiesTable(novelties) {
           ? `<span class="nm-pay-doc">Pendiente</span>`
           : `<span class="nm-pay-ok">${escapeHtml(nov.support_status || "—")}</span>`}</td>
         <td>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
-            <input type="checkbox" data-reviewed="${nov.id}" ${isReviewed ? "checked" : ""}>
+          <label style="display:flex;align-items:center;gap:5px;cursor:${groupLocked ? "default" : "pointer"}">
+            <input type="checkbox" data-reviewed="${nov.id}" ${isReviewed ? "checked" : ""} ${groupLocked ? "disabled" : ""}>
             ${isReviewed ? `<span class="nm-pay-ok" style="font-size:11px">Revisada</span>` : `<span style="font-size:11px;color:#64748B">Sin revisar</span>`}
           </label>
         </td>
@@ -607,6 +778,71 @@ function renderNoveltiesTable(novelties) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TABLA DE TURNOS (una fila por payroll_turn_covers.id)
+// ─────────────────────────────────────────────────────────────────────────────
+function renderTurnsTable(covers) {
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+  return `
+<table class="nm-pay-table">
+  <thead>
+    <tr>
+      <th>Empleado origen</th>
+      <th>Tipo novedad</th>
+      <th>Municipio / Institución</th>
+      <th>Cobertura</th>
+      <th>Quien cubrió</th>
+      <th class="num">Días</th>
+      <th class="num">Valor día</th>
+      <th class="num">Total</th>
+      <th>Acción</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${(covers || []).map((c) => {
+      const coverName = c.cover_type === "INTERNA"
+        ? (c.internal_cover_name || "—")
+        : (c.external_worker_name || "—");
+      const coverDoc  = c.cover_type === "INTERNA"
+        ? (c.internal_cover_doc || "")
+        : (c.external_worker_doc || "");
+      const coverBadge = c.cover_type === "INTERNA"
+        ? `<span class="nm-pay-badge" style="background:#DBEAFE;color:#1E40AF">INTERNA</span>`
+        : `<span class="nm-pay-badge" style="background:#FEF3C7;color:#92400E">EXTERNA</span>`;
+      return `
+      <tr>
+        <td>
+          <b>${escapeHtml(c.origin_employee_name || "—")}</b><br>
+          <small style="color:#64748B">${escapeHtml(c.origin_document || "")}</small>
+        </td>
+        <td>
+          <small>${escapeHtml(c.novelty_type_name || c.novelty_type || "—")}</small><br>
+          <small style="color:#94A3B8">${escapeHtml(String(c.novelty_start || "").slice(0,10))} – ${escapeHtml(String(c.novelty_end || "").slice(0,10))}</small>
+        </td>
+        <td>
+          <small>${escapeHtml(c.municipality_name || "—")}</small><br>
+          <small style="color:#64748B">${escapeHtml(c.institution_name || "—")} · ${escapeHtml(c.site_name || "—")}</small>
+        </td>
+        <td>${coverBadge}</td>
+        <td>
+          <b>${escapeHtml(coverName)}</b><br>
+          <small style="color:#64748B">${escapeHtml(coverDoc)}</small>
+        </td>
+        <td class="num">${Number(c.days || 0)}</td>
+        <td class="num">${fmtCOP(c.value_per_day)}</td>
+        <td class="num"><b>${fmtCOP(c.total_value)}</b></td>
+        <td>
+          ${c.cover_type === "EXTERNA"
+            ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${c.turn_cover_id}" title="Ver cuenta de cobro">Ver cta. cobro</button>
+               <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${c.turn_cover_id}" data-ext-doc="${escapeHtml(c.external_worker_doc || String(c.turn_cover_id))}" title="Descargar cuenta de cobro">Descargar</button>`
+            : "—"}
+        </td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────────────────────────────────────
 function wireStaticEvents() {
@@ -617,10 +853,26 @@ function wireStaticEvents() {
     activeGroupId      = null;
     municipalitySearch = "";
     activeDetailTab    = "nomina";
+    supportsData       = [];
+    viewerSupportId    = null;
+    supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
     await reloadWorkArea();
   });
   document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
-  document.getElementById("nmPaySupports")?.addEventListener("click", openSupportsModal);
+
+  // ── Pestañas primarias ────────────────────────────────────────────────────
+  document.querySelectorAll("[data-primary-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+    activePrimaryTab = btn.dataset.primaryTab;
+    if (activePrimaryTab === "soportes" && !supportsData.length) await loadSupports();
+    render();
+  }));
+
+  if (activePrimaryTab === "soportes") {
+    wireSupportEvents();
+    return;
+  }
+
+  // ── Eventos de pestaña Nómina ─────────────────────────────────────────────
   document.getElementById("nmPayMunSearch")?.addEventListener("input", (e) => {
     municipalitySearch = e.target.value || "";
     render();
@@ -644,12 +896,18 @@ function wireStaticEvents() {
   document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
   document.getElementById("nmPayExport")?.addEventListener("click",   exportMunicipality);
   document.getElementById("nmPayClose")?.addEventListener("click",    closeAndSendGroup);
+  document.getElementById("nmPayReopen")?.addEventListener("click",   openReopenModal);
+  document.getElementById("nmPayHistory")?.addEventListener("click",  openHistoryModal);
   document.querySelectorAll("[data-new-novelty]").forEach((btn) => btn.addEventListener("click", () => openNoveltyModal(Number(btn.dataset.newNovelty))));
   document.querySelectorAll("[data-cambio-operativo]").forEach((btn) => btn.addEventListener("click", () => openCambioOperativoModal(Number(btn.dataset.cambioOperativo))));
   document.querySelectorAll("[data-payslip]").forEach((btn)        => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
   document.querySelectorAll("[data-edit-novelty]").forEach((btn)   => btn.addEventListener("click", () => openEditNoveltyModal(Number(btn.dataset.editNovelty))));
   document.querySelectorAll("[data-cover-novelty]").forEach((btn)  => btn.addEventListener("click", () => openCoverModal(Number(btn.dataset.coverNovelty), Number(btn.dataset.coverItem))));
   document.querySelectorAll("[data-charge-account]").forEach((btn) => btn.addEventListener("click", () => openChargeAccount(Number(btn.dataset.chargeAccount))));
+  document.querySelectorAll("[data-dl-charge]").forEach((btn) => btn.addEventListener("click", () => {
+    const periodLabel = activePeriod?.label || "";
+    downloadChargeAccount(Number(btn.dataset.dlCharge), btn.dataset.extDoc, periodLabel);
+  }));
   document.querySelectorAll("[data-reviewed]").forEach((input)     => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
   document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
@@ -676,7 +934,12 @@ async function createPeriod() {
   }
 }
 
-async function reloadWorkArea() { await loadGroups(); await loadGroupDetail(); render(); }
+async function reloadWorkArea() {
+  await loadGroups();
+  await loadGroupDetail();
+  if (activePrimaryTab === "soportes") await loadSupports();
+  render();
+}
 async function reloadDetailOnly() { await loadGroupDetail(); render(); }
 
 async function calculateGroup() {
@@ -786,8 +1049,13 @@ function openNoveltyModal(itemId) {
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
 
+  let _isSavingNovelty = false;
   document.getElementById("novSave")?.addEventListener("click", async () => {
+    if (_isSavingNovelty) return;
+    const btn = document.getElementById("novSave");
     try {
+      _isSavingNovelty = true;
+      if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
       const days = Number(document.getElementById("novDays").value);
       if (!days || days < 1) { showError("Los días deben ser mayor a 0"); return; }
       await apiFetch(`/payroll/items/${itemId}/novelties`, {
@@ -804,7 +1072,12 @@ function openNoveltyModal(itemId) {
       closeModal();
       await reloadWorkArea();
       showSuccess("Novedad registrada");
-    } catch (err) { showError(err.message); }
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      _isSavingNovelty = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Guardar novedad"; }
+    }
   });
 }
 
@@ -1265,9 +1538,51 @@ function openCoverModal(noveltyId, itemId) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUENTA DE COBRO (HTML/impresión) para turno externo
+// Usa fetch autenticado en lugar de window.open directo para enviar el token
 // ─────────────────────────────────────────────────────────────────────────────
-function openChargeAccount(coverId) {
-  window.open(`/payroll/turn-covers/${coverId}/charge-account`, "_blank");
+async function fetchChargeAccountHtml(coverId) {
+  const token = state.token || localStorage.getItem("empiria_token") || "";
+  const res = await fetch(`/payroll/turn-covers/${coverId}/charge-account`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let msg = "No se pudo cargar la cuenta de cobro";
+    try { const j = await res.json(); msg = j.message || msg; } catch { /* noop */ }
+    throw new Error(msg);
+  }
+  return res.text();
+}
+
+async function openChargeAccount(coverId) {
+  try {
+    const html = await fetchChargeAccountHtml(coverId);
+    const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+    const blobUrl = URL.createObjectURL(blob);
+    const w = window.open(blobUrl, "_blank");
+    if (!w) showError("El navegador bloqueó la ventana emergente. Permite ventanas emergentes e intenta de nuevo.");
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+  } catch (err) {
+    showError(err.message || "Error generando cuenta de cobro");
+  }
+}
+
+async function downloadChargeAccount(coverId, extDoc, periodLabel) {
+  try {
+    const html = await fetchChargeAccountHtml(coverId);
+    const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+    const blobUrl = URL.createObjectURL(blob);
+    const doc = String(extDoc || coverId).replace(/[^a-z0-9]/gi, "-");
+    const per = String(periodLabel || "").replace(/[^a-z0-9]/gi, "-") || "periodo";
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `cuenta_cobro_${doc}_${per}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+  } catch (err) {
+    showError(err.message || "Error descargando cuenta de cobro");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1315,12 +1630,7 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       ${Number(earnings.other_recargos_value) ? `<div class="row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
   }
 
-  // Coberturas externas del empleado origen (informativo)
-  const coverHtml = (covers || []).map((c) =>
-    `<div class="row"><span>Turno externo — ${escapeHtml(c.ext_name || c.ext_doc || "Trabajador externo")}</span><b>+${fmt(c.total_value)}</b></div>`
-  ).join("");
-
-  // Coberturas internas realizadas POR este empleado (con detalle)
+  // Coberturas internas realizadas POR este empleado (suman a su devengado)
   const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
     `<div class="row"><span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
@@ -1379,7 +1689,6 @@ ${printScript}
     <div class="section-h">Devengados</div>
     ${devRows}
     ${performedCoverHtmlDoc}
-    ${coverHtml}
     <div class="row total"><span>Total Devengado</span><b>${fmt(earnings.total_devengado)}</b></div>
   </div>
 
@@ -1487,14 +1796,7 @@ async function openPayslipModal(itemId) {
         ${Number(earnings.other_recargos_value) ? `<div class="nm-slip-row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
     }
 
-    // Coberturas externas que tuvo este empleado (solo informativo en su desprendible)
-    const coverRows = (covers || []).map((c) => `
-      <div class="nm-slip-row">
-        <span>Turno externo — ${escapeHtml(c.ext_name || c.ext_doc || "Trabajador externo")}</span>
-        <b>+${fmt(c.total_value)}</b>
-      </div>`).join("");
-
-    // Coberturas internas que realizó este empleado (muestra a quién cubrió, días y valor)
+    // Coberturas internas que realizó este empleado (suman a su devengado)
     const performedCoverHtml = (data.performed_covers || []).map((c) => `
       <div class="nm-slip-row">
         <span>Turno cubierto — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
@@ -1519,7 +1821,6 @@ async function openPayslipModal(itemId) {
       <div class="nm-slip-section-h">Devengados</div>
       ${devHtml}
       ${performedCoverHtml}
-      ${coverRows}
       <div class="nm-slip-row nm-slip-total"><span>Total Devengado</span><b>${fmt(earnings.total_devengado)}</b></div>
     </div>
     <div class="nm-slip-section">
@@ -1738,14 +2039,18 @@ async function confirmDeleteNovelty(noveltyId) {
 // ─────────────────────────────────────────────────────────────────────────────
 function closeAndSendGroup() {
   if (!activeGroupId) return;
+  const group   = activeGroupDetail?.group;
+  const version = Number(group?.version_number || 1);
+  const label   = isGroupReopened(group) ? "Cerrar nuevamente" : "Cerrar y enviar nómina";
   showConfirmModal(
-    "Cerrar y enviar nómina",
-    `Esta acción <b>cerrará la nómina</b> del municipio y bloqueará nuevas modificaciones.<br><br>
+    label,
+    `Esta acción <b>cerrará la nómina</b> (v${version}) del municipio y bloqueará nuevas modificaciones.<br><br>
+    Se generará un snapshot histórico inmutable.<br>
     Solo quedará habilitado:<br>
     <ul style="margin:8px 0 0 16px;font-size:12px;color:#475569">
       <li>Ver desprendibles</li>
-      <li>Imprimir / descargar PDF</li>
       <li>Exportar Excel</li>
+      <li>Consultar historial</li>
     </ul><br>
     ¿Desea continuar?`,
     async () => {
@@ -1757,8 +2062,126 @@ function closeAndSendGroup() {
         showError(err.message);
       }
     },
-    { confirmLabel: "Cerrar nómina", danger: true }
+    { confirmLabel: label, danger: true }
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REABRIR NÓMINA — modal con motivo obligatorio
+// ─────────────────────────────────────────────────────────────────────────────
+function openReopenModal() {
+  if (!activeGroupId) return;
+  const group   = activeGroupDetail?.group;
+  const version = Number(group?.version_number || 1);
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:480px">
+  <div class="nm-pay-dialog-h">
+    <b>Reabrir nómina</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b">
+    <div style="background:#FFFBEB;border:1px solid #F59E0B;border-radius:6px;padding:10px;font-size:13px;color:#92400E">
+      <b>Advertencia</b> — Estás reabriendo la nómina v${version}.<br>
+      Esta acción queda registrada en el historial de auditoría.
+    </div>
+    <div class="nm-pay-field">
+      <label>Motivo de reapertura <span style="color:#EF4444">*</span></label>
+      <input class="nm-pay-input" id="reopenReason" placeholder="Ej: Faltó registrar incapacidad médica" maxlength="300">
+    </div>
+    <div class="nm-pay-field">
+      <label>Observaciones adicionales</label>
+      <textarea class="nm-pay-textarea" id="reopenObs" rows="2" placeholder="Observaciones opcionales"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
+      <button class="nm-pay-btn nm-pay-btn--warning nm-pay-btn--sm" id="reopenConfirm">Confirmar reapertura</button>
+    </div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("reopenConfirm")?.addEventListener("click", async () => {
+    const reason = (document.getElementById("reopenReason")?.value || "").trim();
+    if (!reason) { showError("El motivo de reapertura es obligatorio."); return; }
+    const btn = document.getElementById("reopenConfirm");
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = "Reabriendo…"; }
+      await apiFetch(`/payroll/groups/${activeGroupId}/reopen`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason,
+          observations: document.getElementById("reopenObs")?.value || "",
+        }),
+      });
+      closeModal();
+      await reloadWorkArea();
+      showSuccess("Nómina reabierta. Se han habilitado las modificaciones.");
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Confirmar reapertura"; }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORIAL DE NÓMINA
+// ─────────────────────────────────────────────────────────────────────────────
+async function openHistoryModal() {
+  if (!activeGroupId) return;
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:680px">
+  <div class="nm-pay-dialog-h">
+    <b>Historial de nómina</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b" id="historyContent" style="min-height:100px">
+    <div class="nm-pay-empty">Cargando historial…</div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+  try {
+    const resp = await apiFetch(`/payroll/groups/${activeGroupId}/history`);
+    const { group, logs, snapshots } = resp.data || {};
+    const el = document.getElementById("historyContent");
+    if (!el) return;
+    const fmtDate = (d) => d ? new Date(d).toLocaleString("es-CO") : "—";
+    const snapshotRows = (snapshots || []).map((s) => `
+      <tr>
+        <td>v${s.version_number}</td>
+        <td>${escapeHtml(s.closed_by_name || "—")}</td>
+        <td>${fmtDate(s.closed_at)}</td>
+        <td><span class="nm-pay-badge nm-pay-badge--closed">Snapshot</span></td>
+      </tr>`).join("");
+    const logRows = (logs || []).map((l) => `
+      <tr>
+        <td>${fmtDate(l.reopened_at)}</td>
+        <td>${escapeHtml(l.reopened_by_name || "—")}</td>
+        <td>${escapeHtml(l.previous_status)} → ${escapeHtml(l.new_status)}</td>
+        <td style="max-width:200px">${escapeHtml(l.reason)}</td>
+        <td>${escapeHtml(l.observations || "—")}</td>
+      </tr>`).join("");
+    el.innerHTML = `
+<div style="font-size:13px;color:#334155;font-weight:700;margin-bottom:4px">Grupo: ${escapeHtml(group?.operational_position || "")} — ${escapeHtml(group?.municipality_name || "")} · ${statusBadge(group?.status)} v${group?.version_number || 1}</div>
+${snapshots?.length ? `
+<div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#475569;margin:8px 0 4px">Cierres / Snapshots</div>
+<table class="nm-pay-table" style="font-size:12px;width:100%">
+  <thead><tr><th>Versión</th><th>Cerrado por</th><th>Fecha cierre</th><th>Estado</th></tr></thead>
+  <tbody>${snapshotRows}</tbody>
+</table>` : `<div class="nm-pay-empty" style="margin-bottom:8px">Sin snapshots registrados.</div>`}
+${logs?.length ? `
+<div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#475569;margin:12px 0 4px">Reaperturas</div>
+<table class="nm-pay-table" style="font-size:12px;width:100%">
+  <thead><tr><th>Fecha</th><th>Reabierto por</th><th>Cambio estado</th><th>Motivo</th><th>Observaciones</th></tr></thead>
+  <tbody>${logRows}</tbody>
+</table>` : `<div class="nm-pay-empty">Sin reaperturas registradas.</div>`}`;
+  } catch (err) {
+    const el = document.getElementById("historyContent");
+    if (el) el.innerHTML = `<div class="nm-pay-empty" style="color:#EF4444">${escapeHtml(err.message)}</div>`;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1769,16 +2192,23 @@ async function openSupportsModal() {
     const params   = activePeriod ? `?periodId=${activePeriod.id}` : "";
     const response = await apiFetch(`/payroll/supports${params}`);
     const supports = Array.isArray(response.data) ? response.data : [];
-    const statusLabel = { pendiente: "Pendiente", cargado: "Cargado", aprobado: "Aprobado", rechazado: "Rechazado" };
+    void supports; // unused in modal — logic moved to Soportes tab
     const modal = document.getElementById("nmPayModal");
     modal.innerHTML = `
-<div class="nm-pay-dialog">
+<div class="nm-pay-dialog" style="max-width:440px">
   <div class="nm-pay-dialog-h">
-    <b>Control de soportes documentales</b>
+    <b>Soportes</b>
     <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
   </div>
   <div class="nm-pay-dialog-b">
-    ${supports.length ? `
+    <div style="font-size:13px;color:#334155;padding:8px 0">
+      Los soportes ahora se gestionan en la pestaña <b>Soportes</b> dentro del módulo de Nómina.
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmGoSupTab">Ir a Soportes</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+    </div>
+    ${false ? `
     <div style="overflow:auto">
     <table class="nm-pay-table">
       <thead><tr><th>Empleado</th><th>Municipio</th><th>Novedad</th><th>Soporte</th><th>Estado</th><th>Obs.</th><th></th></tr></thead>
@@ -1787,13 +2217,15 @@ async function openSupportsModal() {
           <td>${escapeHtml(s.employee_name || "")}<br><small>${escapeHtml(s.document_number || "")}</small></td>
           <td>${escapeHtml(s.municipality_name || "")}</td>
           <td>${escapeHtml(s.novelty_type || "")}</td>
-          <td>${escapeHtml(s.support_type || "")}</td>
-          <td>${escapeHtml(statusLabel[s.status] || s.status || "")}</td>
+          <td>${escapeHtml(s.support_type || (s.id ? "" : "Pendiente por registrar"))}</td>
+          <td>${escapeHtml(statusLabel[s.support_status || s.status] || s.support_status || s.status || "")}</td>
           <td>${escapeHtml(s.observations || "")}</td>
           <td style="white-space:nowrap">
+            ${s.id ? `
             <button class="nm-pay-btn nm-pay-btn--sm" data-support-status="${s.id}" data-status="cargado">Cargado</button>
             <button class="nm-pay-btn nm-pay-btn--sm" data-support-status="${s.id}" data-status="aprobado">Aprobar</button>
             <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--danger" data-support-status="${s.id}" data-status="rechazado">Rechazar</button>
+            ` : `<span style="color:#64748B;font-size:12px">Sin soporte cargado</span>`}
           </td>
         </tr>`).join("")}</tbody>
     </table>
@@ -1803,16 +2235,378 @@ async function openSupportsModal() {
 </div>`;
     modal.hidden = false;
     wireModalClose();
-    modal.querySelectorAll("[data-support-status]").forEach((btn) => btn.addEventListener("click", async () => {
-      await apiFetch("/payroll/supports", {
-        method: "POST",
-        body: JSON.stringify({ id: btn.dataset.supportStatus, status: btn.dataset.status }),
-      });
+    document.getElementById("nmGoSupTab")?.addEventListener("click", async () => {
       closeModal();
-      await reloadWorkArea();
-      showSuccess("Soporte actualizado");
-    }));
+      activePrimaryTab = "soportes";
+      if (!supportsData.length) await loadSupports();
+      render();
+    });
   } catch (err) { showError(err.message); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PESTAÑA SOPORTES — CARGA DE DATOS
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadSupports() {
+  if (!activePeriod) { supportsData = []; return; }
+  try {
+    const params = new URLSearchParams({ periodId: activePeriod.id });
+    if (supportsFilters.municipalityId) params.set("municipalityId", supportsFilters.municipalityId);
+    if (supportsFilters.status) params.set("status", supportsFilters.status);
+    const response = await apiFetch(`/payroll/supports?${params}`);
+    supportsData = Array.isArray(response.data) ? response.data : [];
+  } catch (err) {
+    showError("Error cargando soportes: " + (err.message || ""));
+    supportsData = [];
+  }
+}
+
+function filteredSupports() {
+  let data = supportsData;
+  if (supportsFilters.noveltyType) data = data.filter((s) => s.novelty_type === supportsFilters.noveltyType);
+  if (supportsFilters.employee) {
+    const q = normalized(supportsFilters.employee);
+    data = data.filter((s) => normalized(s.employee_name).includes(q) || normalized(s.document_number).includes(q));
+  }
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PESTAÑA SOPORTES — RENDER
+// ─────────────────────────────────────────────────────────────────────────────
+function supportStatusBadge(status) {
+  const s = String(status || "pendiente");
+  const labels = {
+    pendiente: "Pendiente", cargado: "Cargado", aprobado: "Aprobado",
+    rechazado: "Rechazado", correccion_solicitada: "Corrección solicitada",
+  };
+  return `<span class="nm-sup-badge nm-sup-badge--${escapeHtml(s)}">${escapeHtml(labels[s] || s)}</span>`;
+}
+
+function renderSupportsShell() {
+  if (!activePeriod) {
+    return `<div style="padding:20px"><div class="nm-pay-empty">Selecciona un periodo de nómina para ver sus soportes.</div></div>`;
+  }
+  const data = filteredSupports();
+
+  // Métricas globales (sobre supportsData completo, no filtrado)
+  const pending  = supportsData.filter((s) => (s.status || s.support_status) === "pendiente").length;
+  const approved = supportsData.filter((s) => (s.status || s.support_status) === "aprobado").length;
+  const rejected = supportsData.filter((s) => (s.status || s.support_status) === "rechazado").length;
+  const noFile   = supportsData.filter((s) => !s.file_url || s.file_url === "").length;
+
+  // Municipios únicos para el filtro
+  const allMunis = [...new Map(
+    supportsData.filter((s) => s.municipality_id).map((s) => [s.municipality_id, s.municipality_name])
+  ).entries()].sort(([, a], [, b]) => (a || "").localeCompare(b || "", "es"));
+
+  // Visor seleccionado
+  const viewerSupport = viewerSupportId
+    ? supportsData.find((s) => String(s.support_id || s.id) === String(viewerSupportId) || String(s.novelty_id) === String(viewerSupportId))
+    : null;
+
+  return `
+<div class="nm-sup-view">
+
+  <!-- Filtros -->
+  <div class="nm-sup-filters">
+    <label>Municipio</label>
+    <select class="nm-pay-select nm-pay-input--sm" id="supFltMun" style="min-width:130px">
+      <option value="">Todos</option>
+      ${allMunis.map(([id, name]) => `<option value="${id}" ${String(supportsFilters.municipalityId) === String(id) ? "selected" : ""}>${escapeHtml(name || "")}</option>`).join("")}
+    </select>
+    <label>Estado</label>
+    <select class="nm-pay-select nm-pay-input--sm" id="supFltStatus">
+      <option value="">Todos</option>
+      <option value="pendiente" ${supportsFilters.status === "pendiente" ? "selected" : ""}>Pendiente</option>
+      <option value="cargado" ${supportsFilters.status === "cargado" ? "selected" : ""}>Cargado</option>
+      <option value="aprobado" ${supportsFilters.status === "aprobado" ? "selected" : ""}>Aprobado</option>
+      <option value="rechazado" ${supportsFilters.status === "rechazado" ? "selected" : ""}>Rechazado</option>
+      <option value="correccion_solicitada" ${supportsFilters.status === "correccion_solicitada" ? "selected" : ""}>Corrección solicitada</option>
+    </select>
+    <label>Tipo novedad</label>
+    <select class="nm-pay-select nm-pay-input--sm" id="supFltNovType" style="min-width:150px">
+      <option value="">Todos</option>
+      ${NOVELTY_TYPES.map((t) => `<option value="${t.code}" ${supportsFilters.noveltyType === t.code ? "selected" : ""}>${escapeHtml(t.name)}</option>`).join("")}
+    </select>
+    <label>Empleado</label>
+    <input class="nm-pay-input nm-pay-input--sm" id="supFltEmp" placeholder="Nombre o documento" value="${escapeHtml(supportsFilters.employee)}" style="min-width:140px">
+    <button class="nm-pay-btn nm-pay-btn--sm" id="supFltClear">Limpiar</button>
+    <div style="flex:1"></div>
+    <span style="font-size:11px;color:#64748B;white-space:nowrap">${data.length} resultado${data.length !== 1 ? "s" : ""}</span>
+  </div>
+
+  <!-- Métricas -->
+  <div class="nm-sup-metrics">
+    <div class="nm-sup-metric nm-sup-metric--pending"><span>Pendientes</span><b>${pending}</b></div>
+    <div class="nm-sup-metric nm-sup-metric--approved"><span>Aprobados</span><b>${approved}</b></div>
+    <div class="nm-sup-metric nm-sup-metric--rejected"><span>Rechazados</span><b>${rejected}</b></div>
+    <div class="nm-sup-metric nm-sup-metric--nofile"><span>Sin archivo</span><b>${noFile}</b></div>
+  </div>
+
+  <!-- Cuerpo: tabla + visor -->
+  <div class="nm-sup-body">
+    <div class="nm-sup-table-panel">${renderSupportsTable(data)}</div>
+    <div class="nm-sup-viewer-panel" id="nmSupViewer" ${viewerSupport ? "" : "hidden"}>
+      ${viewerSupport ? renderSupportViewerContent(viewerSupport) : ""}
+    </div>
+  </div>
+</div>`;
+}
+
+function renderSupportsTable(data) {
+  if (!data.length) {
+    return `<div class="nm-pay-empty" style="margin:20px">No hay soportes con los filtros actuales.<br><small style="color:#94A3B8">Los soportes aparecen cuando una novedad tiene "Soporte requerido: Sí".</small></div>`;
+  }
+  return `
+<table class="nm-pay-table nm-sup-table">
+  <thead>
+    <tr>
+      <th>Empleado</th><th>Documento</th><th>Tipo novedad</th><th>Municipio</th>
+      <th>Institución</th><th>Fecha nov.</th><th>Tipo soporte</th><th>Archivo</th>
+      <th>Estado</th><th>Revisado por</th><th>Fecha rev.</th><th>Observación</th><th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${data.map((s) => {
+      const supId    = s.support_id || s.id;
+      const status   = s.status || s.support_status || "pendiente";
+      const isActive = supId
+        ? String(supId) === String(viewerSupportId)
+        : String(s.novelty_id) === String(viewerSupportId);
+      const hasFile  = Boolean(s.file_url && s.file_url !== "");
+      const nm       = noveltyByCode(s.novelty_type);
+      const nmName   = nm?.name || escapeHtml(s.novelty_type || "—");
+      const isLocked = status === "aprobado" || status === "rechazado";
+      const viewKey  = supId || s.novelty_id;
+      const revDate  = s.reviewed_at ? new Date(s.reviewed_at).toLocaleDateString("es-CO", { year:"2-digit", month:"2-digit", day:"2-digit" }) : "—";
+      return `
+<tr class="${isActive ? "nm-sup-row-active" : ""}">
+  <td><b style="font-size:12px">${escapeHtml(s.employee_name || "—")}</b></td>
+  <td><small>${escapeHtml(s.document_number || "—")}</small></td>
+  <td style="white-space:nowrap;font-size:11px">${escapeHtml(nmName)}</td>
+  <td style="font-size:11px">${escapeHtml(s.municipality_name || "—")}</td>
+  <td style="font-size:11px"><small>${escapeHtml(s.institution_name || "—")}</small></td>
+  <td style="font-size:11px;white-space:nowrap">${escapeHtml(String(s.novelty_date || "—").slice(0, 10))}</td>
+  <td style="font-size:11px">${escapeHtml(s.support_type || "—")}</td>
+  <td>
+    ${hasFile
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${viewKey}" title="${escapeHtml(s.file_name || "Ver archivo")}">&#128206; Ver</button>`
+      : supId
+        ? `<label class="nm-pay-btn nm-pay-btn--sm" style="cursor:pointer" title="Cargar archivo para este soporte">
+             &#8593; Cargar
+             <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none" data-upload-support="${supId}" data-novelty-id="${s.novelty_id}">
+           </label>`
+        : `<label class="nm-pay-btn nm-pay-btn--sm" style="cursor:pointer;opacity:.7" title="Cargar soporte">
+             &#8593; Cargar
+             <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none" data-upload-support="" data-novelty-id="${s.novelty_id}">
+           </label>`}
+  </td>
+  <td style="white-space:nowrap">${supportStatusBadge(status)}</td>
+  <td style="font-size:11px">${escapeHtml(s.reviewed_by_name || (s.reviewed_by ? `ID:${s.reviewed_by}` : "—"))}</td>
+  <td style="font-size:11px;white-space:nowrap">${revDate}</td>
+  <td style="max-width:130px"><small style="display:block;overflow:hidden;max-height:36px;line-height:1.4">${escapeHtml(s.observations || "—")}</small></td>
+  <td style="white-space:nowrap">
+    ${supId ? `
+      ${!isLocked ? `
+        <button class="nm-pay-btn nm-pay-btn--sm" data-sup-approve="${supId}" style="color:#166534;border-color:#A7F3D0">&#10003;</button>
+        <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--danger" data-sup-reject="${supId}" style="font-size:11px">&#10007;</button>
+        <button class="nm-pay-btn nm-pay-btn--sm" data-sup-correction="${supId}" style="color:#C2410C;border-color:#FED7AA;font-size:10px">&#8629;</button>
+      ` : `<button class="nm-pay-btn nm-pay-btn--sm" data-sup-undo="${supId}" style="font-size:10px">Revertir</button>`}
+      <button class="nm-pay-btn nm-pay-btn--sm" data-sup-obs="${supId}" style="font-size:10px">Obs.</button>
+    ` : `<span style="font-size:10px;color:#94A3B8">Sin registro</span>`}
+  </td>
+</tr>`;
+    }).join("")}
+  </tbody>
+</table>`;
+}
+
+function renderSupportViewerContent(support) {
+  if (!support) return "";
+  const url  = support.file_url || "";
+  const name = support.file_name || "Archivo";
+  const status = support.status || support.support_status || "pendiente";
+  const supId = support.support_id || support.id;
+
+  let viewerHtml;
+  if (!url || url === "") {
+    viewerHtml = `<div class="nm-pay-empty" style="padding:20px;text-align:center">Sin archivo adjunto</div>`;
+  } else {
+    const isImg = /\.(jpg|jpeg|png|gif|webp)$/i.test(url) || /\.(jpg|jpeg|png|gif|webp)$/i.test(name);
+    viewerHtml = isImg
+      ? `<img src="${escapeHtml(url)}" class="nm-sup-viewer-img" alt="${escapeHtml(name)}">`
+      : `<iframe src="${escapeHtml(url)}" class="nm-sup-viewer-iframe" title="${escapeHtml(name)}"></iframe>`;
+  }
+
+  return `
+<div class="nm-sup-viewer-head">
+  <span title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+  <button class="nm-pay-btn nm-pay-btn--sm" id="nmSupViewerClose">&#10005;</button>
+</div>
+<div class="nm-sup-viewer-body">${viewerHtml}</div>
+<div class="nm-sup-review-panel">
+  <div style="font-size:12px;font-weight:700;color:#0F172A">${escapeHtml(support.employee_name || "")}</div>
+  <div style="font-size:11px;color:#64748B;margin-bottom:2px">
+    ${escapeHtml(noveltyByCode(support.novelty_type)?.name || support.novelty_type || "")}
+    ${support.municipality_name ? ` · ${escapeHtml(support.municipality_name)}` : ""}
+  </div>
+  <div>${supportStatusBadge(status)}</div>
+  ${supId ? `
+  <textarea class="nm-pay-textarea" id="supViewObs" placeholder="Observación…" rows="2" style="min-height:44px">${escapeHtml(support.observations || "")}</textarea>
+  <div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${status !== "aprobado" ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" data-viewer-approve="${supId}">&#10003; Aprobar</button>` : ""}
+    ${status !== "rechazado" ? `<button class="nm-pay-btn nm-pay-btn--danger nm-pay-btn--sm" data-viewer-reject="${supId}">&#10007; Rechazar</button>` : ""}
+    ${status !== "correccion_solicitada" ? `<button class="nm-pay-btn nm-pay-btn--sm" data-viewer-correction="${supId}" style="color:#C2410C;border-color:#FED7AA">&#8629; Corrección</button>` : ""}
+    <button class="nm-pay-btn nm-pay-btn--sm" data-viewer-obs="${supId}">Guardar obs.</button>
+  </div>` : `<div style="font-size:11px;color:#94A3B8">Sin registro de soporte — carga el archivo primero.</div>`}
+</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PESTAÑA SOPORTES — EVENTOS
+// ─────────────────────────────────────────────────────────────────────────────
+function wireSupportEvents() {
+  // Filtros
+  document.getElementById("supFltMun")?.addEventListener("change", async (e) => {
+    supportsFilters.municipalityId = e.target.value;
+    await loadSupports(); // recargar con filtro de municipio en backend
+    render();
+  });
+  document.getElementById("supFltStatus")?.addEventListener("change", async (e) => {
+    supportsFilters.status = e.target.value;
+    await loadSupports();
+    render();
+  });
+  document.getElementById("supFltNovType")?.addEventListener("change", (e) => {
+    supportsFilters.noveltyType = e.target.value;
+    render();
+  });
+  document.getElementById("supFltEmp")?.addEventListener("input", (e) => {
+    supportsFilters.employee = e.target.value;
+    render();
+    document.getElementById("supFltEmp")?.focus();
+  });
+  document.getElementById("supFltClear")?.addEventListener("click", async () => {
+    supportsFilters = { municipalityId: "", status: "", noveltyType: "", employee: "" };
+    await loadSupports();
+    render();
+  });
+
+  // Visor de archivo
+  document.querySelectorAll("[data-view-support]").forEach((btn) => btn.addEventListener("click", () => {
+    const key = btn.dataset.viewSupport;
+    viewerSupportId = viewerSupportId === key ? null : key;
+    render();
+  }));
+  document.getElementById("nmSupViewerClose")?.addEventListener("click", () => {
+    viewerSupportId = null;
+    render();
+  });
+
+  // Acciones desde tabla
+  document.querySelectorAll("[data-sup-approve]").forEach((btn) => btn.addEventListener("click", async () => {
+    await updateSupportStatus(btn.dataset.supApprove, "aprobado", "");
+  }));
+  document.querySelectorAll("[data-sup-reject]").forEach((btn) => btn.addEventListener("click", () => {
+    showPromptModal("Rechazar soporte", "Motivo del rechazo (obligatorio)", "Describe el motivo…", async (obs) => {
+      await updateSupportStatus(btn.dataset.supReject, "rechazado", obs);
+    });
+  }));
+  document.querySelectorAll("[data-sup-correction]").forEach((btn) => btn.addEventListener("click", () => {
+    showPromptModal("Solicitar corrección", "Indica qué debe corregirse", "Descripción…", async (obs) => {
+      await updateSupportStatus(btn.dataset.supCorrection, "correccion_solicitada", obs);
+    });
+  }));
+  document.querySelectorAll("[data-sup-undo]").forEach((btn) => btn.addEventListener("click", async () => {
+    await updateSupportStatus(btn.dataset.supUndo, "pendiente", "");
+  }));
+  document.querySelectorAll("[data-sup-obs]").forEach((btn) => btn.addEventListener("click", () => {
+    showPromptModal("Añadir observación", "Observación para este soporte", "Escribe aquí…", async (obs) => {
+      await updateSupportStatus(btn.dataset.supObs, null, obs);
+    });
+  }));
+
+  // Carga de archivo
+  document.querySelectorAll("[data-upload-support]").forEach((input) => input.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadSupportFile(input.dataset.uploadSupport, input.dataset.noveltyId, file);
+  }));
+
+  // Acciones desde visor
+  document.querySelectorAll("[data-viewer-approve]").forEach((btn) => btn.addEventListener("click", async () => {
+    const obs = document.getElementById("supViewObs")?.value || "";
+    await updateSupportStatus(btn.dataset.viewerApprove, "aprobado", obs);
+  }));
+  document.querySelectorAll("[data-viewer-reject]").forEach((btn) => btn.addEventListener("click", async () => {
+    const obs = document.getElementById("supViewObs")?.value || "";
+    if (!obs.trim()) { showError("Escribe el motivo del rechazo"); return; }
+    await updateSupportStatus(btn.dataset.viewerReject, "rechazado", obs);
+  }));
+  document.querySelectorAll("[data-viewer-correction]").forEach((btn) => btn.addEventListener("click", async () => {
+    const obs = document.getElementById("supViewObs")?.value || "";
+    if (!obs.trim()) { showError("Indica qué debe corregirse"); return; }
+    await updateSupportStatus(btn.dataset.viewerCorrection, "correccion_solicitada", obs);
+  }));
+  document.querySelectorAll("[data-viewer-obs]").forEach((btn) => btn.addEventListener("click", async () => {
+    const obs = document.getElementById("supViewObs")?.value || "";
+    await updateSupportStatus(btn.dataset.viewerObs, null, obs);
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PESTAÑA SOPORTES — ACCIONES API
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateSupportStatus(supportId, status, observations) {
+  try {
+    const body = { id: supportId };
+    if (status !== null && status !== undefined) body.status = status;
+    if (observations !== undefined && observations !== null) body.observations = observations;
+    await apiFetch("/payroll/supports", { method: "POST", body: JSON.stringify(body) });
+    await loadSupports();
+    const msg = !status ? "Observación guardada"
+      : status === "aprobado" ? "Soporte aprobado"
+      : status === "rechazado" ? "Soporte rechazado"
+      : status === "correccion_solicitada" ? "Corrección solicitada"
+      : "Soporte actualizado";
+    showSuccess(msg);
+    render();
+  } catch (err) {
+    showError(err.message || "Error al actualizar soporte");
+  }
+}
+
+async function uploadSupportFile(supportId, noveltyId, file) {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("noveltyId", noveltyId || "");
+    const token = state.token || localStorage.getItem("empiria_token") || "";
+    const res = await fetch("/payroll/supports/upload", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.message || "Error al subir archivo");
+    // Actualiza el soporte con la URL del archivo
+    await apiFetch("/payroll/supports", {
+      method: "POST",
+      body: JSON.stringify({
+        id: supportId || null,
+        novelty_id: noveltyId,
+        file_url: json.data.url,
+        file_name: json.data.fileName,
+        status: "cargado",
+      }),
+    });
+    await loadSupports();
+    showSuccess("Archivo cargado correctamente");
+    render();
+  } catch (err) {
+    showError(err.message || "Error al cargar archivo");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1830,13 +2624,17 @@ function closeModal() {
 // ENTRYPOINTS EXPORTADOS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function loadPayrollModule() {
-  periods           = [];
-  activePeriod      = null;
-  groupsState       = { positions: [], groups: [] };
-  activePosition    = "";
-  activeGroupId     = null;
-  activeGroupDetail = null;
+  periods            = [];
+  activePeriod       = null;
+  groupsState        = { positions: [], groups: [] };
+  activePosition     = "";
+  activeGroupId      = null;
+  activeGroupDetail  = null;
   municipalitySearch = "";
+  activePrimaryTab   = "nomina";
+  supportsData       = [];
+  supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
+  viewerSupportId    = null;
   await loadPeriods();
   await loadGroups();
   await loadGroupDetail();

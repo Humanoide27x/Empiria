@@ -6,6 +6,15 @@ const { calculatePayrollDeductionBase } = require("../../utils/payroll-deduction
 
 const OPERARIO_POSITION = "OPERARIO MANIPULADOR DE ALIMENTOS";
 
+// Tarifas externas fijas por categoría (NO usar salario interno / 30)
+const EXTERNAL_TURN_TARIFFS = {
+  CAARES1: 119600, CAARES3: 119600,
+  CAARES2: 71100,  CAARES4: 71100,
+  CAA1:    113200,
+  CAA2:    85000,
+  RI:      56700,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TIPOS OFICIALES DE NOVEDAD (12 tipos canónicos de EMPIRIA)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +162,162 @@ function workTimeKind(value) {
 function statusIsActive(value) {
   const v = norm(value);
   return !["RETIRADO", "RETIRADA", "INACTIVO", "INACTIVA"].includes(v);
+}
+
+function pendingNoveltySupportSql(noveltyAlias = "pn") {
+  return `COALESCE(${noveltyAlias}.support_required, false) = true
+    AND (
+      NOT EXISTS (
+        SELECT 1
+          FROM novelty_supports ns_missing
+         WHERE ns_missing.novelty_id = ${noveltyAlias}.id
+      )
+      OR EXISTS (
+        SELECT 1
+          FROM novelty_supports ns_pending
+         WHERE ns_pending.novelty_id = ${noveltyAlias}.id
+           AND COALESCE(ns_pending.required, true) = true
+           AND ns_pending.status <> 'aprobado'
+      )
+    )`;
+}
+
+async function syncNoveltySupportStatus(noveltyId, db = pool) {
+  const noveltyDbId = id(noveltyId);
+  if (!noveltyDbId) return null;
+
+  const { rows } = await db.query(
+    `WITH support_agg AS (
+       SELECT
+         COUNT(*) FILTER (WHERE COALESCE(required, true))::int                        AS required_count,
+         COUNT(*) FILTER (WHERE COALESCE(required, true) AND status = 'aprobado')::int AS approved_required_count,
+         BOOL_OR(COALESCE(required, true) AND status = 'rechazado')                   AS has_rejected,
+         BOOL_OR(COALESCE(required, true) AND status IN ('cargado', 'aprobado'))     AS has_uploaded
+         FROM novelty_supports
+        WHERE novelty_id = $1
+     )
+     UPDATE payroll_novelties pn
+        SET support_status = CASE
+          WHEN COALESCE(pn.support_required, false) = false THEN 'aprobado'
+          WHEN COALESCE(sa.required_count, 0) = 0 THEN 'pendiente'
+          WHEN COALESCE(sa.approved_required_count, 0) = COALESCE(sa.required_count, 0) THEN 'aprobado'
+          WHEN COALESCE(sa.has_rejected, false) THEN 'rechazado'
+          WHEN COALESCE(sa.has_uploaded, false) THEN 'cargado'
+          ELSE 'pendiente'
+        END,
+        updated_at = NOW()
+       FROM support_agg sa
+      WHERE pn.id = $1
+      RETURNING pn.*`,
+    [noveltyDbId]
+  );
+
+  return rows[0] || null;
+}
+
+async function listSupportRows(filters = {}) {
+  const values = [];
+  const supportWhere = [];
+  const noveltyWhere = [];
+
+  if (filters.periodId) {
+    values.push(id(filters.periodId));
+    supportWhere.push(`ns.payroll_period_id = $${values.length}`);
+    noveltyWhere.push(`pn.payroll_period_id = $${values.length}`);
+  }
+  if (filters.municipalityId) {
+    values.push(id(filters.municipalityId));
+    supportWhere.push(`COALESCE(ns.municipality_id, pn.municipality_id) = $${values.length}`);
+    noveltyWhere.push(`pn.municipality_id = $${values.length}`);
+  }
+  if (filters.groupId) {
+    values.push(id(filters.groupId));
+    supportWhere.push(`pn.payroll_item_id IN (SELECT id FROM payroll_items WHERE group_id = $${values.length})`);
+    noveltyWhere.push(`pn.payroll_item_id IN (SELECT id FROM payroll_items WHERE group_id = $${values.length})`);
+  }
+  if (filters.status) {
+    values.push(text(filters.status));
+    supportWhere.push(`ns.status = $${values.length}`);
+    noveltyWhere.push(`$${values.length} = 'pendiente'`);
+  }
+
+  const supportClause = supportWhere.length ? `WHERE ${supportWhere.join(" AND ")}` : "";
+  const noveltyClause = noveltyWhere.length ? ` AND ${noveltyWhere.join(" AND ")}` : "";
+
+  const { rows } = await pool.query(
+    `SELECT sup.*,
+            m.name AS municipality_name,
+            u.username AS reviewed_by_name
+       FROM (
+         SELECT
+           pn.id AS novelty_id,
+           ns.id AS id,
+           ns.id AS support_id,
+           COALESCE(pn.employee_name, '') AS employee_name,
+           COALESCE(pn.document_number, '') AS document_number,
+           pn.novelty_type,
+           COALESCE(ns.status, 'pendiente') AS status,
+           COALESCE(ns.status, 'pendiente') AS support_status,
+           COALESCE(ns.municipality_id, pn.municipality_id) AS municipality_id,
+           COALESCE(pn.start_date, pn.end_date, pn.created_at::date) AS novelty_date,
+           COALESCE(ns.support_type, '') AS support_type,
+           COALESCE(ns.file_name, '') AS file_name,
+           COALESCE(ns.file_url, '') AS file_url,
+           COALESCE(ns.observations, pn.observations, pn.description, '') AS observations,
+           ns.reviewed_by,
+           ns.reviewed_at,
+           COALESCE(pi.institution_name, '') AS institution_name,
+           ns.created_at,
+           ns.updated_at,
+           'support'::text AS row_source
+          FROM novelty_supports ns
+          JOIN payroll_novelties pn ON pn.id = ns.novelty_id
+          LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+          ${supportClause}
+
+         UNION ALL
+
+         SELECT
+           pn.id AS novelty_id,
+           NULL::integer AS id,
+           NULL::integer AS support_id,
+           COALESCE(pn.employee_name, '') AS employee_name,
+           COALESCE(pn.document_number, '') AS document_number,
+           pn.novelty_type,
+           'pendiente'::text AS status,
+           'pendiente'::text AS support_status,
+           pn.municipality_id AS municipality_id,
+           COALESCE(pn.start_date, pn.end_date, pn.created_at::date) AS novelty_date,
+           ''::text AS support_type,
+           ''::text AS file_name,
+           ''::text AS file_url,
+           COALESCE(pn.observations, pn.description, '') AS observations,
+           NULL::integer AS reviewed_by,
+           NULL::timestamptz AS reviewed_at,
+           COALESCE(pi.institution_name, '') AS institution_name,
+           pn.created_at,
+           pn.updated_at,
+           'novelty'::text AS row_source
+          FROM payroll_novelties pn
+          LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+         WHERE COALESCE(pn.support_required, false) = true
+           AND NOT EXISTS (
+             SELECT 1
+               FROM novelty_supports ns_existing
+              WHERE ns_existing.novelty_id = pn.id
+           )
+           ${noveltyClause}
+       ) sup
+       LEFT JOIN municipalities m ON m.id = sup.municipality_id
+       LEFT JOIN users u ON u.id = sup.reviewed_by
+      ORDER BY sup.novelty_date DESC NULLS LAST,
+               UPPER(sup.employee_name),
+               sup.novelty_id DESC,
+               sup.support_id DESC NULLS LAST`,
+    values
+  );
+
+  return rows;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -623,20 +788,38 @@ async function listOperationalPeriods(filters = {}) {
   if (filters.contractId) { values.push(id(filters.contractId)); where.push(`pp.contract_id = $${values.length}`); }
 
   const { rows } = await pool.query(
-    `SELECT pp.*,
-            COUNT(DISTINCT pi.employee_id)::int                                        AS employee_count,
-            COALESCE(SUM(pi.total_devengado), 0)::bigint                               AS total_devengado,
-            COALESCE(SUM(pi.total_deducciones), 0)::bigint                             AS total_deducciones,
-            COALESCE(SUM(pi.neto_pagar), 0)::bigint                                    AS total_neto,
-            COUNT(DISTINCT pn.id)::int                                                 AS novelty_count,
-            COUNT(DISTINCT pn.id) FILTER (WHERE pn.reviewed = true)::int               AS reviewed_count,
-            COUNT(DISTINCT ns.id) FILTER (WHERE ns.status = 'pendiente')::int          AS pending_supports
+    `WITH item_stats AS (
+       SELECT
+         pi.period_id,
+         COUNT(DISTINCT pi.employee_id)::int          AS employee_count,
+         COALESCE(SUM(pi.total_devengado), 0)::bigint AS total_devengado,
+         COALESCE(SUM(pi.total_deducciones), 0)::bigint AS total_deducciones,
+         COALESCE(SUM(pi.neto_pagar), 0)::bigint      AS total_neto
+        FROM payroll_items pi
+       GROUP BY pi.period_id
+     ),
+     novelty_stats AS (
+       SELECT
+         pn.payroll_period_id AS period_id,
+         COUNT(DISTINCT pn.id)::int AS novelty_count,
+         COUNT(DISTINCT pn.id) FILTER (WHERE pn.reviewed = true)::int AS reviewed_count,
+         COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")})::int AS pending_supports
+        FROM payroll_novelties pn
+       WHERE pn.payroll_period_id IS NOT NULL
+       GROUP BY pn.payroll_period_id
+     )
+     SELECT pp.*,
+            COALESCE(is1.employee_count, 0)    AS employee_count,
+            COALESCE(is1.total_devengado, 0)   AS total_devengado,
+            COALESCE(is1.total_deducciones, 0) AS total_deducciones,
+            COALESCE(is1.total_neto, 0)        AS total_neto,
+            COALESCE(ns1.novelty_count, 0)     AS novelty_count,
+            COALESCE(ns1.reviewed_count, 0)    AS reviewed_count,
+            COALESCE(ns1.pending_supports, 0)  AS pending_supports
        FROM payroll_periods pp
-       LEFT JOIN payroll_items pi      ON pi.period_id = pp.id
-       LEFT JOIN payroll_novelties pn  ON pn.payroll_period_id = pp.id
-       LEFT JOIN novelty_supports ns   ON ns.payroll_period_id = pp.id
+       LEFT JOIN item_stats is1    ON is1.period_id = pp.id
+       LEFT JOIN novelty_stats ns1 ON ns1.period_id = pp.id
        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-       GROUP BY pp.id
        ORDER BY pp.period_start DESC`,
     values
   );
@@ -704,22 +887,41 @@ async function listPayrollGroups(periodId) {
   }
 
   const { rows } = await pool.query(
-    `SELECT pg.*, m.name AS municipality_name,
-            COUNT(DISTINCT pi.employee_id)::int                                      AS employees,
-            COUNT(DISTINCT pn.id)::int                                               AS novelties,
-            COUNT(DISTINCT pn.id) FILTER (WHERE pn.reviewed = true)::int             AS reviewed,
-            COUNT(DISTINCT ns.id) FILTER (WHERE ns.status = 'pendiente')::int        AS pending_supports,
-            COUNT(DISTINCT pi.id) FILTER (WHERE pi.reviewed = true)::int             AS items_reviewed,
-            COALESCE(SUM(pi.total_devengado),0)::bigint                              AS total_devengado,
-            COALESCE(SUM(pi.total_deducciones),0)::bigint                            AS total_deducciones,
-            COALESCE(SUM(pi.neto_pagar),0)::bigint                                   AS neto
+    `WITH item_stats AS (
+       SELECT
+         pi.group_id,
+         COUNT(DISTINCT pi.employee_id)::int          AS employees,
+         COUNT(DISTINCT pi.id) FILTER (WHERE pi.reviewed = true)::int AS items_reviewed,
+         COALESCE(SUM(pi.total_devengado), 0)::bigint AS total_devengado,
+         COALESCE(SUM(pi.total_deducciones), 0)::bigint AS total_deducciones,
+         COALESCE(SUM(pi.neto_pagar), 0)::bigint      AS neto
+        FROM payroll_items pi
+       GROUP BY pi.group_id
+     ),
+     novelty_stats AS (
+       SELECT
+         pi.group_id,
+         COUNT(DISTINCT pn.id)::int AS novelties,
+         COUNT(DISTINCT pn.id) FILTER (WHERE pn.reviewed = true)::int AS reviewed,
+         COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")})::int AS pending_supports
+        FROM payroll_items pi
+        LEFT JOIN payroll_novelties pn ON pn.payroll_item_id = pi.id
+       GROUP BY pi.group_id
+     )
+     SELECT pg.*, m.name AS municipality_name,
+            COALESCE(is1.employees, 0)         AS employees,
+            COALESCE(ns1.novelties, 0)         AS novelties,
+            COALESCE(ns1.reviewed, 0)          AS reviewed,
+            COALESCE(ns1.pending_supports, 0)  AS pending_supports,
+            COALESCE(is1.items_reviewed, 0)    AS items_reviewed,
+            COALESCE(is1.total_devengado, 0)   AS total_devengado,
+            COALESCE(is1.total_deducciones, 0) AS total_deducciones,
+            COALESCE(is1.neto, 0)              AS neto
        FROM payroll_groups pg
-       LEFT JOIN municipalities m      ON m.id = pg.municipality_id
-       LEFT JOIN payroll_items pi      ON pi.group_id = pg.id
-       LEFT JOIN payroll_novelties pn  ON pn.payroll_item_id = pi.id
-       LEFT JOIN novelty_supports ns   ON ns.novelty_id = pn.id
+       LEFT JOIN municipalities m ON m.id = pg.municipality_id
+       LEFT JOIN item_stats is1   ON is1.group_id = pg.id
+       LEFT JOIN novelty_stats ns1 ON ns1.group_id = pg.id
       WHERE pg.period_id = $1
-      GROUP BY pg.id, m.name
       ORDER BY UPPER(pg.operational_position), m.name NULLS LAST`,
     [periodId]
   );
@@ -774,10 +976,51 @@ async function listPayrollGroups(periodId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CALCULAR GRUPO DE NÓMINA
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS DE CICLO DE VIDA
+// ─────────────────────────────────────────────────────────────────────────────
+const EDITABLE_STATUSES = new Set(["DRAFT", "IN_REVIEW", "REOPENED", "pendiente", "en_revision", "revisada"]);
+const CLOSED_STATUS     = "CLOSED";
+
+function assertGroupEditable(group) {
+  if (!group) throw Object.assign(new Error("Grupo de nómina no encontrado"), { httpStatus: 404 });
+  if (!EDITABLE_STATUSES.has(group.status)) {
+    const err = new Error("Esta nómina está cerrada. Reabrirla para realizar cambios.");
+    err.httpStatus = 403;
+    throw err;
+  }
+}
+
+async function markNeedsRecalculation(groupId) {
+  if (!groupId) return;
+  await pool.query(
+    `UPDATE payroll_groups SET needs_recalculation = true, updated_at = NOW() WHERE id = $1`,
+    [groupId]
+  );
+}
+
+async function getGroupIdForItem(itemId) {
+  const { rows } = await pool.query(
+    `SELECT group_id FROM payroll_items WHERE id = $1`,
+    [itemId]
+  );
+  return rows[0]?.group_id || null;
+}
+
+async function getGroupIdForNovelty(noveltyId) {
+  const { rows } = await pool.query(
+    `SELECT pi.group_id
+       FROM payroll_novelties pn
+       LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+      WHERE pn.id = $1`,
+    [noveltyId]
+  );
+  return rows[0]?.group_id || null;
+}
+
 async function calculatePayrollGroup(groupId) {
   const group = await getGroup(groupId);
-  if (!group) throw new Error("Grupo de nomina no encontrado");
-  if (group.status === "cerrada") throw new Error("El grupo ya esta cerrado");
+  assertGroupEditable(group);
 
   // Todos los empleados activos del período (para contar peers CAARES por site_id)
   const allPeriodEmployees = await activeEmployeesForPeriod(group.period_id);
@@ -887,7 +1130,9 @@ async function calculatePayrollGroup(groupId) {
     }
 
     await client.query(
-      `UPDATE payroll_groups SET status = 'en_revision', updated_at = NOW() WHERE id = $1`,
+      `UPDATE payroll_groups
+          SET status = 'IN_REVIEW', needs_recalculation = false, updated_at = NOW()
+        WHERE id = $1`,
       [group.id]
     );
     await client.query("COMMIT");
@@ -902,6 +1147,60 @@ async function calculatePayrollGroup(groupId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TURNOS DEL GRUPO (una fila por payroll_turn_covers.id)
+// ─────────────────────────────────────────────────────────────────────────────
+async function listGroupTurnCovers(groupId) {
+  const { rows } = await pool.query(
+    `SELECT
+       ptc.id            AS turn_cover_id,
+       ptc.novelty_id,
+       ptc.cover_type,
+       ptc.internal_employee_id,
+       ptc.external_worker_id,
+       ptc.days,
+       ptc.value_per_day,
+       ptc.total_value,
+       ptc.created_at    AS cover_created_at,
+       -- Empleado origen (cuya novedad generó el turno)
+       pn.novelty_type,
+       pnt.name          AS novelty_type_name,
+       pn.employee_name  AS origin_employee_name,
+       pn.document_number AS origin_document,
+       pn.start_date     AS novelty_start,
+       pn.end_date       AS novelty_end,
+       pn.days           AS novelty_days,
+       -- Ubicación
+       pi.municipality_id,
+       m.name            AS municipality_name,
+       pi.institution_name,
+       pi.site_name,
+       pi.modality       AS origin_modality,
+       pi.salary_category AS origin_category,
+       -- Cobertura interna: empleado del mismo grupo
+       pi_int.employee_name   AS internal_cover_name,
+       pi_int.document_number AS internal_cover_doc,
+       -- Cobertura externa
+       etw.full_name          AS external_worker_name,
+       etw.document_number    AS external_worker_doc,
+       etw.bank               AS external_bank,
+       etw.account_number     AS external_account
+     FROM payroll_turn_covers ptc
+     JOIN payroll_novelties pn      ON pn.id = ptc.novelty_id
+     JOIN payroll_items pi           ON pi.id = ptc.payroll_item_id
+     LEFT JOIN payroll_novelty_types pnt ON pnt.code = pn.novelty_type
+     LEFT JOIN municipalities m      ON m.id = pi.municipality_id
+     LEFT JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
+     LEFT JOIN payroll_items pi_int
+            ON pi_int.period_id = ptc.payroll_period_id
+           AND pi_int.employee_id = ptc.internal_employee_id
+    WHERE pi.group_id = $1
+    ORDER BY ptc.created_at DESC`,
+    [groupId]
+  );
+  return rows;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DETALLE DE GRUPO (items + novedades + soportes)
 // ─────────────────────────────────────────────────────────────────────────────
 async function getPayrollGroupDetail(periodId, groupId) {
@@ -913,18 +1212,18 @@ async function getPayrollGroupDetail(periodId, groupId) {
   const [
     { rows: items },
     { rows: novelties },
-    { rows: supports },
+    supports,
     { rows: periodCovers },
+    covers,
     salaryCategories,
   ] = await Promise.all([
     pool.query(
       `SELECT pi.*,
-              COUNT(pn.id)::int                                           AS novelty_count,
-              COUNT(pn.id) FILTER (WHERE pn.reviewed = true)::int         AS reviewed_count,
-              COUNT(ns.id) FILTER (WHERE ns.status = 'pendiente')::int    AS pending_supports
+              COUNT(DISTINCT pn.id)::int                                   AS novelty_count,
+              COUNT(DISTINCT pn.id) FILTER (WHERE pn.reviewed = true)::int AS reviewed_count,
+              COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")})::int AS pending_supports
          FROM payroll_items pi
          LEFT JOIN payroll_novelties pn ON pn.payroll_item_id = pi.id
-         LEFT JOIN novelty_supports  ns ON ns.novelty_id = pn.id
         WHERE pi.group_id = $1
         GROUP BY pi.id
         ORDER BY pi.employee_name`,
@@ -934,11 +1233,10 @@ async function getPayrollGroupDetail(periodId, groupId) {
       `SELECT pn.*, pi.employee_name, pi.document_number, pi.reviewed AS item_reviewed,
               pnt.name AS novelty_name,
               pnt.affects_salary, pnt.affects_transport, pnt.requires_turn_cover,
-              ptc.id AS turn_cover_id
+              (SELECT ptc.id FROM payroll_turn_covers ptc WHERE ptc.novelty_id = pn.id LIMIT 1) AS turn_cover_id
          FROM payroll_novelties pn
          LEFT JOIN payroll_items pi          ON pi.id = pn.payroll_item_id
          LEFT JOIN payroll_novelty_types pnt ON pnt.code = pn.novelty_type
-         LEFT JOIN payroll_turn_covers ptc   ON ptc.novelty_id = pn.id
         WHERE pn.payroll_period_id = $1
           AND (
             pn.payroll_item_id IN (SELECT id FROM payroll_items WHERE group_id = $2)
@@ -947,21 +1245,16 @@ async function getPayrollGroupDetail(periodId, groupId) {
         ORDER BY pn.created_at DESC`,
       [periodId, groupId, group.municipality_id]
     ),
-    pool.query(
-      `SELECT ns.*, pn.novelty_type, pi.employee_name, pi.document_number,
-              m.name AS municipality_name
-         FROM novelty_supports ns
-         LEFT JOIN payroll_novelties pn ON pn.id = ns.novelty_id
-         LEFT JOIN payroll_items pi     ON pi.id = pn.payroll_item_id
-         LEFT JOIN municipalities m     ON m.id = ns.municipality_id
-        WHERE ns.payroll_period_id = $1 AND ns.municipality_id = $2
-        ORDER BY ns.created_at DESC`,
-      [periodId, group.municipality_id]
-    ),
+    listSupportRows({
+      periodId,
+      municipalityId: group.municipality_id,
+      groupId,
+    }),
     pool.query(
       `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1`,
       [periodId]
     ),
+    listGroupTurnCovers(groupId),
     getSalaryCategories(group.contract_id),
   ]);
 
@@ -1032,7 +1325,7 @@ async function getPayrollGroupDetail(periodId, groupId) {
     { employees: 0, total_devengado: 0, total_deducciones: 0, neto: 0, novelties: 0, reviewed: 0, pending_supports: 0, items_reviewed: 0, items_pending: 0 }
   );
 
-  return { group, items: normalizedItems, novelties, supports, totals };
+  return { group, items: normalizedItems, novelties, supports, covers, totals };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1118,6 +1411,8 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   const { rows: itemRows } = await pool.query(`SELECT * FROM payroll_items WHERE id = $1`, [itemId]);
   const item = itemRows[0];
   if (!item) throw new Error("Empleado de nomina no encontrado");
+  const group = await getGroup(item.group_id);
+  assertGroupEditable(group);
   if (item.reviewed) {
     const err = new Error("Registro de nómina bloqueado por revisión.");
     err.httpStatus = 403;
@@ -1156,6 +1451,22 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   );
   const noveltyTypeMeta = typeRows[0] || {};
   const supportRequired  = Boolean(payload.support_required ?? payload.supportRequired ?? noveltyTypeMeta.requires_support ?? false);
+
+  // Validar duplicado exacto: mismo empleado, período, tipo y fechas
+  const { rows: dupCheck } = await pool.query(
+    `SELECT id FROM payroll_novelties
+      WHERE payroll_item_id = $1
+        AND novelty_type    = $2
+        AND (start_date IS NOT DISTINCT FROM $3::date)
+        AND (end_date   IS NOT DISTINCT FROM $4::date)
+      LIMIT 1`,
+    [item.id, typeRaw, startDate, endDate]
+  );
+  if (dupCheck.length > 0) {
+    const err = new Error("Ya existe una novedad igual para este empleado con el mismo tipo y fechas.");
+    err.httpStatus = 409;
+    throw err;
+  }
 
   const { rows: inserted } = await pool.query(
     `INSERT INTO payroll_novelties (
@@ -1196,6 +1507,7 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
 
   // Recalcular el item inmediatamente para reflejar el impacto de la novedad
   await recalculatePayrollItem(item.id);
+  await markNeedsRecalculation(item.group_id);
 
   return inserted[0];
 }
@@ -1209,6 +1521,8 @@ async function createCambioOperativo(itemId, payload = {}, userId) {
   );
   const item = itemRows[0];
   if (!item) throw new Error("Empleado de nómina no encontrado");
+  const group = await getGroup(item.group_id);
+  assertGroupEditable(group);
   if (item.reviewed) {
     const err = new Error("Registro de nómina bloqueado por revisión.");
     err.httpStatus = 403;
@@ -1341,6 +1655,7 @@ async function createCambioOperativo(itemId, payload = {}, userId) {
     }
   }
 
+  await markNeedsRecalculation(item.group_id);
   return inserted[0];
 }
 
@@ -1349,26 +1664,27 @@ async function createCambioOperativo(itemId, payload = {}, userId) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function patchNovelty(noveltyId, payload = {}, userId) {
   const { rows: current } = await pool.query(
-    `SELECT * FROM payroll_novelties WHERE id = $1`,
+    `SELECT pn.*, pi.group_id, pi.reviewed AS item_reviewed
+       FROM payroll_novelties pn
+       LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+      WHERE pn.id = $1`,
     [noveltyId]
   );
   const novelty = current[0];
   if (!novelty) throw new Error("Novedad no encontrada");
+  if (novelty.group_id) {
+    const group = await getGroup(novelty.group_id);
+    assertGroupEditable(group);
+  }
   if (novelty.reviewed) {
     throw new Error(
       "Esta novedad ya fue revisada. Para modificarla debe quitar primero la marca de revisada."
     );
   }
-  if (novelty.payroll_item_id) {
-    const { rows: itemRows } = await pool.query(
-      `SELECT reviewed FROM payroll_items WHERE id = $1`,
-      [novelty.payroll_item_id]
-    );
-    if (itemRows[0]?.reviewed) {
-      const err = new Error("Registro de nómina bloqueado por revisión.");
-      err.httpStatus = 403;
-      throw err;
-    }
+  if (novelty.item_reviewed) {
+    const err = new Error("Registro de nómina bloqueado por revisión.");
+    err.httpStatus = 403;
+    throw err;
   }
 
   const updates = [];
@@ -1423,6 +1739,7 @@ async function patchNovelty(noveltyId, payload = {}, userId) {
   if (novelty.payroll_item_id) {
     await recalculatePayrollItem(novelty.payroll_item_id);
   }
+  if (novelty.group_id) await markNeedsRecalculation(novelty.group_id);
 
   return rows[0];
 }
@@ -1445,9 +1762,9 @@ async function setNoveltyReviewed(noveltyId, reviewed, payload = {}, user = {}) 
   );
   if (!current[0]) throw new Error("Novedad no encontrada");
 
-  // No permitir quitar revisión si el grupo está cerrado
-  if (!reviewed && current[0].group_status === "cerrada") {
-    const err = new Error("No se puede modificar una nómina cerrada.");
+  // No permitir cambiar revisión si el grupo está cerrado
+  if (!EDITABLE_STATUSES.has(current[0].group_status || "IN_REVIEW")) {
+    const err = new Error("Esta nómina está cerrada. Reabrirla para realizar cambios.");
     err.httpStatus = 403;
     throw err;
   }
@@ -1480,11 +1797,18 @@ async function setNoveltyReviewed(noveltyId, reviewed, payload = {}, user = {}) 
 // ─────────────────────────────────────────────────────────────────────────────
 async function createTurnCover(noveltyId, payload = {}, userId) {
   const { rows: novRows } = await pool.query(
-    `SELECT * FROM payroll_novelties WHERE id = $1`,
+    `SELECT pn.*, pi.group_id
+       FROM payroll_novelties pn
+       LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+      WHERE pn.id = $1`,
     [noveltyId]
   );
   const novelty = novRows[0];
   if (!novelty) throw new Error("Novedad no encontrada");
+  if (novelty.group_id) {
+    const group = await getGroup(novelty.group_id);
+    assertGroupEditable(group);
+  }
   if (novelty.reviewed) {
     throw new Error(
       "Esta novedad ya fue revisada. Para modificarla debe quitar primero la marca de revisada."
@@ -1506,19 +1830,23 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
   const days      = n(payload.days || novelty.days || 1) || 1;
 
   // Obtener valor_dia
-  // Si se provee explícito se usa; si no se calcula desde la categoría salarial
+  // Si se provee explícito se usa; si no: EXTERNA usa tarifa fija, INTERNA usa salario/30
   let valuePerDay = n(payload.value_per_day || payload.valueDay || payload.valor_dia);
   if (!valuePerDay) {
-    const categories = await getSalaryCategories(novelty.contract_id);
-    // Usar la modalidad del payload o del empleado de nómina
-    const empMod = text(payload.modality || payload.modalidad);
-    const item = await pool.query(`SELECT * FROM payroll_items WHERE id = $1`, [novelty.payroll_item_id]);
-    const itemRow = item.rows[0];
-    const category = itemRow?.salary_category || (empMod === "RI" ? "RI" : "CAA1");
-    const sal = categories[category] || { base_salary: 0, transport_allowance: 0, other_recargos: 0 };
-    valuePerDay = Math.round(
-      (sal.base_salary + sal.transport_allowance + sal.other_recargos) / 30
+    const { rows: itemQ } = await pool.query(
+      `SELECT salary_category FROM payroll_items WHERE id = $1`, [novelty.payroll_item_id]
     );
+    const empMod  = text(payload.modality || payload.modalidad);
+    const category = itemQ[0]?.salary_category || (empMod === "RI" ? "RI" : "CAA1");
+
+    if (coverType === "EXTERNA") {
+      // Tarifa externa fija — NO usar salario interno / 30
+      valuePerDay = EXTERNAL_TURN_TARIFFS[category] || EXTERNAL_TURN_TARIFFS["CAA1"];
+    } else {
+      const categories = await getSalaryCategories(novelty.contract_id);
+      const sal = categories[category] || { base_salary: 0, transport_allowance: 0, other_recargos: 0 };
+      valuePerDay = Math.round((sal.base_salary + sal.transport_allowance + sal.other_recargos) / 30);
+    }
   }
 
   let externalWorkerId  = null;
@@ -1626,6 +1954,7 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
     }
   }
 
+  if (novelty.group_id) await markNeedsRecalculation(novelty.group_id);
   return { ...coverRows[0], external_worker_id: externalWorkerId };
 }
 
@@ -1637,27 +1966,35 @@ async function buildChargeAccountHtml(coverId) {
     `SELECT ptc.*,
             pn.novelty_type, pn.start_date, pn.end_date, pn.days AS nov_days,
             pn.observations AS nov_obs,
+            pnt.name AS novelty_type_name,
             etw.full_name, etw.document_number, etw.phone, etw.bank,
             etw.account_type, etw.account_number,
             m.name AS municipality_name,
             i.name AS institution_name,
             s.name AS site_name,
             pi.modality, pi.salary_category,
+            pi.employee_name AS origin_employee_name,
+            pi.document_number AS origin_doc,
             pp.label AS period_label, pp.period_start, pp.period_end
        FROM payroll_turn_covers ptc
-       JOIN payroll_novelties pn     ON pn.id = ptc.novelty_id
+       JOIN payroll_novelties pn      ON pn.id = ptc.novelty_id
        JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
-       JOIN payroll_items pi          ON pi.id = ptc.payroll_item_id
-       JOIN payroll_periods pp        ON pp.id = ptc.payroll_period_id
-       LEFT JOIN municipalities m     ON m.id = pi.municipality_id
-       LEFT JOIN institutions i       ON i.id = pi.institution_id
-       LEFT JOIN educational_sites s  ON s.id = pi.site_id
+       JOIN payroll_items pi           ON pi.id = ptc.payroll_item_id
+       JOIN payroll_periods pp         ON pp.id = ptc.payroll_period_id
+       LEFT JOIN payroll_novelty_types pnt ON pnt.code = pn.novelty_type
+       LEFT JOIN municipalities m      ON m.id = pi.municipality_id
+       LEFT JOIN institutions i        ON i.id = pi.institution_id
+       LEFT JOIN educational_sites s   ON s.id = pi.site_id
       WHERE ptc.id = $1 AND ptc.cover_type = 'EXTERNA'
       LIMIT 1`,
     [coverId]
   );
   const r = rows[0];
   if (!r) throw new Error("Cuenta de cobro no encontrada o el turno no es externo");
+
+  if (!r.full_name || !r.document_number || !r.days || !r.value_per_day || !r.total_value) {
+    throw new Error("Datos incompletos para generar la cuenta de cobro (nombre, cédula, días o valor faltante)");
+  }
 
   const fmt = (v) =>
     Number(v || 0).toLocaleString("es-CO", {
@@ -1667,38 +2004,50 @@ async function buildChargeAccountHtml(coverId) {
     });
 
   const today = new Date().toLocaleDateString("es-CO", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
+    day: "2-digit", month: "long", year: "numeric",
   });
+
+  const noveltyLabel = r.novelty_type_name || r.novelty_type || "—";
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Cuenta de Cobro</title>
+<title>Cuenta de Cobro — ${r.full_name || ""}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111;padding:30px;max-width:700px;margin:auto}
-  h1{font-size:20px;text-align:center;margin-bottom:4px}
-  .sub{text-align:center;font-size:12px;color:#555;margin-bottom:20px}
+  body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111;padding:30px;max-width:720px;margin:auto}
+  h1{font-size:22px;text-align:center;font-weight:900;letter-spacing:1px;margin-bottom:4px}
+  .sub{text-align:center;font-size:12px;color:#555;margin-bottom:12px}
+  .parrafo{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.7}
   table{width:100%;border-collapse:collapse;margin-bottom:16px}
-  td,th{padding:7px 10px;border:1px solid #ccc}
-  th{background:#f0f0f0;font-weight:700;text-align:left}
-  .total-row td{font-weight:700;font-size:15px;background:#e8f5e9}
-  .firma{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;gap:40px}
-  .firma-box{border-top:1px solid #555;padding-top:6px;text-align:center;font-size:12px}
+  td,th{padding:7px 10px;border:1px solid #d1d5db}
+  th{background:#f3f4f6;font-weight:700;text-align:left;width:42%}
+  .total-row td{font-weight:700;font-size:15px;background:#d1fae5;border-color:#6ee7b7}
+  .sec-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#374151;padding:6px 0 4px}
+  .firma{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:48px}
+  .firma-box{border-top:2px solid #374151;padding-top:8px;text-align:center;font-size:12px;line-height:1.8}
   @media print{body{padding:10px}.no-print{display:none}}
 </style>
 </head>
 <body>
-<button class="no-print" onclick="window.print()" style="margin-bottom:16px;padding:8px 16px;cursor:pointer;background:#0F766E;color:#fff;border:none;border-radius:6px;font-size:13px">
-  Imprimir / Descargar PDF
-</button>
+<div class="no-print" style="margin-bottom:16px;display:flex;gap:8px">
+  <button onclick="window.print()" style="padding:8px 16px;cursor:pointer;background:#0F766E;color:#fff;border:none;border-radius:6px;font-size:13px">
+    Imprimir / Guardar como PDF
+  </button>
+</div>
 
 <h1>CUENTA DE COBRO</h1>
-<div class="sub">Fecha: ${today}</div>
+<div class="sub">Fecha de generación: ${today} &nbsp;·&nbsp; Período: ${r.period_label || ""}</div>
 
+<div class="parrafo">
+  Yo, <strong>${r.full_name || ""}</strong>, identificado(a) con cédula de ciudadanía No.&nbsp;<strong>${r.document_number || ""}</strong>,
+  presento cuenta de cobro por concepto de <strong>cubrimiento de turno externo</strong> en el
+  Programa de Alimentación Escolar (PAE), correspondiente al período
+  <strong>${r.period_label || ""}</strong>.
+</div>
+
+<div class="sec-title">Datos del beneficiario</div>
 <table>
   <tr><th>Nombre completo</th><td>${r.full_name || ""}</td></tr>
   <tr><th>Cédula de ciudadanía</th><td>${r.document_number || ""}</td></tr>
@@ -1708,31 +2057,41 @@ async function buildChargeAccountHtml(coverId) {
   <tr><th>Número de cuenta</th><td>${r.account_number || "—"}</td></tr>
 </table>
 
+<div class="sec-title">Detalle del servicio</div>
 <table>
   <tr><th>Municipio</th><td>${r.municipality_name || "—"}</td></tr>
   <tr><th>Institución</th><td>${r.institution_name || "—"}</td></tr>
   <tr><th>Sede</th><td>${r.site_name || "—"}</td></tr>
   <tr><th>Modalidad</th><td>${r.modality || "—"}</td></tr>
-  <tr><th>Período</th><td>${r.period_label || ""} (${r.period_start || ""} — ${r.period_end || ""})</td></tr>
-  <tr><th>Tipo de novedad cubierta</th><td>${r.novelty_type || ""}</td></tr>
+  <tr><th>Categoría salarial origen</th><td>${r.salary_category || "—"}</td></tr>
+  <tr><th>Empleado reemplazado</th><td>${r.origin_employee_name || "—"} ${r.origin_doc ? `(CC ${r.origin_doc})` : ""}</td></tr>
+  <tr><th>Tipo de novedad cubierta</th><td>${noveltyLabel}</td></tr>
   <tr><th>Días cubiertos</th><td>${r.days || r.nov_days || 0}</td></tr>
-  <tr><th>Fechas</th><td>${r.start_date || "—"} al ${r.end_date || "—"}</td></tr>
+  <tr><th>Fechas de la novedad</th><td>${r.start_date ? String(r.start_date).slice(0,10) : "—"} al ${r.end_date ? String(r.end_date).slice(0,10) : "—"}</td></tr>
+  <tr><th>Período de nómina</th><td>${r.period_label || ""} (${r.period_start ? String(r.period_start).slice(0,10) : ""} — ${r.period_end ? String(r.period_end).slice(0,10) : ""})</td></tr>
 </table>
 
+<div class="sec-title">Valor del servicio</div>
 <table>
-  <tr><th>Concepto del servicio</th><td>Cobertura de turno por novedad laboral</td></tr>
+  <tr><th>Concepto</th><td>Cobertura de turno externo — PAE</td></tr>
   <tr><th>Valor día</th><td>${fmt(r.value_per_day)}</td></tr>
+  <tr><th>Días cubiertos</th><td>${r.days || r.nov_days || 0}</td></tr>
   <tr class="total-row"><td><strong>TOTAL A PAGAR</strong></td><td><strong>${fmt(r.total_value)}</strong></td></tr>
 </table>
 
 <div class="firma">
   <div class="firma-box">
+    <p>&nbsp;</p>
+    <p>&nbsp;</p>
+    <p><strong>${r.full_name || "Beneficiario"}</strong></p>
+    <p>C.C. ${r.document_number || ""}</p>
     <p>Firma del beneficiario</p>
-    <p style="margin-top:4px">C.C. ${r.document_number || ""}</p>
   </div>
   <div class="firma-box">
+    <p>&nbsp;</p>
+    <p>&nbsp;</p>
+    <p><strong>Representante Legal / Talento Humano</strong></p>
     <p>Firma y sello del contratante</p>
-    <p style="margin-top:4px">Cargo: Representante Legal / Talento Humano</p>
   </div>
 </div>
 </body>
@@ -1743,24 +2102,7 @@ async function buildChargeAccountHtml(coverId) {
 // SOPORTES DOCUMENTALES
 // ─────────────────────────────────────────────────────────────────────────────
 async function listSupports(filters = {}) {
-  const values = [];
-  const where  = [];
-  if (filters.periodId)      { values.push(id(filters.periodId));      where.push(`ns.payroll_period_id = $${values.length}`); }
-  if (filters.status)        { values.push(text(filters.status));       where.push(`ns.status = $${values.length}`); }
-  if (filters.municipalityId){ values.push(id(filters.municipalityId)); where.push(`ns.municipality_id = $${values.length}`); }
-
-  const { rows } = await pool.query(
-    `SELECT ns.*, pn.novelty_type, pn.description, pi.employee_name, pi.document_number,
-            m.name AS municipality_name
-       FROM novelty_supports ns
-       LEFT JOIN payroll_novelties pn ON pn.id = ns.novelty_id
-       LEFT JOIN payroll_items pi     ON pi.id = pn.payroll_item_id
-       LEFT JOIN municipalities m     ON m.id = ns.municipality_id
-       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-       ORDER BY ns.created_at DESC`,
-    values
-  );
-  return rows;
+  return listSupportRows(filters);
 }
 
 async function createSupport(payload = {}, userId) {
@@ -1782,6 +2124,7 @@ async function createSupport(payload = {}, userId) {
       [supportId, text(payload.status), text(payload.file_url || payload.fileUrl),
        text(payload.file_name || payload.fileName), text(payload.observations), id(userId)]
     );
+    if (rows[0]?.novelty_id) await syncNoveltySupportStatus(rows[0].novelty_id);
     return rows[0];
   }
 
@@ -1808,6 +2151,7 @@ async function createSupport(payload = {}, userId) {
       id(userId),
     ]
   );
+  if (rows[0]?.novelty_id) await syncNoveltySupportStatus(rows[0].novelty_id);
   return rows[0];
 }
 
@@ -1832,7 +2176,7 @@ async function getItemPayslip(itemId) {
   if (!itemRows[0]) throw new Error("Item de nómina no encontrado");
   const item = itemRows[0];
 
-  const [{ rows: novRows }, { rows: coverRows }, { rows: myCovers }] = await Promise.all([
+  const [{ rows: novRows }, { rows: myCovers }] = await Promise.all([
     pool.query(
       `SELECT pn.*, pnt.name AS novelty_name, pnt.affects_salary, pnt.affects_transport
          FROM payroll_novelties pn
@@ -1841,17 +2185,8 @@ async function getItemPayslip(itemId) {
         ORDER BY pn.created_at`,
       [itemId]
     ),
-    // Solo coberturas EXTERNAS del item origen (para informar quién cubrió externamente).
-    // Las coberturas INTERNAS NO se muestran en el desprendible del empleado origen.
-    pool.query(
-      `SELECT ptc.*, etw.full_name AS ext_name, etw.document_number AS ext_doc
-         FROM payroll_turn_covers ptc
-         LEFT JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
-        WHERE ptc.payroll_item_id = $1 AND ptc.cover_type = 'EXTERNA'`,
-      [itemId]
-    ),
-    // Coberturas INTERNAS realizadas POR este empleado (para cálculo y para mostrar detalle
-    // de quién cubrió en el desprendible del empleado que realizó la cobertura).
+    // Coberturas INTERNAS realizadas POR este empleado (suman a su devengado).
+    // Las coberturas EXTERNAS NO se incluyen en el desprendible del empleado origen.
     pool.query(
       `SELECT ptc.*,
               pn.days AS novelty_days,
@@ -1973,7 +2308,7 @@ async function getItemPayslip(itemId) {
     worked_days:     workedDays,
     salary_category: item.salary_category || "",
     novelties:        enrichedNovelties,
-    covers:           coverRows,       // solo coberturas EXTERNAS del empleado origen
+    covers:           [],               // externos NO se muestran en desprendible del origen
     performed_covers: myCovers,        // coberturas internas realizadas POR este empleado
     calculation:      liveCalc,
     payslip: {
@@ -2000,7 +2335,7 @@ async function deleteNovelty(noveltyId, user = {}) {
   const reviewerName = text(user.full_name || user.name || user.username);
 
   const { rows: current } = await pool.query(
-    `SELECT pn.*, pi.reviewed AS item_reviewed
+    `SELECT pn.*, pi.reviewed AS item_reviewed, pi.group_id
        FROM payroll_novelties pn
        LEFT JOIN payroll_items pi ON pi.id = pn.payroll_item_id
       WHERE pn.id = $1`,
@@ -2008,6 +2343,10 @@ async function deleteNovelty(noveltyId, user = {}) {
   );
   const novelty = current[0];
   if (!novelty) throw new Error("Novedad no encontrada");
+  if (novelty.group_id) {
+    const group = await getGroup(novelty.group_id);
+    assertGroupEditable(group);
+  }
 
   if (novelty.reviewed) {
     const err = new Error("La novedad ya fue revisada y no puede eliminarse.");
@@ -2048,6 +2387,7 @@ async function deleteNovelty(noveltyId, user = {}) {
   if (novelty.payroll_item_id) {
     await recalculatePayrollItem(novelty.payroll_item_id);
   }
+  if (novelty.group_id) await markNeedsRecalculation(novelty.group_id);
 
   return { deleted: true, payroll_item_id: novelty.payroll_item_id };
 }
@@ -2070,9 +2410,9 @@ async function setItemReviewed(itemId, reviewed, payload = {}, user = {}) {
   const item = current[0];
   if (!item) throw new Error("Registro de nómina no encontrado");
 
-  // No permitir quitar revisión si el grupo está cerrado
-  if (!reviewed && item.group_status === "cerrada") {
-    const err = new Error("No se puede modificar una nómina cerrada.");
+  // No permitir cambiar revisión si el grupo está cerrado
+  if (!EDITABLE_STATUSES.has(item.group_status || "IN_REVIEW")) {
+    const err = new Error("Esta nómina está cerrada. Reabrirla para realizar cambios.");
     err.httpStatus = 403;
     throw err;
   }
@@ -2153,12 +2493,12 @@ async function getCoverageStatsForGroup(contractId, municipalityId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CERRAR GRUPO DE NÓMINA
+// CERRAR GRUPO DE NÓMINA (genera snapshot inmutable)
 // ─────────────────────────────────────────────────────────────────────────────
 async function closePayrollGroup(groupId, user = {}) {
   const group = await getGroup(groupId);
   if (!group) throw new Error("Grupo de nómina no encontrado");
-  if (group.status === "cerrada") throw new Error("Este grupo ya está cerrado.");
+  if (group.status === CLOSED_STATUS) throw new Error("Este grupo ya está cerrado.");
 
   // Verificar que todos los items estén revisados
   const { rows: counts } = await pool.query(
@@ -2176,10 +2516,25 @@ async function closePayrollGroup(groupId, user = {}) {
 
   const reviewerId   = id(user.id);
   const reviewerName = text(user.full_name || user.name || user.username);
+  const newVersion   = Number(group.version_number || 1);
+
+  // Snapshot del estado actual (inmutable)
+  const detail = await getPayrollGroupDetail(group.period_id, groupId);
+  const snapshotData = {
+    version:     newVersion,
+    closed_by:   reviewerName,
+    closed_at:   new Date().toISOString(),
+    group:       { id: group.id, period_id: group.period_id, municipality_id: group.municipality_id,
+                   operational_position: group.operational_position, contract_id: group.contract_id },
+    items:       detail.items,
+    novelties:   detail.novelties,
+    totals:      detail.totals,
+  };
 
   const { rows } = await pool.query(
     `UPDATE payroll_groups
-        SET status = 'cerrada', closed_by = $2, closed_at = NOW(), updated_at = NOW()
+        SET status = 'CLOSED', closed_by = $2, closed_at = NOW(),
+            needs_recalculation = false, updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
     [groupId, reviewerId]
@@ -2187,14 +2542,95 @@ async function closePayrollGroup(groupId, user = {}) {
 
   try {
     await pool.query(
-      `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, user_name, payload)
-       VALUES ('payroll', 'payroll_group', $1, 'CLOSE_PAYROLL_GROUP', $2, $3, $4)`,
-      [String(groupId), reviewerId, reviewerName,
-       JSON.stringify({ group_id: groupId, municipality_id: group.municipality_id, period_id: group.period_id })]
+      `INSERT INTO payroll_group_snapshots (group_id, version_number, closed_by, closed_by_name, snapshot_data)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (group_id, version_number) DO NOTHING`,
+      [groupId, newVersion, reviewerId, reviewerName, JSON.stringify(snapshotData)]
     );
-  } catch (_) { /* audit es best-effort */ }
+  } catch (_) { /* snapshot best-effort */ }
+
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, user_name, payload)
+       VALUES ('payroll', 'payroll_group', $1, 'CLOSE_PAYROLL', $2, $3, $4)`,
+      [String(groupId), reviewerId, reviewerName,
+       JSON.stringify({ group_id: groupId, municipality_id: group.municipality_id,
+                        period_id: group.period_id, version: newVersion })]
+    );
+  } catch (_) { /* audit best-effort */ }
 
   return rows[0];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REABRIR GRUPO DE NÓMINA
+// ─────────────────────────────────────────────────────────────────────────────
+async function reopenPayrollGroup(groupId, user = {}, reason = "", observations = "") {
+  const group = await getGroup(groupId);
+  if (!group) throw new Error("Grupo de nómina no encontrado");
+  if (group.status !== CLOSED_STATUS) throw new Error("Solo se puede reabrir una nómina cerrada.");
+  if (!reason || !reason.trim()) throw new Error("Debe indicar el motivo de reapertura.");
+
+  const userId    = id(user.id);
+  const userName  = text(user.full_name || user.name || user.username);
+  const prevStatus = group.status;
+  const newVersion = Number(group.version_number || 1) + 1;
+
+  const { rows } = await pool.query(
+    `UPDATE payroll_groups
+        SET status = 'REOPENED', reopened_by = $2, reopened_at = NOW(),
+            reopen_reason = $3, version_number = $4,
+            needs_recalculation = true, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *`,
+    [groupId, userId, text(reason), newVersion]
+  );
+
+  try {
+    await pool.query(
+      `INSERT INTO payroll_reopen_logs
+         (payroll_group_id, municipality_id, period_id, previous_status, new_status,
+          reason, observations, reopened_by, reopened_by_name, closed_by, closed_at)
+       VALUES ($1,$2,$3,$4,'REOPENED',$5,$6,$7,$8,$9,$10)`,
+      [groupId, group.municipality_id, group.period_id, prevStatus,
+       text(reason), text(observations), userId, userName,
+       group.closed_by || null, group.closed_at || null]
+    );
+  } catch (_) { /* log best-effort */ }
+
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, user_name, reason, payload)
+       VALUES ('payroll', 'payroll_group', $1, 'REOPEN_PAYROLL', $2, $3, $4, $5)`,
+      [String(groupId), userId, userName, text(reason),
+       JSON.stringify({ group_id: groupId, municipality_id: group.municipality_id,
+                        period_id: group.period_id, new_version: newVersion, reason })]
+    );
+  } catch (_) { /* audit best-effort */ }
+
+  return rows[0];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORIAL DE CICLO DE VIDA DEL GRUPO
+// ─────────────────────────────────────────────────────────────────────────────
+async function getGroupHistory(groupId) {
+  const group = await getGroup(groupId);
+  if (!group) throw new Error("Grupo de nómina no encontrado");
+
+  const [{ rows: logs }, { rows: snapshots }] = await Promise.all([
+    pool.query(
+      `SELECT * FROM payroll_reopen_logs WHERE payroll_group_id = $1 ORDER BY reopened_at DESC`,
+      [groupId]
+    ),
+    pool.query(
+      `SELECT id, group_id, version_number, closed_by, closed_by_name, closed_at, created_at
+         FROM payroll_group_snapshots WHERE group_id = $1 ORDER BY version_number DESC`,
+      [groupId]
+    ),
+  ]);
+
+  return { group, logs, snapshots };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2230,5 +2666,8 @@ module.exports = {
   recalculatePayrollItem,
   deleteNovelty,
   closePayrollGroup,
+  reopenPayrollGroup,
+  getGroupHistory,
+  listGroupTurnCovers,
   getCoverageStatsForGroup,
 };

@@ -1123,7 +1123,7 @@ async function handlePaySlip(req, res, url) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /payroll/groups/:groupId/export → XLSX multi-hoja por municipio
 // ─────────────────────────────────────────────────────────────────────────────
-function buildGroupXlsx({ group, items, novelties, supports, totals, coverage }) {
+function buildGroupXlsx({ group, items, novelties, supports, covers, totals, coverage }) {
   function n(v) { return Number(v || 0); }
   function s(v) { return String(v == null ? "" : v); }
 
@@ -1230,7 +1230,7 @@ function buildGroupXlsx({ group, items, novelties, supports, totals, coverage })
   const itemCalcMap = new Map(items.map((i) => [String(i.id), i.calculation || {}]));
 
   const novHdr = [
-    "Empleado", "Documento", "Tipo de novedad", "Impacto",
+    "ID novedad", "Empleado", "Documento", "Tipo de novedad", "Impacto",
     "Fecha inicio", "Fecha fin", "Días",
     "Desc. salario", "Desc. transporte",
     "Soporte", "Revisada",
@@ -1247,6 +1247,7 @@ function buildGroupXlsx({ group, items, novelties, supports, totals, coverage })
       const descTrans = isTrans ? Math.round(n(calc.daily_transport || 0) * days) : 0;
       const impact = isSal ? "Descuento salario" : isTrans ? "Descuento transporte" : "Sin impacto";
       return [
+        n(nov.id),
         s(nov.employee_name), s(nov.document_number),
         s(nov.novelty_name || nov.novelty_type), impact,
         s(nov.start_date ? s(nov.start_date).slice(0,10) : ""),
@@ -1258,8 +1259,8 @@ function buildGroupXlsx({ group, items, novelties, supports, totals, coverage })
         nov.reviewed ? "Sí" : "No",
       ];
     });
-  const wsNov = makeSheet(novHdr, novRows2, [7,8],
-    [28,14,26,20,12,12,5,13,13,14,8]);
+  const wsNov = makeSheet(novHdr, novRows2, [8,9],
+    [10,28,14,26,20,12,12,5,13,13,14,8]);
 
   // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
   const resHdr  = ["Concepto", "Valor"];
@@ -1294,20 +1295,59 @@ function buildGroupXlsx({ group, items, novelties, supports, totals, coverage })
   const wsRes = makeSheet(resHdr, resRows, [1], [30, 22]);
 
   // ── Hoja 4: Soportes ────────────────────────────────────────────────────
-  const supHdr  = ["Empleado", "Documento", "Tipo novedad", "Estado", "Municipio", "Fecha"];
+  const supHdr  = [
+    "ID novedad", "ID soporte", "Empleado", "Documento", "Tipo novedad",
+    "Estado soporte", "Municipio", "Fecha novedad", "Tipo soporte", "Archivo", "Observación",
+  ];
   const supRows = supports.map((sup) => [
-    s(sup.employee_name), s(sup.document_number),
-    s(sup.novelty_type), s(sup.status),
+    s(sup.novelty_id),
+    s(sup.support_id),
+    s(sup.employee_name),
+    s(sup.document_number),
+    s(sup.novelty_type),
+    s(sup.support_status || sup.status),
     s(sup.municipality_name),
-    sup.created_at ? s(sup.created_at).slice(0,10) : "",
+    sup.novelty_date ? s(sup.novelty_date).slice(0,10) : "",
+    s(sup.support_type),
+    s(sup.file_name),
+    s(sup.observations),
   ]);
-  const wsSup = makeSheet(supHdr, supRows, [], [28,14,22,14,20,12]);
+  const wsSup = makeSheet(supHdr, supRows, [], [12,12,28,14,22,16,20,12,18,24,36]);
+
+  // ── Hoja 5: Turnos (una fila por payroll_turn_covers.id) ────────────────
+  const turnHdr = [
+    "ID turno", "ID novedad", "Tipo novedad", "Empleado origen", "Documento origen",
+    "Municipio", "Institución", "Sede",
+    "Tipo cobertura", "Empleado/Externo que cubrió", "Documento cobertura",
+    "Días", "Valor día", "Total",
+    "Fecha novedad inicio", "Fecha novedad fin",
+  ];
+  const turnRows = (covers || []).map((c) => [
+    n(c.turn_cover_id),
+    n(c.novelty_id),
+    s(c.novelty_type_name || c.novelty_type),
+    s(c.origin_employee_name),
+    s(c.origin_document),
+    s(c.municipality_name),
+    s(c.institution_name),
+    s(c.site_name),
+    s(c.cover_type),
+    s(c.cover_type === "INTERNA" ? c.internal_cover_name : c.external_worker_name),
+    s(c.cover_type === "INTERNA" ? c.internal_cover_doc  : c.external_worker_doc),
+    n(c.days),
+    n(c.value_per_day),
+    n(c.total_value),
+    c.novelty_start ? s(c.novelty_start).slice(0,10) : "",
+    c.novelty_end   ? s(c.novelty_end).slice(0,10)   : "",
+  ]);
+  const wsTurn = makeSheet(turnHdr, turnRows, [12,13], [10,10,24,28,16,18,24,18,14,28,16,5,14,14,14,14]);
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsNom, "Nómina");
   XLSX.utils.book_append_sheet(wb, wsNov, "Novedades");
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
+  XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
@@ -1370,6 +1410,59 @@ async function handleGroupClose(req, res, url) {
   )(req, res, url);
 }
 
+// ── Reabrir grupo de nómina ──────────────────────────────────────────────────
+async function handleGroupReopen(req, res, url) {
+  if (req.method !== "POST" && req.method !== "PATCH") { sendMethodNotAllowed(res); return; }
+  const parts   = url.pathname.split("/").filter(Boolean);
+  const groupId = Number(parts[2]);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo inválido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _url, user) => {
+      if (!isAdminOrTH(user)) {
+        sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede reabrir la nómina." });
+        return;
+      }
+      try {
+        const body = await readJsonBody(innerReq);
+        const reason = String(body.reason || body.motivo || "").trim();
+        if (!reason) {
+          sendJson(innerRes, 400, { ok: false, message: "Debe indicar el motivo de reapertura." }); return;
+        }
+        const group = await operational.reopenPayrollGroup(groupId, user, reason, body.observations || "");
+        sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina reabierta." });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ── Historial de grupo de nómina ─────────────────────────────────────────────
+async function handleGroupHistory(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const parts   = url.pathname.split("/").filter(Boolean);
+  const groupId = Number(parts[2]);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo inválido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      try {
+        const data = await operational.getGroupHistory(groupId);
+        sendJson(innerRes, 200, { ok: true, data });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 // ── helper local (duplicado de operational para no importar) ─────────────────
 function s(v) { return String(v == null ? "" : v); }
 
@@ -1413,4 +1506,6 @@ module.exports = {
   // Exportación por municipio
   handleGroupExport,
   handleGroupClose,
+  handleGroupReopen,
+  handleGroupHistory,
 };

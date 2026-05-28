@@ -26,11 +26,15 @@ const fs           = require("fs");
 const { URL }      = require("url");
 const { APP_VERSION } = require("./version");
 
-const { requestHandler }      = require("./server");
+const { requestHandler }        = require("./server");
 const { createDocumentsRouter } = require("./modules/documents/documents.router");
-const { requestId }           = require("./middleware/request-id");
-const { requestLogger, emit } = require("./middleware/logger");
-const { corsMiddleware }      = require("./middleware/cors");
+const { requestId }             = require("./middleware/request-id");
+const { requestLogger, emit }   = require("./middleware/logger");
+const { corsMiddleware }        = require("./middleware/cors");
+const { upload: mkUpload, normalizeUploadedFile } = require("./middleware/upload");
+const { requireAuth }           = require("./modules/auth/auth.helpers");
+const { isR2Configured, getPrivateUrl } = require("./config/storage");
+const { sendJson }              = require("./http/response");
 
 const IS_PROD  = process.env.NODE_ENV === "production";
 const app      = express();
@@ -130,6 +134,38 @@ app.use(express.static(PUBLIC_DIR, {
 
 // ── Módulos Express nativos ───────────────────────────────────────────────────
 app.use("/documents", createDocumentsRouter());
+
+// ── Subida de archivos para soportes de novedades ────────────────────────────
+const _supUploadMw = mkUpload("soportes");
+function _supAuthMw(req, res, next) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+  req.user = auth.user;
+  next();
+}
+app.post(
+  "/payroll/supports/upload",
+  _supAuthMw,
+  _supUploadMw.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) return sendJson(res, 400, { ok: false, message: "Archivo requerido" });
+      const norm = normalizeUploadedFile(req.file);
+      let url;
+      if (norm.isLocal || !isR2Configured()) {
+        url = `/uploads/soportes/${norm.key.split("/").pop()}`;
+      } else {
+        url = await getPrivateUrl(norm.key, 86400);
+      }
+      return sendJson(res, 200, { ok: true, data: { url, fileName: norm.fileName } });
+    } catch (err) {
+      return sendJson(res, 500, { ok: false, message: err.message });
+    }
+  },
+  (err, req, res, _next) => {
+    sendJson(res, err.status || 400, { ok: false, message: err.message });
+  }
+);
 
 // ── Puente hacia el handler legacy ───────────────────────────────────────────
 app.use(async (req, res, next) => {
