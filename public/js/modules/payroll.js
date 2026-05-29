@@ -60,6 +60,10 @@ function isTH() {
   const role = String(state.currentUser?.role || "").toLowerCase();
   return role === "administrador" || role === "talento_humano";
 }
+function canEditBankInfo() {
+  const role = String(state.currentUser?.role || "").toLowerCase();
+  return role === "administrador" || role === "talento_humano";
+}
 function fmtCOP(value) {
   return Number(value || 0).toLocaleString("es-CO", {
     style: "currency", currency: "COP", maximumFractionDigits: 0,
@@ -860,7 +864,8 @@ function renderTurnosSection(turns, isClosed) {
       : "";
     const chargeBtn  = !isInterna && t.id
       ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${t.id}" title="Ver cuenta de cobro">Cta. cobro</button>
-         <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${t.id}" data-ext-doc="${escapeHtml(t.external_document || String(t.id))}" title="Descargar cuenta de cobro">Descargar</button>`
+         <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${t.id}" data-ext-doc="${escapeHtml(t.external_document || String(t.id))}" title="Descargar cuenta de cobro">Descargar</button>
+         ${canEditBankInfo() ? `<button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px;background:#F59E0B;color:#fff" data-edit-bank="${t.id}" data-bank="${escapeHtml(t.external_bank || "")}" data-account-type="${escapeHtml(t.external_account_type || "AHORROS")}" data-account-number="${escapeHtml(t.external_account_number || "")}" title="Editar datos bancarios">Datos bancarios</button>` : ""}`
       : "";
     const noveltyDate = t.novelty_start ? String(t.novelty_start).slice(0, 10) : "—";
 
@@ -982,6 +987,14 @@ function wireStaticEvents() {
   document.querySelectorAll("[data-dl-charge]").forEach((btn) => btn.addEventListener("click", () => {
     const periodLabel = activePeriod?.label || "";
     downloadChargeAccount(Number(btn.dataset.dlCharge), btn.dataset.extDoc, periodLabel);
+  }));
+  document.querySelectorAll("[data-edit-bank]").forEach((btn) => btn.addEventListener("click", () => {
+    openBankEditModal(
+      Number(btn.dataset.editBank),
+      btn.dataset.bank || "",
+      btn.dataset.accountType || "AHORROS",
+      btn.dataset.accountNumber || "",
+    );
   }));
   document.querySelectorAll("[data-reviewed]").forEach((input)     => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
   document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
@@ -1782,6 +1795,78 @@ async function downloadChargeAccount(coverId, extDoc, periodLabel) {
   } catch (err) {
     showError(err.message || "Error descargando cuenta de cobro");
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODAL: EDICIÓN BANCARIA DE COBERTURA EXTERNA
+// ─────────────────────────────────────────────────────────────────────────────
+function openBankEditModal(coverId, currentBank, currentAccountType, currentAccountNumber) {
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog">
+  <div class="nm-pay-dialog-h">
+    <b>Editar datos bancarios — cuenta de cobro</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b">
+    <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#92400E">
+      <b>Solo se actualizarán los datos bancarios de la cuenta de cobro.</b><br>
+      La nómina y el turno permanecerán bloqueados.
+    </div>
+    <div class="nm-pay-form-grid">
+      <div class="nm-pay-field">
+        <label>Banco</label>
+        <input class="nm-pay-input" id="bankInfoBanco" placeholder="Nombre del banco" value="${escapeHtml(currentBank)}">
+      </div>
+      <div class="nm-pay-field">
+        <label>Tipo de cuenta</label>
+        <select class="nm-pay-select" id="bankInfoTipo">
+          <option value="AHORROS" ${currentAccountType === "AHORROS" ? "selected" : ""}>Ahorros</option>
+          <option value="CORRIENTE" ${currentAccountType === "CORRIENTE" ? "selected" : ""}>Corriente</option>
+        </select>
+      </div>
+      <div class="nm-pay-field">
+        <label>Número de cuenta</label>
+        <input class="nm-pay-input" id="bankInfoCuenta" placeholder="Número de cuenta" value="${escapeHtml(currentAccountNumber)}">
+      </div>
+      <div class="nm-pay-field" style="grid-column:1/-1">
+        <label>Observación interna <small style="color:#94A3B8;font-weight:400">(opcional)</small></label>
+        <input class="nm-pay-input" id="bankInfoObs" placeholder="Motivo del ajuste bancario">
+      </div>
+    </div>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="bankInfoSave">Guardar datos bancarios</button>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+
+  let _saving = false;
+  document.getElementById("bankInfoSave")?.addEventListener("click", async () => {
+    if (_saving) return;
+    _saving = true;
+    const btn = document.getElementById("bankInfoSave");
+    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
+    try {
+      await apiFetch(`/payroll/turn-covers/${coverId}/bank-info`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          banco:        document.getElementById("bankInfoBanco").value.trim(),
+          tipoCuenta:   document.getElementById("bankInfoTipo").value,
+          numeroCuenta: document.getElementById("bankInfoCuenta").value.trim(),
+          observacion:  document.getElementById("bankInfoObs").value.trim(),
+        }),
+      });
+      closeModal();
+      await loadGroupTurns();
+      render();
+      showSuccess("Datos bancarios actualizados correctamente.");
+    } catch (err) {
+      showError(err.message || "Error al guardar los datos bancarios.");
+    } finally {
+      _saving = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Guardar datos bancarios"; }
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

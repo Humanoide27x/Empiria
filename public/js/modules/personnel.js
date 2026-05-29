@@ -2608,7 +2608,11 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
             <div class="personnel-form-actions">
               <div id="personnelAgeSlot">${activeTab === "identificacion" ? buildAgeIndicator(draftValue("birthDay"), draftValue("birthMonth"), draftValue("birthYear")) : ""}</div>
               <button type="submit" class="primary-soft-btn">
-                ${isEditMode ? "Guardar cambios" : "Crear empleado"}
+                ${isEditMode
+                  ? "Guardar cambios"
+                  : _PRE_SUBMIT_TABS.has(activeTab)
+                    ? "Guardar y continuar →"
+                    : "Crear empleado"}
               </button>
             </div>
           </form>
@@ -3462,8 +3466,42 @@ export async function renderPersonnelTableModule() {
 
 // ─── Part 9: handlePersonnelFormSubmit ───────────────────────────────────────
 
+// Tabs en orden. Los que preceden a "vinculacion" solo guardan borrador y avanzan.
+const _TAB_ORDER = [
+  "identificacion", "datos_personales", "estudios", "experiencia",
+  "seguimiento", "licitacion", "vinculacion", "contratacion",
+  "institucional", "observaciones",
+];
+const _PRE_SUBMIT_TABS = new Set(["identificacion", "datos_personales", "estudios", "experiencia", "seguimiento", "licitacion"]);
+
 export async function handlePersonnelFormSubmit(event) {
   event.preventDefault();
+
+  const isCreate = state.personnelViewMode !== "edit";
+  const currentTab = state.personnelCreateTab || "identificacion";
+
+  // En modo creación, tabs pre-vinculación guardan en borrador y avanzan a la siguiente.
+  if (isCreate && _PRE_SUBMIT_TABS.has(currentTab)) {
+    // Validaciones mínimas de la pestaña Identificación
+    if (currentTab === "identificacion") {
+      const d = state.personnelDraft;
+      if (!String(d.firstName || "").trim() || !String(d.firstLastName || "").trim()) {
+        showWarning("El nombre y apellido son obligatorios.");
+        return;
+      }
+      if (!String(d.documentNumber || "").trim()) {
+        showWarning("El número de documento es obligatorio.");
+        return;
+      }
+    }
+    // Marcar tab actual como guardado y avanzar a la siguiente
+    if (!state.personnelSavedTabs) state.personnelSavedTabs = new Set();
+    state.personnelSavedTabs.add(currentTab);
+    const nextIdx = _TAB_ORDER.indexOf(currentTab) + 1;
+    state.personnelCreateTab = _TAB_ORDER[nextIdx] || currentTab;
+    _refreshPersonnelSection();
+    return;
+  }
 
   if (state.personnelViewMode === "edit") {
     const confirmed = await showPersonnelConfirmDialog();
@@ -3514,6 +3552,14 @@ export async function handlePersonnelFormSubmit(event) {
         : "No hay auxiliares de gestor asignados a este municipio.");
       return;
     }
+  }
+
+  // Municipio laboral requerido al finalizar la creación
+  if (!String(d.municipalityId || d.municipality_id || "").trim()) {
+    showWarning("Debe seleccionar el municipio de vinculación (pestaña Vinculación).");
+    state.personnelCreateTab = "vinculacion";
+    _refreshPersonnelSection();
+    return;
   }
 
   syncDraftOfficialMunicipality(d);

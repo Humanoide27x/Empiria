@@ -2156,6 +2156,78 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EDICIÓN BANCARIA DE COBERTURA EXTERNA (sin recalcular nómina ni desbloquear)
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateTurnCoverBankInfo(coverId, payload = {}, user = {}) {
+  const { rows: coverRows } = await pool.query(
+    `SELECT ptc.id, ptc.cover_type, ptc.external_worker_id,
+            etw.bank AS prev_bank, etw.account_type AS prev_account_type,
+            etw.account_number AS prev_account_number
+       FROM payroll_turn_covers ptc
+       JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
+      WHERE ptc.id = $1`,
+    [coverId]
+  );
+  const cover = coverRows[0];
+  if (!cover) throw new Error("Cobertura no encontrada");
+  if (cover.cover_type !== "EXTERNA") {
+    const err = new Error("Solo se pueden editar datos bancarios de coberturas externas.");
+    err.httpStatus = 400;
+    throw err;
+  }
+
+  const newBank    = text(payload.banco || payload.bank || "");
+  const newType    = text(payload.tipoCuenta || payload.account_type || "AHORROS").toUpperCase();
+  const newAccount = text(payload.numeroCuenta || payload.account_number || "");
+  const obs        = text(payload.observacion || payload.observations || "");
+
+  if (!["AHORROS", "CORRIENTE"].includes(newType)) {
+    throw new Error("Tipo de cuenta inválido. Debe ser AHORROS o CORRIENTE.");
+  }
+
+  await pool.query(
+    `UPDATE external_turn_workers
+        SET bank           = COALESCE(NULLIF($2, ''), bank),
+            account_type   = $3,
+            account_number = COALESCE(NULLIF($4, ''), account_number),
+            updated_at     = NOW()
+      WHERE id = $1`,
+    [cover.external_worker_id, newBank, newType, newAccount]
+  );
+
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, user_name, reason, payload)
+       VALUES ('payroll', 'external_turn_worker', $1, 'UPDATE_BANK_INFO', $2, $3, $4, $5)`,
+      [
+        String(cover.external_worker_id),
+        id(user.id),
+        text(user.full_name || user.name || user.username),
+        obs || "Actualización de datos bancarios para cuenta de cobro",
+        JSON.stringify({
+          cover_id:            coverId,
+          external_worker_id:  cover.external_worker_id,
+          prev_bank:           cover.prev_bank,
+          new_bank:            newBank,
+          prev_account_type:   cover.prev_account_type,
+          new_account_type:    newType,
+          prev_account_number: cover.prev_account_number,
+          new_account_number:  newAccount,
+          observations:        obs,
+        }),
+      ]
+    );
+  } catch (_) { /* audit best-effort — no bloquear la operación */ }
+
+  const { rows: updated } = await pool.query(
+    `SELECT etw.bank, etw.account_type, etw.account_number
+       FROM external_turn_workers etw WHERE etw.id = $1`,
+    [cover.external_worker_id]
+  );
+  return { ok: true, cover_id: coverId, ...updated[0] };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PDF HTML: CUENTA DE COBRO PARA EXTERNO
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildChargeAccountHtml(coverId) {
@@ -2164,15 +2236,16 @@ async function buildChargeAccountHtml(coverId) {
             pn.novelty_type, pn.start_date, pn.end_date, pn.days AS nov_days,
             pn.observations AS nov_obs,
             pnt.name AS novelty_type_name,
-            etw.full_name, etw.document_number, etw.phone, etw.bank,
+            etw.full_name, etw.document_number, etw.bank,
             etw.account_type, etw.account_number,
             m.name AS municipality_name,
             i.name AS institution_name,
             s.name AS site_name,
-            pi.modality, pi.salary_category,
+            pi.modality,
             pi.employee_name AS origin_employee_name,
             pi.document_number AS origin_doc,
-            pp.label AS period_label, pp.period_start, pp.period_end
+            pp.label AS period_label, pp.period_start, pp.period_end,
+            e.gestor_zona
        FROM payroll_turn_covers ptc
        JOIN payroll_novelties pn      ON pn.id = ptc.novelty_id
        JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
@@ -2182,6 +2255,7 @@ async function buildChargeAccountHtml(coverId) {
        LEFT JOIN municipalities m      ON m.id = pi.municipality_id
        LEFT JOIN institutions i        ON i.id = pi.institution_id
        LEFT JOIN educational_sites s   ON s.id = pi.site_id
+       LEFT JOIN employees e           ON e.id = pi.employee_id
       WHERE ptc.id = $1 AND ptc.cover_type = 'EXTERNA'
       LIMIT 1`,
     [coverId]
@@ -2205,6 +2279,11 @@ async function buildChargeAccountHtml(coverId) {
   });
 
   const noveltyLabel = r.novelty_type_name || r.novelty_type || "—";
+
+  const gestorName = (r.gestor_zona || "").trim().toUpperCase();
+  const gestorBlock = gestorName
+    ? `<p><strong>${gestorName}</strong></p><p>Gestor de Zona</p>`
+    : `<p><strong>GESTOR DE ZONA</strong></p>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -2248,7 +2327,6 @@ async function buildChargeAccountHtml(coverId) {
 <table>
   <tr><th>Nombre completo</th><td>${r.full_name || ""}</td></tr>
   <tr><th>Cédula de ciudadanía</th><td>${r.document_number || ""}</td></tr>
-  <tr><th>Teléfono</th><td>${r.phone || "—"}</td></tr>
   <tr><th>Banco</th><td>${r.bank || "—"}</td></tr>
   <tr><th>Tipo de cuenta</th><td>${r.account_type || "—"}</td></tr>
   <tr><th>Número de cuenta</th><td>${r.account_number || "—"}</td></tr>
@@ -2260,7 +2338,6 @@ async function buildChargeAccountHtml(coverId) {
   <tr><th>Institución</th><td>${r.institution_name || "—"}</td></tr>
   <tr><th>Sede</th><td>${r.site_name || "—"}</td></tr>
   <tr><th>Modalidad</th><td>${r.modality || "—"}</td></tr>
-  <tr><th>Categoría salarial origen</th><td>${r.salary_category || "—"}</td></tr>
   <tr><th>Empleado reemplazado</th><td>${r.origin_employee_name || "—"} ${r.origin_doc ? `(CC ${r.origin_doc})` : ""}</td></tr>
   <tr><th>Tipo de novedad cubierta</th><td>${noveltyLabel}</td></tr>
   <tr><th>Días cubiertos</th><td>${r.days || r.nov_days || 0}</td></tr>
@@ -2287,8 +2364,8 @@ async function buildChargeAccountHtml(coverId) {
   <div class="firma-box">
     <p>&nbsp;</p>
     <p>&nbsp;</p>
-    <p><strong>Representante Legal / Talento Humano</strong></p>
-    <p>Firma y sello del contratante</p>
+    ${gestorBlock}
+    <p>Firma del gestor de zona</p>
   </div>
 </div>
 </body>
@@ -2907,6 +2984,7 @@ module.exports = {
   getSalaryCategories,
   upsertSalaryCategory,
   getItemPayslip,
+  updateTurnCoverBankInfo,
   buildChargeAccountHtml,
   rowEmployee,
   workTimeKind,

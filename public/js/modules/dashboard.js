@@ -56,13 +56,14 @@ function getMunicipalityOptions(summary = {}) {
   const rows = Array.isArray(summary.coverageByMunicipality) ? summary.coverageByMunicipality : [];
   const map = new Map();
   rows.forEach((item) => {
-    if (!item || item.municipalityId == null) return;
-    const id = String(item.municipalityId);
+    if (!item) return;
+    const name = item.municipalityName || "";
+    if (!name) return;
+    // Use numeric ID when available; fall back to name as key (handles uploads
+    // where municipality_id is not linked to the municipalities table).
+    const id = item.municipalityId != null ? String(item.municipalityId) : name;
     if (!map.has(id)) {
-      map.set(id, {
-        id,
-        name: item.municipalityName || "Sin municipio",
-      });
+      map.set(id, { id, name });
     }
   });
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
@@ -261,8 +262,14 @@ function shortMunicipality(name) {
   return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
 }
 
-function buildCoverageMap(rows = []) {
-  if (!rows.length) return buildEmptyState("Sin datos de cobertura");
+function buildCoverageMap(rows = [], hasCoverageData = false) {
+  if (!rows.length) {
+    return buildEmptyState(
+      hasCoverageData
+        ? "Existen municipios registrados pero sin cupos requeridos"
+        : "Sin cobertura calculada para este período"
+    );
+  }
 
   const columns = rows.length <= 4 ? 2 : rows.length <= 8 ? 3 : 4;
   const tileWidth = 150;
@@ -299,8 +306,14 @@ function buildCoverageMap(rows = []) {
   `;
 }
 
-function buildCoverageList(rows = []) {
-  if (!rows.length) return buildEmptyState("Sin municipios operativos");
+function buildCoverageList(rows = [], hasCoverageData = false) {
+  if (!rows.length) {
+    return buildEmptyState(
+      hasCoverageData
+        ? "Municipios sin cupos requeridos en el período"
+        : "Aún no se ha cargado cobertura para este período"
+    );
+  }
 
   return `
     <div class="dashboard-side-list">
@@ -370,6 +383,8 @@ function buildTopKpi(valueLabel, title, subtitle, accent = "#0B7CFF", icon = "")
 }
 
 function buildWorkspace(summary = {}) {
+  const hasCoverageData = Boolean(summary.coverageDataAvailable) ||
+    (Array.isArray(summary.coverageByMunicipality) && summary.coverageByMunicipality.length > 0);
   const coverageRows = getCoverageTiles(Array.isArray(summary.coverageByMunicipality) ? summary.coverageByMunicipality : []);
   const municipalities = getMunicipalityOptions(summary);
   const genderItems = Array.isArray(summary.employeesByGender) ? summary.employeesByGender : [];
@@ -402,7 +417,11 @@ function buildWorkspace(summary = {}) {
             </option>
           `).join("")}
         </select>
-        <small>${municipalities.length ? `${municipalities.length} municipio(s) disponibles` : "Sin municipios disponibles"}</small>
+        <small>${municipalities.length
+          ? `${municipalities.length} municipio(s) disponibles`
+          : hasCoverageData
+            ? "Municipios sin cupos asignados"
+            : "Carga la cobertura del período para filtrar"}</small>
       </article>
 
       <button type="button" class="dashboard-kpi-card dashboard-kpi-card--action" id="dashboardSummaryRefresh">
@@ -480,8 +499,8 @@ function buildWorkspace(summary = {}) {
         </div>
 
         <div class="dashboard-card-body dashboard-card-body--map">
-          <div class="dashboard-map-wrap">${buildCoverageMap(coverageRows)}</div>
-          <div class="dashboard-side-panel">${buildCoverageList(coverageRows)}</div>
+          <div class="dashboard-map-wrap">${buildCoverageMap(coverageRows, hasCoverageData)}</div>
+          <div class="dashboard-side-panel">${buildCoverageList(coverageRows, hasCoverageData)}</div>
         </div>
 
         <div class="dashboard-legend">

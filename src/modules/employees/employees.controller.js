@@ -746,6 +746,21 @@ function handlePersonnel(req, res) {
           });
         }
 
+        console.info("[createEmployee] payload municipios:", {
+          municipalityId:    body.municipalityId,
+          municipality_id:   body.municipality_id,
+          municipio_id:      body.municipio_id,
+          municipalityName:  body.municipalityName,
+          municipality_name: body.municipality_name,
+          municipality:      body.municipality,
+          municipio:         body.municipio,
+          birthMunicipality:       body.birthMunicipality,
+          birth_municipality:      body.birth_municipality,
+          expeditionMunicipality:  body.expeditionMunicipality,
+          expedition_municipality: body.expedition_municipality,
+          educationalMunicipality: body.educationalMunicipality,
+        });
+
         const created = await createEmployee(body);
         return sendJson(res, 201, { data: created });
       }

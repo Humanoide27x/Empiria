@@ -127,6 +127,32 @@ async function handleCambioOperativo(req, res, url) {
   )(req, res, url);
 }
 
+// ── Edición bancaria de cobertura externa (sin desbloquear nómina) ───────────
+async function handleTurnCoverBankInfo(req, res, url) {
+  if (req.method !== "PATCH") { sendMethodNotAllowed(res); return; }
+  const coverId = parseNumericPart(url.pathname, 2);
+  if (!coverId) { sendJson(res, 400, { ok: false, message: "ID de cobertura inválido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _url, user) => {
+      const role = String(user?.role || "").toLowerCase();
+      const allowed = role === ROLES.ADMINISTRATOR || role === ROLES.HUMAN_RESOURCES;
+      if (!allowed) {
+        sendJson(innerRes, 403, { ok: false, message: "No tiene permiso para editar datos bancarios." });
+        return;
+      }
+      try {
+        const body = await readJsonBody(innerReq);
+        const result = await operational.updateTurnCoverBankInfo(coverId, body, user);
+        sendJson(innerRes, 200, { ok: true, data: result });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 // ── PDF cuenta de cobro ───────────────────────────────────────────────────────
 async function handleChargeAccountHtml(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
@@ -1545,6 +1571,7 @@ module.exports = {
   handleSalaryCategories,
   handleOfficialNoveltyTypes,
   handleItemPayslip,
+  handleTurnCoverBankInfo,
   handleChargeAccountHtml,
   handleCambioOperativo,
   // Nuevo (036)

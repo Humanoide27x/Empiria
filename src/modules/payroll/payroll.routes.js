@@ -29,6 +29,7 @@ const {
   handleSalaryCategories,
   handleOfficialNoveltyTypes,
   handleItemPayslip,
+  handleTurnCoverBankInfo,
   handleChargeAccountHtml,
   handleCambioOperativo,
   handleItemReviewed,
@@ -58,6 +59,9 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/items\/\d+\/cambio-operativo$/.test(pathname)) {
     await handleCambioOperativo(req, res, url); return true;
+  }
+  if (/^\/payroll\/turn-covers\/\d+\/bank-info$/.test(pathname)) {
+    await handleTurnCoverBankInfo(req, res, url); return true;
   }
   if (/^\/payroll\/turn-covers\/\d+\/charge-account$/.test(pathname)) {
     await handleChargeAccountHtml(req, res, url); return true;

@@ -636,12 +636,18 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const currentDay   = now.getDate();
       const isCurrentMonth = refMonth === (now.getMonth() + 1) && refYear === now.getFullYear();
 
+      // refresh=1 o Cache-Control: no-cache fuerzan recalculo ignorando la entrada cacheada
+      const forceRefresh =
+        innerUrl.searchParams.get("refresh") === "1" ||
+        (req.headers?.["cache-control"] || "").includes("no-cache");
+
+      // Clave incluye userId para aislar usuarios, y todos los filtros variables
       const summaryKey = _cacheKey(
-        `${user.companyId ?? ""}|${resource?.contractId ?? ""}|${personnelType}`,
-        selectedMunicipalityId || "",
-        `${refYear}-${refMonth}`
+        `${user.id ?? ""}|${user.companyId ?? ""}|${resource?.contractId ?? ""}|${personnelType}`,
+        `${selectedMunicipalityId || ""}|${refYear}-${refMonth}`,
+        ""
       );
-      const summaryHit = _ttlGet(_summaryCache, summaryKey, SUMMARY_TTL);
+      const summaryHit = forceRefresh ? null : _ttlGet(_summaryCache, summaryKey, SUMMARY_TTL);
       if (summaryHit) {
         sendJson(innerRes, 200, { ok: true, cached: true, data: summaryHit });
         return;
@@ -821,9 +827,21 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         GROUP BY 1 ORDER BY COUNT(*) DESC, 1 ASC
       ` : null;
 
-      const educQuery = personnelType === "equipo" && employeeColumns.has("education_level") ? `
+      // Escolaridad: los estudios se guardan en employees.studies como un array JSONB
+      // con elementos {degree, educationLevel, institution, year}. Se toma el último
+      // registro de cada empleado (el más reciente) como nivel de referencia.
+      const educQuery = isEquipo && employeeColumns.has("studies") ? `
         SELECT
-          COALESCE(NULLIF(UPPER(TRIM(e.education_level)),''),'SIN DATO') AS label,
+          COALESCE(
+            NULLIF(UPPER(TRIM(
+              CASE
+                WHEN jsonb_typeof(e.studies) = 'array' AND jsonb_array_length(e.studies) > 0
+                  THEN (e.studies->-1)->>'educationLevel'
+                ELSE NULL
+              END
+            )), ''),
+            'SIN DATO'
+          ) AS label,
           COUNT(*) AS value
         ${employeeFromSql}
           AND UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
@@ -957,36 +975,73 @@ function handleDashboardWorkspaceSummary(req, res, url) {
       const expRows      = expResult.rows   || [];
       const foodRow      = foodResult.rows[0] || {};
 
+      // ── DIAG [EMP] resultado de queries de personal ──────────────────────────
+      console.info("DIAG [EMP] employee results:", {
+        personnelType,
+        dashboardPersona: audience.persona,
+        scope_conditions: employeeScope.conditions,
+        scope_values:     employeeScope.values,
+        summary:          employeeSummary,
+        gender_rows:      genderRows.length,    gender_data:   genderRows,
+        modality_rows:    modalityRows.length,  modality_data: modalityRows,
+        age_rows:         ageRows.length,        age_data:     ageRows,
+        birthday_rows:    birthdayRows.length,
+        sisben_row:       sisbenRow,
+        cert_row:         certRow,
+        exp_rows:         expRows.length,       exp_data: expRows,
+        food_row:         foodRow,
+        cargo_lit_rows:   cargoLicitRows.length,
+        cargo_op_rows:    cargoOpRows.length,
+        educ_rows:        educRows.length,       educ_data: educRows,
+      });
+
       let coverageByMunicipality = [];
       let requiredTc = 0;
       let requiredMt = 0;
 
+      // ── DIAGNÓSTICO DE COBERTURA ─────────────────────────────────────────────
+      // ETAPA 0: presencia de tablas
+      console.info("DIAG [0] TABLE PRESENCE:", {
+        has_coverage_uploads:     presence.has_coverage_uploads,
+        has_coverage_upload_rows: presence.has_coverage_upload_rows,
+      });
+
       if (presence.has_coverage_uploads && presence.has_coverage_upload_rows) {
+
+        // DIAG [2]: contexto del usuario que llega al query de cobertura
+        console.info("DIAG [2] USER CONTEXT:", {
+          userId:      user?.id,
+          companyId:   user?.companyId,
+          contractId:  resource?.contractId,
+          municipalityIds: resource?.municipalityIds ?? "none",
+          selectedMunicipalityId,
+          refPeriod:   `${refYear}-${refMonthStr}`,
+        });
+
+        // ── Construimos la query principal con todos los filtros ──────────
         const coverageValues = [];
-        const uploadConditions = ["TRUE"];
         const rowConditions = ["r.upload_id = (SELECT id FROM latest_upload)"];
         const employeeCoverageConditions = ["TRUE"];
 
-        if (user?.companyId) {
-          coverageValues.push(Number(user.companyId));
-          uploadConditions.push(`u.company_id = $${coverageValues.length}`);
+        // La selección del upload NO filtra por company/contract — solo prioriza
+        // el que mejor coincide con el período. La filtración de datos se hace en
+        // rowConditions y employeeCoverageConditions.
+        // Esto garantiza que siempre se encuentre un upload aunque sus campos
+        // company_id / contract_id no coincidan exactamente con el contexto del usuario.
+        const uploadConditions = ["TRUE"];
 
+        if (user?.companyId) {
           coverageValues.push(Number(user.companyId));
           employeeCoverageConditions.push(`e.company_id = $${coverageValues.length}`);
         }
-
         if (resource?.contractId) {
-          coverageValues.push(Number(resource.contractId));
-          uploadConditions.push(`u.contract_id = $${coverageValues.length}`);
-
           coverageValues.push(Number(resource.contractId));
           employeeCoverageConditions.push(`e.contract_id = $${coverageValues.length}`);
         }
 
         if (selectedMunicipalityId) {
           coverageValues.push(Number(selectedMunicipalityId));
-          rowConditions.push(`r.municipality_id = $${coverageValues.length}`);
-
+          rowConditions.push(`(r.municipality_id = $${coverageValues.length} OR r.municipality_id IS NULL)`);
           coverageValues.push(Number(selectedMunicipalityId));
           employeeCoverageConditions.push(`e.municipality_id = $${coverageValues.length}`);
         }
@@ -997,31 +1052,43 @@ function handleDashboardWorkspaceSummary(req, res, url) {
 
         if (munIds) {
           coverageValues.push(munIds);
-          rowConditions.push(`EXISTS (
-            SELECT 1 FROM municipalities mf
-            WHERE mf.id = ANY($${coverageValues.length})
-              AND REGEXP_REPLACE(translate(UPPER(TRIM(mf.name)),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')
-                = REGEXP_REPLACE(translate(UPPER(TRIM(r.municipality)),'ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ','AAAAAAEEEEIIIIOOOOOOUUUUYNC'),'[^A-Z0-9 ]','','g')
+          const munParamIdx = coverageValues.length;
+          rowConditions.push(`(
+            r.municipality_id = ANY($${munParamIdx})
+            OR EXISTS (
+              SELECT 1 FROM municipalities mf
+              WHERE mf.id = ANY($${munParamIdx})
+                AND ${SQL_NORM_MUN("mf.name")} = ${SQL_NORM_MUN("r.municipality")}
+            )
           )`);
-
-          rowConditions[rowConditions.length - 1] = `r.municipality_id = ANY($${coverageValues.length})`;
           coverageValues.push(munIds);
           employeeCoverageConditions.push(`e.municipality_id = ANY($${coverageValues.length})`);
         }
 
-        // Priority param: pick the upload whose period_month matches the selected period;
-        // fall back to NULL-period uploads (old data), then any upload as last resort.
         coverageValues.push(`${refYear}-${refMonthStr}`);
         const periodParamIdx = coverageValues.length;
 
+        // ETAPA 6: condiciones finales de la query principal
+        console.info("DIAG [6] COVERAGE QUERY CONDITIONS:", {
+          uploadConditions,
+          rowConditions,
+          employeeCoverageConditions,
+          periodParamIdx,
+          coverageValuesCount: coverageValues.length,
+          coverageValues,
+        });
+
+        // FULL OUTER JOIN con IS NOT DISTINCT FROM no es hash-joinable en PostgreSQL.
+        // Reemplazado por LEFT JOIN (cobertura es la base) + UNION ALL para empleados
+        // sin fila de cobertura. Ambos joins usan = simple (hash-joinable).
         const coverageQuery = `
           WITH latest_upload AS (
             SELECT u.id
             FROM coverage_uploads u
             WHERE ${uploadConditions.join(" AND ")}
             ORDER BY
-              CASE WHEN u.period_month = $${periodParamIdx}                        THEN 0
-                   WHEN (u.period_month IS NULL OR TRIM(u.period_month) = '')       THEN 1
+              CASE WHEN u.period_month = $${periodParamIdx} THEN 0
+                   WHEN (u.period_month IS NULL OR TRIM(u.period_month) = '') THEN 1
                    ELSE 9
               END ASC,
               u.created_at DESC, u.id DESC
@@ -1029,19 +1096,18 @@ function handleDashboardWorkspaceSummary(req, res, url) {
           ),
           coverage AS (
             SELECT
-              r.municipality_id AS municipality_id,
+              r.municipality_id,
               COALESCE(mun.name, TRIM(r.municipality)) AS municipality_name,
               COALESCE(SUM(r.required_tc), 0) AS required_tc,
               COALESCE(SUM(r.required_mt), 0) AS required_mt
             FROM coverage_upload_rows r
-            LEFT JOIN municipalities mun
-              ON mun.id = r.municipality_id
+            LEFT JOIN municipalities mun ON mun.id = r.municipality_id
             WHERE ${rowConditions.join(" AND ")}
             GROUP BY r.municipality_id, COALESCE(mun.name, TRIM(r.municipality))
           ),
-          employees AS (
+          emp AS (
             SELECT
-              m.id AS municipality_id,
+              e.municipality_id,
               m.name AS municipality_name,
               COUNT(*) FILTER (
                 WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'ACTIVO'
@@ -1054,28 +1120,51 @@ function handleDashboardWorkspaceSummary(req, res, url) {
             FROM employees e
             LEFT JOIN municipalities m ON m.id = e.municipality_id
             WHERE ${employeeCoverageConditions.join(" AND ")}
-            GROUP BY m.id, m.name
+            GROUP BY e.municipality_id, m.name
           )
+          -- Parte 1: todas las filas de cobertura con sus contratados (0 si no hay empleados)
           SELECT
-            COALESCE(c.municipality_id, emp.municipality_id) AS municipality_id,
-            COALESCE(c.municipality_name, emp.municipality_name) AS municipality_name,
-            COALESCE(c.required_tc, 0) AS required_tc,
-            COALESCE(c.required_mt, 0) AS required_mt,
+            c.municipality_id,
+            c.municipality_name,
+            c.required_tc,
+            c.required_mt,
             COALESCE(emp.contracted_tc, 0) AS contracted_tc,
             COALESCE(emp.contracted_mt, 0) AS contracted_mt
           FROM coverage c
-          FULL OUTER JOIN employees emp
-            ON c.municipality_id IS NOT DISTINCT FROM emp.municipality_id
-          WHERE COALESCE(c.municipality_name, emp.municipality_name) IS NOT NULL
-          ORDER BY (COALESCE(c.required_tc, 0) + COALESCE(c.required_mt, 0)) DESC,
-                   COALESCE(c.municipality_name, emp.municipality_name) ASC
+          LEFT JOIN emp ON emp.municipality_id = c.municipality_id
+                       AND emp.municipality_id IS NOT NULL
+
+          UNION ALL
+
+          -- Parte 2: empleados en municipios sin fila de cobertura (required = 0)
+          SELECT
+            emp.municipality_id,
+            emp.municipality_name,
+            0 AS required_tc,
+            0 AS required_mt,
+            emp.contracted_tc,
+            emp.contracted_mt
+          FROM emp
+          WHERE emp.municipality_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM coverage c
+              WHERE c.municipality_id = emp.municipality_id
+            )
+
+          ORDER BY (required_tc + required_mt) DESC, municipality_name ASC
         `;
 
-        const coverageResult = await pool.query(coverageQuery, coverageValues).catch(() => null);
+        const coverageResult = await pool.query(coverageQuery, coverageValues).catch((err) => {
+          console.error("DIAG [7] coverageQuery FALLÓ:", err.message, "\nValues:", coverageValues);
+          return null;
+        });
+
+        // ETAPA 7: resultado crudo de la query principal
+        console.info("DIAG [7] coverageResult null?:", coverageResult === null);
+        console.info("DIAG [7] coverageResult.rows.length:", coverageResult?.rows?.length ?? "N/A");
+        console.info("DIAG [7] coverageResult.rows (primeras 10):", (coverageResult?.rows ?? []).slice(0, 10));
 
         if (coverageResult?.rows?.length) {
-          // Merge rows whose municipality names differ only in accents/casing
-          // (e.g. "PUERTO GAITAN" from uploads vs "Puerto Gaitán" from municipalities table)
           const normKey = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
           const seenMun = new Map();
           const mergedRows = [];
@@ -1085,7 +1174,6 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               const idx = seenMun.get(key);
               const ex  = mergedRows[idx];
               mergedRows[idx] = {
-                // prefer the name/id from the municipalities table (non-null id = canonical)
                 municipality_id:   ex.municipality_id ?? row.municipality_id,
                 municipality_name: ex.municipality_id != null ? ex.municipality_name
                                  : row.municipality_id != null ? row.municipality_name
@@ -1100,11 +1188,33 @@ function handleDashboardWorkspaceSummary(req, res, url) {
               mergedRows.push({ ...row });
             }
           }
-          coverageByMunicipality = buildMunicipalityDistribution(coverageResult.rows);
+
+          // ETAPA 8: mergedRows
+          console.info("DIAG [8] mergedRows.length:", mergedRows.length);
+          console.info("DIAG [8] mergedRows:", mergedRows);
+
+          coverageByMunicipality = buildMunicipalityDistribution(mergedRows);
           requiredTc = coverageByMunicipality.reduce((sum, item) => sum + item.requiredTc, 0);
           requiredMt = coverageByMunicipality.reduce((sum, item) => sum + item.requiredMt, 0);
+
+          // ETAPA 9: resultado final antes de enviar al cliente
+          console.info("DIAG [9] coverageByMunicipality.length:", coverageByMunicipality.length);
+          console.info("DIAG [9] TC REQ:", requiredTc, " | MT REQ:", requiredMt);
+          console.info("DIAG [9] coverageByMunicipality:", coverageByMunicipality);
+        } else {
+          console.warn("DIAG [7] coverageResult.rows vacío o null → requiredTc=0, requiredMt=0, coverageByMunicipality=[]");
         }
+      } else {
+        console.warn("DIAG [0] TABLAS DE COBERTURA NO EXISTEN — saltando todo el bloque de cobertura");
       }
+
+      // ETAPA 10: estado final de las variables
+      console.info("DIAG [10] FINAL:", {
+        requiredTc,
+        requiredMt,
+        coverageByMunicipalityLength: coverageByMunicipality.length,
+        hasCoverageData: coverageByMunicipality.length > 0,
+      });
 
       const upcomingEvents = presence.has_calendar_events
         ? await pool.query(
@@ -1134,11 +1244,25 @@ function handleDashboardWorkspaceSummary(req, res, url) {
         ? Math.round((totalContracted / totalRequired) * 100)
         : 0;
 
+      const activeEmployees = Number(employeeSummary.active_employees || 0);
+      const coverageDataAvailable = coverageByMunicipality.length > 0;
+
+      console.info("[dashboard/summary] resultado:", {
+        activeEmployees,
+        contractedTc, contractedMt,
+        requiredTc, requiredMt,
+        coverageByMunicipalityCount: coverageByMunicipality.length,
+        coverageDataAvailable,
+        personnelType,
+        dashboardPersona: audience.persona,
+      });
+
       const data = {
         dashboardPersona: audience.persona,
         dashboardTitle: getDashboardTitle(audience, personnelType),
         personnelType,
-        activeEmployees: Number(employeeSummary.active_employees || 0),
+        activeEmployees,
+        coverageDataAvailable,
         requiredTc,
         contractedTc,
         requiredMt,

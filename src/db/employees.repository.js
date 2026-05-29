@@ -735,27 +735,38 @@ async function getEmployeeByDocument(docType, docNumber) {
 async function createEmployee(data) {
   const fullName = buildFullName(data);
 
-  const municipalityInput = data.municipalityId || data.municipality_id || data.municipality || data.municipio;
-  let municipalityId = null;
-  try {
-    const municipalityRecord = await resolveMunicipalityRecord({
-      municipalityId: firstDefined(data.municipalityId, data.municipality_id, data.municipio_id),
-      municipalityName: firstDefined(
-        data.municipalityName,
-        data.municipality_name,
-        data.municipality,
-        data.municipio
-      ),
-    });
-    municipalityId = municipalityRecord?.id || null;
-  } catch (err) {
-    console.error("[createEmployee] resolveMunicipalityRecord falló:", err.message);
-    municipalityId = null;
-  }
+  // Municipio LABORAL/VINCULACIÓN: solo leer campos explícitos de trabajo.
+  // NO usar data.municipality ni data.municipio porque son ambiguos y pueden
+  // contener el municipio de nacimiento o expedición del empleado.
+  // Solo considerar "provisto" si tiene valor real (no undefined, null, ni string vacío)
+  const workMunicipalityId   = firstDefined(data.municipalityId, data.municipality_id, data.municipio_id);
+  const workMunicipalityName = firstDefined(data.municipalityName, data.municipality_name);
+  const hasWorkMunicipalityInput =
+    (workMunicipalityId != null && String(workMunicipalityId).trim() !== "") ||
+    (workMunicipalityName && String(workMunicipalityName).trim() !== "");
 
-  if (!municipalityId) {
-    throw new Error("Debe seleccionar un municipio válido.");
+  let municipalityId = null;
+  if (hasWorkMunicipalityInput) {
+    try {
+      const municipalityRecord = await resolveMunicipalityRecord({
+        municipalityId:   workMunicipalityId || undefined,
+        municipalityName: workMunicipalityId ? undefined : workMunicipalityName,
+      });
+      municipalityId = municipalityRecord?.id || null;
+    } catch (err) {
+      console.error("[createEmployee] resolveMunicipalityRecord falló:", err.message);
+      // Conflicto explícito (ID no corresponde al nombre): informar con campo específico
+      throw new Error(`Municipio de vinculación inválido: ${err.message}`);
+    }
+    if (!municipalityId) {
+      throw new Error(
+        `Municipio de vinculación no encontrado: "${workMunicipalityName || workMunicipalityId}". ` +
+        `Selecciona el municipio desde la pestaña Vinculación.`
+      );
+    }
   }
+  // municipalityId = null es aceptable al crear desde la pestaña Identificación;
+  // el usuario lo asigna luego en Vinculación.
 
   const institutionId =
     await resolveInstitutionId(
