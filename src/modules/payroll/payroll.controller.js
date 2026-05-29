@@ -257,12 +257,43 @@ async function handleOperationalGroupById(req, res, url) {
   return withModuleProtection(
     MODULES.PAYROLL,
     ACTIONS.VIEW,
-    async (innerReq, innerRes) => {
+    async (innerReq, innerRes, innerUrl) => {
       try {
-        const data = await operational.getPayrollGroupDetail(periodId, groupId);
+        const qp = innerUrl.searchParams;
+        const filters = {
+          institution_id: qp.get("institution_id") ? Number(qp.get("institution_id")) : null,
+          site_id:        qp.get("site_id")        ? Number(qp.get("site_id"))        : null,
+          modality:       qp.get("modality")       || null,
+          has_novelties:  qp.has("has_novelties")  ? qp.get("has_novelties") === "true" : null,
+          reviewed:       qp.has("reviewed")       ? qp.get("reviewed") === "true"      : null,
+          support_status: qp.get("support_status") || null,
+          sort_by:        qp.get("sort_by")        || null,
+          sort_dir:       qp.get("sort_dir")       || null,
+        };
+        const data = await operational.getPayrollGroupDetail(periodId, groupId, filters);
         sendJson(innerRes, 200, { ok: true, data });
       } catch (err) {
         sendJson(innerRes, 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleExternalWorkerDocs(req, res, url) {
+  if (req.method !== "PATCH") { sendMethodNotAllowed(res); return; }
+  const parts = url.pathname.split("/").filter(Boolean);
+  const workerId = Number(parts[2]);
+  if (!workerId) { sendJson(res, 400, { ok: false, message: "ID de trabajador inválido" }); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        await operational.updateExternalWorkerDocs(workerId, body);
+        sendJson(innerRes, 200, { ok: true, message: "Documentos actualizados" });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -1273,7 +1304,7 @@ function buildGroupXlsx(options) {
 
   // ── Hoja 2: Novedades ───────────────────────────────────────────────────
   const SALARY_AFFECTING_XL   = new Set(["PERMISOS_NO_REMUNERADOS","SUSPENSION","FECHA_INGRESO","FECHA_RETIRO"]);
-  const TRANSPORT_AFFECTING_XL = new Set(["DIAS_NO_CLASE","CITA_MEDICA","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","CALAMIDAD_FAMILIAR","LUTO","CITACION_COLEGIO","LICENCIA_MATERNIDAD_PATERNIDAD"]);
+  const TRANSPORT_AFFECTING_XL = new Set(["DIAS_NO_CLASE","CITA_MEDICA","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","CALAMIDAD_FAMILIAR","LUTO","CITACIONES_OFICIALES","LICENCIA_MATERNIDAD_PATERNIDAD"]);
 
   // Índice de cálculo por item para obtener tarifas diarias reales
   const itemCalcMap = new Map(items.map((i) => [String(i.id), i.calculation || {}]));
@@ -1412,13 +1443,17 @@ function buildGroupXlsx(options) {
   const wsTurn = makeSheet(turnHdr, turnRows, turnMonCols,
     [8,12,32,14,26,32,14,14,20,28,20,10,8,14,14,20,18]);
 
+  // ── Hoja 0: Variables Nómina (primera, para referencia rápida) ───────────────
+  const wsVars = makeVariablesWorksheet(computeVariablesRows(items, novelties));
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, wsNom, "Nómina");
-  XLSX.utils.book_append_sheet(wb, wsNov, "Novedades");
-  XLSX.utils.book_append_sheet(wb, wsCover, "Reemplazos");
+  XLSX.utils.book_append_sheet(wb, wsVars, "Variables Nómina");
+  XLSX.utils.book_append_sheet(wb, wsNom,  "Nómina");
+  XLSX.utils.book_append_sheet(wb, wsNov,  "Novedades");
+  XLSX.utils.book_append_sheet(wb, wsCover,"Reemplazos");
   XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
-  XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
-  XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
+  XLSX.utils.book_append_sheet(wb, wsRes,  "Resumen");
+  XLSX.utils.book_append_sheet(wb, wsSup,  "Soportes");
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
@@ -1560,6 +1595,321 @@ async function handleGroupHistory(req, res, url) {
 // ── helper local (duplicado de operational para no importar) ─────────────────
 function s(v) { return String(v == null ? "" : v); }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTACIÓN FORMATO VARIABLES DE NÓMINA — helpers compartidos
+// Reutilizados por buildGroupXlsx (por municipio) y buildPeriodFullXlsx (global)
+// ─────────────────────────────────────────────────────────────────────────────
+const VARIABLES_HEADERS = [
+  "Cédula",
+  "Nombre Completo",
+  "Municipio",
+  "Días de NO CLASE",
+  "Cita Médica",
+  "Cita Médica de un Familiar",
+  "Incapacidad Médica",
+  "Incapacidad por Accidente Laboral",
+  "Calamidad Familiar",
+  "Citaciones (Fiscalía, Procuraduría, Unidad de Víctimas, Colegio, Comisaría, Juzgado, Personería, EPS, ARL, etc.)",
+  "Licencia de maternidad/paternidad",
+  "Suspensión",
+  "Permisos NO remunerados",
+  "Fecha de retiro",
+  "Días Laborados",
+];
+
+function fmtFechaCol(date) {
+  if (!date) return "";
+  const d = new Date(String(date).slice(0, 10) + "T00:00:00Z");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yy = d.getUTCFullYear();
+  return `${dd}/${mm}/${yy}`;
+}
+
+function calcDiasLaborados(row) {
+  const ingresoDay = row.fecha_ingreso
+    ? new Date(String(row.fecha_ingreso).slice(0, 10) + "T00:00:00Z").getUTCDate()
+    : null;
+  const retiroDay = row.fecha_retiro
+    ? new Date(String(row.fecha_retiro).slice(0, 10) + "T00:00:00Z").getUTCDate()
+    : null;
+  const susp     = Number(row.suspension || 0);
+  const permisos = Number(row.permisos_no_remunerados || 0);
+
+  let base;
+  if (ingresoDay !== null && retiroDay !== null) {
+    base = retiroDay - ingresoDay;
+  } else if (retiroDay !== null) {
+    base = retiroDay;
+  } else if (ingresoDay !== null) {
+    base = 30 - ingresoDay;
+  } else {
+    base = 30;
+  }
+  return Math.max(0, base - susp - permisos);
+}
+
+// Calcula filas de Variables a partir de los arrays items+novelties del grupo.
+// Permite reutilizar desde buildGroupXlsx sin una consulta extra a la BD.
+function computeVariablesRows(items, novelties) {
+  const novByItem = new Map();
+  for (const nov of (novelties || [])) {
+    if (!nov.payroll_item_id) continue;
+    const key = String(nov.payroll_item_id);
+    if (!novByItem.has(key)) novByItem.set(key, []);
+    novByItem.get(key).push(nov);
+  }
+  return (items || []).map((item) => {
+    const novs = novByItem.get(String(item.id)) || [];
+    function sumDays(type) {
+      return novs.filter((n) => n.novelty_type === type).reduce((acc, n) => acc + Number(n.days || 0), 0);
+    }
+    const retiroNov  = novs.find((n) => n.novelty_type === "FECHA_RETIRO");
+    const ingresoNov = novs.find((n) => n.novelty_type === "FECHA_INGRESO");
+    return {
+      document_number:         s(item.document_number),
+      employee_name:           s(item.employee_name),
+      municipality_name:       s(item.municipality_name),
+      dias_no_clase:           sumDays("DIAS_NO_CLASE"),
+      cita_medica:             sumDays("CITA_MEDICA"),
+      cita_medica_familiar:    sumDays("CITA_MEDICA_FAMILIAR"),
+      incapacidad_medica:      sumDays("INCAPACIDAD_MEDICA"),
+      incapacidad_accidente:   sumDays("INCAPACIDAD_ACCIDENTE_LABORAL"),
+      calamidad_familiar:      sumDays("CALAMIDAD_FAMILIAR"),
+      citaciones_oficiales:    sumDays("CITACIONES_OFICIALES"),
+      licencia_maternidad:     sumDays("LICENCIA_MATERNIDAD_PATERNIDAD"),
+      suspension:              sumDays("SUSPENSION"),
+      permisos_no_remunerados: sumDays("PERMISOS_NO_REMUNERADOS"),
+      fecha_retiro:            retiroNov  ? retiroNov.start_date  : null,
+      fecha_ingreso:           ingresoNov ? ingresoNov.start_date : null,
+    };
+  });
+}
+
+// Construye la hoja Excel "Variables Nómina" a partir de filas ya calculadas.
+function makeVariablesWorksheet(rows) {
+  function nv(v) { return Number(v) > 0 ? Number(v) : ""; }
+  const hdrStyle = {
+    font:      { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+    fill:      { fgColor: { rgb: "1E293B" }, type: "pattern", patternType: "solid" },
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+  };
+  const dataRows = rows.map((row) => [
+    s(row.document_number),
+    s(row.employee_name),
+    s(row.municipality_name),
+    nv(row.dias_no_clase),
+    nv(row.cita_medica),
+    nv(row.cita_medica_familiar),
+    nv(row.incapacidad_medica),
+    nv(row.incapacidad_accidente),
+    nv(row.calamidad_familiar),
+    nv(row.citaciones_oficiales),
+    nv(row.licencia_maternidad),
+    nv(row.suspension),
+    nv(row.permisos_no_remunerados),
+    fmtFechaCol(row.fecha_retiro),
+    calcDiasLaborados(row),
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([VARIABLES_HEADERS, ...dataRows]);
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[addr]) ws[addr].s = { ...hdrStyle };
+  }
+  ws["!freeze"]    = { xSplit: 0, ySplit: 1 };
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: VARIABLES_HEADERS.length - 1 } }) };
+  ws["!cols"] = [
+    { wch: 14 }, { wch: 34 }, { wch: 22 },
+    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
+    { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+  ];
+  return ws;
+}
+
+// Exportación standalone solo Variables (endpoint legacy /variables-export)
+function buildVariablesXlsx(rows) {
+  const ws = makeVariablesWorksheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Variables Nómina");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTACIÓN GLOBAL DEL PERÍODO (todos los municipios)
+// Genera: Variables Nómina + Nómina + Resumen
+// ─────────────────────────────────────────────────────────────────────────────
+function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
+  const nn  = (v) => Number(v || 0);
+  const hdrStyle = {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+    fill: { fgColor: { rgb: "1E293B" }, type: "pattern", patternType: "solid" },
+    alignment: { horizontal: "center", vertical: "center" },
+  };
+  const totStyle = {
+    font: { bold: true },
+    fill: { fgColor: { rgb: "DCFCE7" }, type: "pattern", patternType: "solid" },
+  };
+  const MONEY = "#,##0";
+
+  function makeSheet(headers, rows, moneyCols = [], colWidths = []) {
+    const ws    = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[addr]) ws[addr].s = { ...hdrStyle };
+    }
+    for (const c of moneyCols) {
+      for (let r = 1; r <= range.e.r; r++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (ws[addr] && typeof ws[addr].v === "number") ws[addr].z = MONEY;
+      }
+    }
+    ws["!freeze"]     = { xSplit: 0, ySplit: 1 };
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: range.e.c } }) };
+    if (colWidths.length) ws["!cols"] = colWidths.map((w) => ({ wch: w }));
+    return ws;
+  }
+
+  // ── Variables ─────────────────────────────────────────────────────────────
+  const wsVars = makeVariablesWorksheet(computeVariablesRows(items, novelties));
+
+  // ── Nómina (misma estructura que buildGroupXlsx, todos los municipios) ────
+  const nomHdr = [
+    "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
+    "Modalidad", "Jornada", "Categoría", "Días",
+    "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
+    "Salud (4%)", "Pensión (4%)", "Total deducciones",
+    "Novedades", "Desc. salario", "Desc. transporte",
+    "Neto a pagar", "Revisada",
+  ];
+  const nomMonCols = [10,11,12,13,14,15,16,17,19,20,21];
+  function otrosItem(item) {
+    const c = item.calculation || {};
+    return c.other_recargos_value != null ? nn(c.other_recargos_value) : Math.max(0, nn(item.other_earnings) - nn(c.internal_cover_value));
+  }
+  const nomRows = items.map((item) => {
+    const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
+    return [
+      s(item.document_number), s(item.employee_name), s(item.operational_position),
+      s(item.municipality_name), s(item.institution_name || ""), s(item.site_name || ""),
+      s(item.modality), s(item.work_time_type), s(item.salary_category), nn(item.worked_days),
+      nn(item.base_salary), nn(item.transport_allowance), otrosItem(item), nn(calc.internal_cover_value), nn(item.total_devengado),
+      nn(calc.deduccion_salud), nn(calc.deduccion_pension), nn(item.total_deducciones),
+      nn(item.novelty_count), nn(calc.salary_discount), nn(calc.transport_discount),
+      nn(item.neto_pagar), item.reviewed ? "Sí" : "No",
+    ];
+  });
+  const nomTotal = [
+    "TOTAL", "", "", "", "", "", "", "", "",
+    items.reduce((a, i) => a + nn(i.worked_days), 0),
+    items.reduce((a, i) => a + nn(i.base_salary), 0),
+    items.reduce((a, i) => a + nn(i.transport_allowance), 0),
+    items.reduce((a, i) => a + otrosItem(i), 0),
+    items.reduce((a, i) => a + nn((i.calculation||{}).internal_cover_value), 0),
+    nn(totals.total_devengado),
+    items.reduce((a, i) => a + nn((i.calculation||{}).deduccion_salud), 0),
+    items.reduce((a, i) => a + nn((i.calculation||{}).deduccion_pension), 0),
+    nn(totals.total_deducciones),
+    nn(totals.novelties),
+    items.reduce((a, i) => a + nn((i.calculation||{}).salary_discount), 0),
+    items.reduce((a, i) => a + nn((i.calculation||{}).transport_discount), 0),
+    nn(totals.neto),
+    `${nn(totals.items_reviewed)}/${nn(totals.employees)} rev.`,
+  ];
+  const wsNom = makeSheet(nomHdr, [...nomRows, nomTotal], nomMonCols,
+    [14,32,22,20,28,20,10,10,10,5,14,14,12,18,15,12,12,15,7,13,13,14,8]);
+  const nomTotR = nomRows.length + 1;
+  for (let c = 0; c < nomHdr.length; c++) {
+    const addr = XLSX.utils.encode_cell({ r: nomTotR, c });
+    if (wsNom[addr]) { wsNom[addr].s = { ...totStyle }; if (typeof wsNom[addr].v === "number") wsNom[addr].z = MONEY; }
+  }
+
+  // ── Resumen global del período ────────────────────────────────────────────
+  const resRows = [
+    ["Período",              periodLabel],
+    ["Total municipios",     new Set(items.map((i) => i.municipality_name)).size],
+    ["Total empleados",      nn(totals.employees)],
+    ["Items revisados",      nn(totals.items_reviewed)],
+    ["Total novedades",      nn(totals.novelties)],
+    ["Total devengado",      nn(totals.total_devengado)],
+    ["Total deducciones",    nn(totals.total_deducciones)],
+    ["Neto total",           nn(totals.neto)],
+  ];
+  const wsRes = makeSheet(["Concepto", "Valor"], resRows, [1], [30, 22]);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsVars, "Variables Nómina");
+  XLSX.utils.book_append_sheet(wb, wsNom,  "Nómina");
+  XLSX.utils.book_append_sheet(wb, wsRes,  "Resumen");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+}
+
+// GET /payroll/periods/:periodId/full-export — todos los municipios del período
+async function handlePeriodFullExport(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const parts    = url.pathname.split("/").filter(Boolean);
+  const periodId = Number(parts[2]);
+  if (!Number.isFinite(periodId) || periodId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de período inválido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.EXPORT,
+    async (innerReq, innerRes) => {
+      try {
+        const { items, novelties, totals, periodLabel } = await operational.getPeriodItemsForExport(periodId);
+        const buf      = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+        const safeLbl  = (periodLabel || String(periodId)).replace(/[^a-z0-9\-_]/gi, "-");
+        const filename = `nomina-completa-${safeLbl}.xlsx`;
+        innerRes.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": buf.length,
+        });
+        innerRes.end(buf);
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// GET /payroll/periods/:periodId/variables-export?groupId=X
+async function handleVariablesExport(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  const parts    = url.pathname.split("/").filter(Boolean);
+  const periodId = Number(parts[2]);
+  if (!Number.isFinite(periodId) || periodId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de período inválido" }); return;
+  }
+  const groupId = url.searchParams.get("groupId") ? Number(url.searchParams.get("groupId")) : null;
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.EXPORT,
+    async (innerReq, innerRes) => {
+      try {
+        const rows  = await operational.getVariablesExportData(periodId, groupId);
+        const { rows: periodRows } = await (require("../../db/pool")).query(
+          `SELECT label FROM payroll_periods WHERE id = $1`, [periodId]
+        );
+        const periodLabel = periodRows[0]?.label || String(periodId);
+        const buf      = buildVariablesXlsx(rows, periodLabel);
+        const safeLbl  = periodLabel.replace(/[^a-z0-9\-_]/gi, "-");
+        const filename = `variables-nomina-${safeLbl}.xlsx`;
+        innerRes.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": buf.length,
+        });
+        innerRes.end(buf);
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 module.exports = {
   handleNovelties,
   handleNoveltyById,
@@ -1598,10 +1948,15 @@ module.exports = {
   // Nuevo (036)
   handleItemReviewed,
   handleDeleteNovelty,
-  // Exportación por municipio
+  // Exportación por municipio (detallada)
   handleGroupExport,
   handleGroupClose,
   handleGroupReopen,
   handleGroupHistory,
   handleGroupTurns,
+  handleExternalWorkerDocs,
+  // Exportación formato Variables
+  handleVariablesExport,
+  // Exportación completa del período (todos los municipios)
+  handlePeriodFullExport,
 };

@@ -23,9 +23,21 @@ function ensureFile(fileName, fallbackData) {
 
 function readCollection(fileName, fallbackData = []) {
   const filePath = ensureFile(fileName, fallbackData);
-  const raw = fs.readFileSync(filePath, "utf8");
-
-  return JSON.parse(raw);
+  let raw = "";
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+    if (!raw || !raw.trim()) return fallbackData;
+    return JSON.parse(raw);
+  } catch (err) {
+    // JSON corrupto: renombrar y crear uno limpio
+    try {
+      const corruptPath = filePath + ".corrupt." + Date.now();
+      fs.renameSync(filePath, corruptPath);
+      console.error(`[store] ${fileName} corrupto — guardado como ${corruptPath}, creando nuevo`);
+    } catch (_) { /* no bloquear si el rename falla */ }
+    fs.writeFileSync(filePath, JSON.stringify(fallbackData, null, 2));
+    return fallbackData;
+  }
 }
 
 function writeCollection(fileName, data) {

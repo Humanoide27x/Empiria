@@ -477,6 +477,25 @@
     </div>
   </div>
 
+  <!-- BARRA DE PROGRESO SUPERIOR -->
+  <div id="ld-progress" role="progressbar" aria-label="Progreso">
+    <div id="ld-progress-fill"></div>
+    <span id="ld-progress-label"></span>
+  </div>
+
+  <!-- OVERLAY GLOBAL DE CARGA -->
+  <div id="ld-overlay" aria-live="polite" aria-busy="true" aria-label="Cargando">
+    <div class="ld-card">
+      <div class="ld-brand">E M P I R I A</div>
+      <div class="ld-spinner-wrap">
+        <div class="ld-ring"></div>
+        <div class="ld-ring ld-ring-b"></div>
+      </div>
+      <p id="ld-overlay-msg" class="ld-msg">Procesando información...</p>
+      <p class="ld-sub">Por favor espere</p>
+    </div>
+  </div>
+
   <script>window.APP_VERSION = '__VER__';</script>
   <script type="module" src="/js/app.js?v=__VER__"></script>
 </body>

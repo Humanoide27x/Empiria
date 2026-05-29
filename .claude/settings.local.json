@@ -102,7 +102,10 @@
       "Bash(grep -E \"\\\\.\\(js|ts\\)$\")",
       "Bash(grep -n \"^=======$\" \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\\\\public\\\\js\\\\modules\\\\payroll.js\")",
       "Bash(grep *)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Directory)"
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Directory)",
+      "Bash(PGPASSWORD='0WNkgBnHTS0l1b8X' psql *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Recurse -Force)",
+      "Bash(Select-Object -First 50)"
     ]
   }
 }

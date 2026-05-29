@@ -15,7 +15,7 @@ const NOVELTY_TYPES = [
   { code: "CALAMIDAD_FAMILIAR",            name: "Calamidad Familiar",                affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
   { code: "LUTO",                          name: "Luto",                              affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
   { code: "PERMISOS_NO_REMUNERADOS",       name: "Permisos No Remunerados",           affects_salary: true,  affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
-  { code: "CITACION_COLEGIO",              name: "Citación en Colegio",               affects_salary: false, affects_transport: true,  affects_additional: false, requires_turn_cover: false },
+  { code: "CITACIONES_OFICIALES",          name: "Citaciones Oficiales",              affects_salary: false, affects_transport: true,  affects_additional: false, requires_turn_cover: false },
   { code: "LICENCIA_MATERNIDAD_PATERNIDAD",name: "Licencia de Maternidad/Paternidad", affects_salary: false, affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
   { code: "SUSPENSION",                    name: "Suspensión",                        affects_salary: true,  affects_transport: true,  affects_additional: true,  requires_turn_cover: false },
   { code: "FECHA_INGRESO",                 name: "Fecha de Ingreso",                  affects_salary: true,  affects_transport: false, affects_additional: false, requires_turn_cover: false },
@@ -27,26 +27,28 @@ const NOVELTY_TYPES = [
 const SUPPORT_REQUIREMENTS = {
   CITA_MEDICA:                    ["COMPROBANTE_CITA_MEDICA"],
   CITA_MEDICA_FAMILIAR:           ["COMPROBANTE_CITA_MEDICA"],
-  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA"],
-  INCAPACIDAD_ACCIDENTE_LABORAL:  ["INCAPACIDAD_MEDICA"],
+  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
+  INCAPACIDAD_ACCIDENTE_LABORAL:  ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
   PERMISOS_NO_REMUNERADOS:        ["AUTORIZACION_DESCUENTO"],
-  CITACION_COLEGIO:               ["COMPROBANTE_ASISTENCIA"],
+  CITACIONES_OFICIALES:           ["COMPROBANTE_CITACION"],
   CALAMIDAD_FAMILIAR:             ["COMPROBANTE_CALAMIDAD"],
   LUTO:                           ["ACTA_DEFUNCION"],
-  LICENCIA_MATERNIDAD_PATERNIDAD: ["INCAPACIDAD_MEDICA"],
+  LICENCIA_MATERNIDAD_PATERNIDAD: ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
 };
 
 const SUPPORT_TYPE_LABELS = {
-  COMPROBANTE_CITA_MEDICA: "Comprobante de Cita Médica",
-  HISTORIA_CLINICA:        "Historia Clínica",
-  INCAPACIDAD_MEDICA:      "Incapacidad Médica",
-  AUTORIZACION_DESCUENTO:  "Autorización de Descuento",
-  COMPROBANTE_ASISTENCIA:  "Comprobante de Asistencia",
-  COMPROBANTE_CALAMIDAD:   "Comprobante de Calamidad",
-  ACTA_DEFUNCION:          "Acta de Defunción",
-  CEDULA_CIUDADANIA:       "Cédula de Ciudadanía",
-  CUENTA_COBRO:            "Cuenta de Cobro",
-  CERTIFICACION_BANCARIA:  "Certificación Bancaria",
+  COMPROBANTE_CITA_MEDICA:  "Comprobante de asistencia a la cita",
+  HISTORIA_CLINICA:         "Historia Clínica",
+  INCAPACIDAD_MEDICA_DOC:   "Incapacidad Médica",
+  INCAPACIDAD_MEDICA:       "Incapacidad Médica",
+  AUTORIZACION_DESCUENTO:   "Autorización de Descuento",
+  COMPROBANTE_CITACION:     "Soporte de Citación",
+  COMPROBANTE_ASISTENCIA:   "Soporte de Citación",
+  COMPROBANTE_CALAMIDAD:    "Soporte de la Calamidad",
+  ACTA_DEFUNCION:           "Acta de Defunción",
+  CEDULA_CIUDADANIA:        "Cédula de Ciudadanía",
+  CUENTA_COBRO:             "Cuenta de Cobro",
+  CERTIFICACION_BANCARIA:   "Certificación Bancaria",
 };
 
 function noveltyByCode(code) {
@@ -75,6 +77,19 @@ let activePrimaryTab = "nomina"; // "nomina" | "soportes"
 let supportsData     = [];
 let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
 let viewerSupportId  = null;
+
+// ── Filtros de tabla de empleados (nómina) ────────────────────────────────────
+let itemsFilter = {
+  institution_id: "",
+  site_id:        "",
+  modality:       "",
+  has_novelties:  "",
+  reviewed:       "",
+  support_status: "",
+  sort_by:        "",
+  sort_dir:       "asc",
+};
+let groupFilterCatalog = { institutions: [], sites: [], modalities: [] };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -387,6 +402,24 @@ function shell() {
 .nm-pay-mun-wrap{display:flex;flex-direction:column;gap:2px;padding:2px 4px}
 .nm-pay-mun-actions{display:flex;gap:4px;padding:0 4px 2px;justify-content:flex-end}
 
+/* ── Barra de filtros de items de nómina ────────────────────────── */
+.nm-items-fbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:6px 10px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex:0 0 auto}
+.nm-items-fbar label{font-size:11px;font-weight:700;color:#475569;white-space:nowrap;flex-shrink:0}
+.nm-fbar-sep{width:1px;height:18px;background:#E2E8F0;flex-shrink:0;margin:0 2px}
+.nm-fbar-active{background:#ECFDF5!important;border-color:#0F766E!important;color:#0F766E!important}
+
+/* ── Tarjetas de turnos agrupados ───────────────────────────────── */
+.nm-turn-group-card{border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;margin-bottom:12px}
+.nm-turn-group--ext{border-color:#FDE68A}
+.nm-turn-group--int{border-color:#BFDBFE}
+.nm-turn-group-hd{display:flex;align-items:center;gap:10px;padding:9px 12px;flex-wrap:wrap}
+.nm-turn-group--ext .nm-turn-group-hd{background:#FFFBEB}
+.nm-turn-group--int .nm-turn-group-hd{background:#EFF6FF}
+.nm-turn-type-badge{display:inline-flex;border-radius:3px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.5px;flex-shrink:0;white-space:nowrap}
+.nm-turn-badge--ext{background:#FEF9C3;color:#92400E}
+.nm-turn-badge--int{background:#DBEAFE;color:#1E40AF}
+.nm-turn-group-ft{padding:8px 12px;background:#F8FAFC;border-top:1px solid #E2E8F0;display:flex;flex-direction:column;gap:6px}
+
 /* ── Soportes inline (pestaña Soportes dentro del grupo) ─────────── */
 .nm-sup-inline{display:flex;flex-direction:column;gap:0;overflow:auto;max-height:calc(100vh - 380px)}
 .nm-sup-inline-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex-wrap:wrap;flex:0 0 auto}
@@ -439,11 +472,54 @@ async function loadGroups() {
   if (activeGroupId && !available.some((m) => Number(m.id) === Number(activeGroupId))) activeGroupId = null;
 }
 
+function resetItemsFilter() {
+  itemsFilter = { institution_id: "", site_id: "", modality: "", has_novelties: "", reviewed: "", support_status: "", sort_by: "", sort_dir: "asc" };
+  groupFilterCatalog = { institutions: [], sites: [], modalities: [] };
+}
+
+function buildFilterParams() {
+  const p = new URLSearchParams();
+  if (itemsFilter.institution_id) p.set("institution_id", itemsFilter.institution_id);
+  if (itemsFilter.site_id)        p.set("site_id",        itemsFilter.site_id);
+  if (itemsFilter.modality)       p.set("modality",       itemsFilter.modality);
+  if (itemsFilter.has_novelties !== "") p.set("has_novelties", itemsFilter.has_novelties);
+  if (itemsFilter.reviewed !== "")      p.set("reviewed",      itemsFilter.reviewed);
+  if (itemsFilter.support_status)       p.set("support_status",itemsFilter.support_status);
+  if (itemsFilter.sort_by)              p.set("sort_by",       itemsFilter.sort_by);
+  if (itemsFilter.sort_dir && itemsFilter.sort_dir !== "asc") p.set("sort_dir", itemsFilter.sort_dir);
+  return p;
+}
+
+function isFilterActive() {
+  const f = itemsFilter;
+  return !!(f.institution_id || f.site_id || f.modality || f.has_novelties || f.reviewed || f.support_status || f.sort_by || (f.sort_dir && f.sort_dir !== "asc"));
+}
+
 async function loadGroupDetail() {
   if (!activePeriod || !activeGroupId) { activeGroupDetail = null; activeGroupTurns = null; return; }
-  const response = await apiFetch(`/payroll/${activePeriod.id}/groups/${activeGroupId}`);
+  const qs = buildFilterParams().toString();
+  const response = await apiFetch(`/payroll/${activePeriod.id}/groups/${activeGroupId}${qs ? "?" + qs : ""}`);
   activeGroupDetail = response.data || null;
-  activeGroupTurns  = null; // reset para forzar recarga al entrar a la pestaña
+  activeGroupTurns  = null;
+
+  // Rebuild catalog only when no filters are active (stores all institutions/sites/modalities)
+  if (!isFilterActive() && activeGroupDetail?.items?.length) {
+    const institutions = new Map();
+    const sites = new Map();
+    const modalities = new Set();
+    for (const item of activeGroupDetail.items) {
+      if (item.institution_id && item.institution_name)
+        institutions.set(Number(item.institution_id), item.institution_name);
+      if (item.site_id && item.site_name)
+        sites.set(Number(item.site_id), item.site_name);
+      if (item.modality) modalities.add(item.modality);
+    }
+    groupFilterCatalog = {
+      institutions: Array.from(institutions.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es")),
+      sites:        Array.from(sites.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es")),
+      modalities:   Array.from(modalities).sort(),
+    };
+  }
 }
 
 async function loadGroupTurns() {
@@ -704,7 +780,9 @@ ${recalcBanner}
 <!-- Cuerpo scrollable con pestañas Nómina / Novedades / Turnos -->
 <div class="nm-pay-scroll-body">
   <div class="nm-detail-tabs">
-    <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nómina</button>
+    <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">
+      Nómina <span class="nm-pay-count">${items.length}</span>${isFilterActive() ? ` <span style="font-size:10px;color:#0F766E;font-weight:600">filtrado</span>` : ""}
+    </button>
     <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
@@ -716,18 +794,80 @@ ${recalcBanner}
     </button>
   </div>
   ${activeDetailTab === "nomina"
-    ? (items.length
+    ? `${renderNominaItemsFilterBar(items.length)}${items.length
         ? renderItemsTable(items)
-        : `<div class="nm-pay-empty">Pulsa "Calcular" para cargar los empleados activos.</div>`)
+        : `<div class="nm-pay-empty" style="margin:10px">${isFilterActive() ? "Ningún empleado coincide con los filtros aplicados." : "Pulsa \"Calcular\" para cargar los empleados activos."}</div>`}`
     : activeDetailTab === "novedades"
     ? (novelties.length
         ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
         : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)
     : activeDetailTab === "soportes"
-    ? renderSupportsSection(supports || [], isClosed)
+    ? renderSupportsSection(supports || [], isClosed, covers)
     : (activeGroupTurns === null
         ? `<div class="nm-pay-empty">Cargando turnos…</div>`
         : renderTurnosSection(activeGroupTurns, isClosed))}
+</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BARRA DE FILTROS DE ITEMS DE NÓMINA
+// ─────────────────────────────────────────────────────────────────────────────
+function renderNominaItemsFilterBar(itemCount) {
+  const f = itemsFilter;
+  const active = isFilterActive();
+  const selClass = (val) => val ? "nm-pay-select nm-pay-input--sm nm-fbar-active" : "nm-pay-select nm-pay-input--sm";
+  return `
+<div class="nm-items-fbar">
+  <label>Filtros:</label>
+  ${groupFilterCatalog.institutions.length ? `
+  <select class="${selClass(f.institution_id)}" id="fltInstitution" style="max-width:160px">
+    <option value="">Institución</option>
+    ${groupFilterCatalog.institutions.map(i => `<option value="${i.id}" ${String(f.institution_id) === String(i.id) ? "selected" : ""}>${escapeHtml(i.name)}</option>`).join("")}
+  </select>` : ""}
+  ${groupFilterCatalog.sites.length ? `
+  <select class="${selClass(f.site_id)}" id="fltSite" style="max-width:140px">
+    <option value="">Sede</option>
+    ${groupFilterCatalog.sites.map(s => `<option value="${s.id}" ${String(f.site_id) === String(s.id) ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+  </select>` : ""}
+  ${groupFilterCatalog.modalities.length ? `
+  <select class="${selClass(f.modality)}" id="fltModality" style="max-width:100px">
+    <option value="">Modalidad</option>
+    ${groupFilterCatalog.modalities.map(m => `<option value="${escapeHtml(m)}" ${f.modality === m ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")}
+  </select>` : ""}
+  <select class="${selClass(f.has_novelties)}" id="fltNovedades" style="max-width:140px">
+    <option value="">Novedades: todas</option>
+    <option value="true"  ${f.has_novelties === "true"  ? "selected" : ""}>Con novedades</option>
+    <option value="false" ${f.has_novelties === "false" ? "selected" : ""}>Sin novedades</option>
+  </select>
+  <select class="${selClass(f.reviewed)}" id="fltReviewed" style="max-width:130px">
+    <option value="">Revisión: todas</option>
+    <option value="true"  ${f.reviewed === "true"  ? "selected" : ""}>Revisados</option>
+    <option value="false" ${f.reviewed === "false" ? "selected" : ""}>Pendientes</option>
+  </select>
+  <select class="${selClass(f.support_status)}" id="fltSupports" style="max-width:130px">
+    <option value="">Soportes: todos</option>
+    <option value="pending"  ${f.support_status === "pending"  ? "selected" : ""}>Pendientes</option>
+    <option value="complete" ${f.support_status === "complete" ? "selected" : ""}>Completos</option>
+  </select>
+  <div class="nm-fbar-sep"></div>
+  <label>Ordenar:</label>
+  <select class="nm-pay-select nm-pay-input--sm" id="fltSortBy" style="max-width:130px">
+    <option value="">Nombre (A-Z)</option>
+    <option value="documento"  ${f.sort_by === "documento"  ? "selected" : ""}>Documento</option>
+    <option value="institucion"${f.sort_by === "institucion"? "selected" : ""}>Institución</option>
+    <option value="sede"       ${f.sort_by === "sede"       ? "selected" : ""}>Sede</option>
+    <option value="modalidad"  ${f.sort_by === "modalidad"  ? "selected" : ""}>Modalidad</option>
+    <option value="cargo"      ${f.sort_by === "cargo"      ? "selected" : ""}>Cargo</option>
+    <option value="devengado"  ${f.sort_by === "devengado"  ? "selected" : ""}>Devengado</option>
+    <option value="neto"       ${f.sort_by === "neto"       ? "selected" : ""}>Neto</option>
+    <option value="novedades"  ${f.sort_by === "novedades"  ? "selected" : ""}>N° novedades</option>
+  </select>
+  <select class="nm-pay-select nm-pay-input--sm" id="fltSortDir" style="max-width:70px">
+    <option value="asc"  ${f.sort_dir !== "desc" ? "selected" : ""}>↑ Asc</option>
+    <option value="desc" ${f.sort_dir === "desc" ? "selected" : ""}>↓ Desc</option>
+  </select>
+  ${active ? `<button class="nm-pay-btn nm-pay-btn--sm" id="fltClear" style="color:#B91C1C;border-color:#FECACA;flex-shrink:0">✕ Limpiar</button>` : ""}
+  <span style="font-size:11px;color:#94A3B8;margin-left:4px;white-space:nowrap">${active ? `${itemCount} resultado(s)` : ""}</span>
 </div>`;
 }
 
@@ -953,20 +1093,18 @@ function renderTurnsTable(covers) {
 </table>`;
 }
 
-// SECCIÓN TURNOS (pestaña dedicada con filtros y datos de listGroupTurns)
+// SECCIÓN TURNOS — agrupada por persona que cubrió
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTurnosSection(turns, isClosed) {
   const { type, search } = turnosFilter;
   let rows = turns;
 
-  if (type !== "TODOS") {
-    rows = rows.filter((t) => t.cover_type === type);
-  }
+  if (type !== "TODOS") rows = rows.filter((t) => t.cover_type === type);
   if (search) {
     const q = normalized(search);
     rows = rows.filter((t) =>
-      normalized(t.origin_employee_name || "").includes(q) ||
-      normalized(t.origin_document     || "").includes(q) ||
+      normalized(t.origin_employee_name   || "").includes(q) ||
+      normalized(t.origin_document        || "").includes(q) ||
       normalized(t.internal_employee_name || "").includes(q) ||
       normalized(t.external_worker_name   || "").includes(q) ||
       normalized(t.internal_document      || "").includes(q) ||
@@ -975,9 +1113,9 @@ function renderTurnosSection(turns, isClosed) {
   }
 
   const filterBar = `
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
   <select class="nm-pay-select nm-pay-input--sm" id="turnoFilter" style="width:auto">
-    <option value="TODOS" ${type === "TODOS" ? "selected" : ""}>Todos los tipos</option>
+    <option value="TODOS"   ${type === "TODOS"   ? "selected" : ""}>Todos los tipos</option>
     <option value="INTERNA" ${type === "INTERNA" ? "selected" : ""}>Solo internos</option>
     <option value="EXTERNA" ${type === "EXTERNA" ? "selected" : ""}>Solo externos</option>
   </select>
@@ -987,74 +1125,145 @@ function renderTurnosSection(turns, isClosed) {
 </div>`;
 
   if (!rows.length) {
-    return `<div class="nm-pay-table-wrap">${filterBar}<div class="nm-pay-empty">Sin turnos que coincidan con los filtros.</div></div>`;
+    return `<div style="padding:10px">${filterBar}<div class="nm-pay-empty">Sin turnos que coincidan con los filtros.</div></div>`;
   }
 
-  const tableRows = rows.map((t) => {
-    const isInterna = t.cover_type === "INTERNA";
-    const coverBadge = isInterna
-      ? `<span style="background:#DBEAFE;color:#1D4ED8;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">INTERNO</span>`
-      : `<span style="background:#FEF9C3;color:#92400E;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap">EXTERNO</span>`;
-    const cubrioName = isInterna ? (t.internal_employee_name || "—") : (t.external_worker_name || "—");
-    const cubrioDoc  = isInterna ? (t.internal_document      || "") : (t.external_document     || "");
-    const cubrioPos  = isInterna ? (t.internal_position      || "") : "";
-    const bankInfo   = !isInterna && (t.external_bank || t.external_account_number)
-      ? `<br><small style="color:#64748B">${escapeHtml(t.external_bank || "")} ${escapeHtml(t.external_account_number || "")}</small>`
-      : "";
-    const chargeBtn  = !isInterna && t.id
-      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${t.id}" title="Ver cuenta de cobro">Cta. cobro</button>
-         <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${t.id}" data-ext-doc="${escapeHtml(t.external_document || String(t.id))}" title="Descargar cuenta de cobro">Descargar</button>
-         ${canEditBankInfo() ? `<button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px;background:#F59E0B;color:#fff" data-edit-bank="${t.id}" data-bank="${escapeHtml(t.external_bank || "")}" data-account-type="${escapeHtml(t.external_account_type || "AHORROS")}" data-account-number="${escapeHtml(t.external_account_number || "")}" title="Editar datos bancarios">Datos bancarios</button>` : ""}`
-      : "";
-    const noveltyDate = t.novelty_start ? String(t.novelty_start).slice(0, 10) : "—";
+  // ── Agrupar por persona que cubrió ──────────────────────────────────────────
+  const extGroups = new Map();
+  const intGroups = new Map();
 
-    return `
-<tr>
-  <td><small>${escapeHtml(noveltyDate)}</small></td>
-  <td>
-    <b>${escapeHtml(t.origin_employee_name || "—")}</b><br>
-    <small style="color:#64748B">${escapeHtml(t.origin_document || "")}</small>
-  </td>
-  <td><small>${escapeHtml(t.novelty_type || "—")}</small></td>
-  <td>
-    <b>${escapeHtml(cubrioName)}</b><br>
-    <small style="color:#64748B">${escapeHtml(cubrioDoc)}</small>
-    ${cubrioPos ? `<br><small style="color:#94A3B8">${escapeHtml(cubrioPos)}</small>` : ""}${bankInfo}
-  </td>
-  <td>${coverBadge}</td>
-  <td>
-    <small>${escapeHtml(t.municipality_name || "—")}</small><br>
-    <small style="color:#64748B">${escapeHtml(t.institution_name || "—")}</small><br>
-    <small style="color:#94A3B8">${escapeHtml(t.site_name || "")} ${escapeHtml(t.modality || "")}</small>
-  </td>
-  <td class="num">${Number(t.covered_days || 0)}</td>
-  <td class="num">${fmtCOP(t.calculated_day_value)}</td>
-  <td class="num"><b>${fmtCOP(t.total_value)}</b></td>
-  <td>${chargeBtn}</td>
-</tr>`;
-  }).join("");
+  for (const t of rows) {
+    if (t.cover_type === "EXTERNA") {
+      const key = t.external_worker_id || t.external_document || "ext_unknown";
+      if (!extGroups.has(key)) {
+        extGroups.set(key, {
+          workerId:       t.external_worker_id,
+          name:           t.external_worker_name || "—",
+          document:       t.external_document || "",
+          bank:           t.external_bank || "",
+          accountType:    t.external_account_type || "AHORROS",
+          accountNumber:  t.external_account_number || "",
+          cedulaUrl:      t.cedula_url || "",
+          certBancariaUrl:t.cert_bancaria_url || "",
+          cuentaCobroUrl: t.cuenta_cobro_url || "",
+          turns: [],
+          totalDays: 0,
+          totalValue: 0,
+          anyTurnId: t.id,
+          extDoc: t.external_document || String(t.id),
+        });
+      }
+      const g = extGroups.get(key);
+      g.turns.push(t);
+      g.totalDays  += Number(t.covered_days || 0);
+      g.totalValue += Number(t.total_value  || 0);
+    } else {
+      const key = t.internal_employee_id || t.internal_document || "int_unknown";
+      if (!intGroups.has(key)) {
+        intGroups.set(key, {
+          employeeId: t.internal_employee_id,
+          name:       t.internal_employee_name || "—",
+          document:   t.internal_document || "",
+          position:   t.internal_position || "",
+          turns: [],
+          totalDays: 0,
+        });
+      }
+      const g = intGroups.get(key);
+      g.turns.push(t);
+      g.totalDays += Number(t.covered_days || 0);
+    }
+  }
 
-  return `
-<div class="nm-pay-table-wrap">
-${filterBar}
-<table class="nm-pay-table">
+  const turnTableHtml = (gTurns) => `
+<table class="nm-pay-table" style="margin:0;border:0;border-radius:0">
   <thead>
     <tr>
-      <th>Fecha turno</th>
+      <th>Fecha</th>
       <th>Empleado con novedad</th>
-      <th>Tipo novedad</th>
-      <th>Quién cubrió</th>
-      <th>Tipo</th>
-      <th>Municipio / Institución / Sede</th>
+      <th>Tipo de novedad</th>
       <th class="num">Días</th>
       <th class="num">Valor día</th>
-      <th class="num">Valor total</th>
-      <th>Acciones</th>
+      <th class="num">Total</th>
     </tr>
   </thead>
-  <tbody>${tableRows}</tbody>
-</table>
+  <tbody>
+    ${gTurns.map((t) => `
+    <tr>
+      <td><small>${escapeHtml(String(t.novelty_start || "—").slice(0, 10))}</small></td>
+      <td>
+        <b>${escapeHtml(t.origin_employee_name || "—")}</b><br>
+        <small style="color:#64748B">${escapeHtml(t.origin_document || "")}</small>
+      </td>
+      <td><small>${escapeHtml(t.novelty_type || "—")}</small></td>
+      <td class="num">${Number(t.covered_days || 0)}</td>
+      <td class="num">${fmtCOP(t.calculated_day_value)}</td>
+      <td class="num"><b>${fmtCOP(t.total_value)}</b></td>
+    </tr>`).join("")}
+  </tbody>
+</table>`;
+
+  const periodLabel = activePeriod?.label || "";
+
+  const extCards = Array.from(extGroups.values()).map((g) => {
+    const docStatus = (url, label) =>
+      `<span style="font-size:11px;font-weight:600;${url ? "color:#166534" : "color:#B91C1C"}">${url ? "✓" : "✗"} ${label}</span>`;
+    const allDocsOk = g.cedulaUrl && g.certBancariaUrl && g.cuentaCobroUrl;
+    return `
+<div class="nm-turn-group-card nm-turn-group--ext">
+  <div class="nm-turn-group-hd">
+    <span class="nm-turn-type-badge nm-turn-badge--ext">EXTERNO</span>
+    <div style="flex:1;min-width:0">
+      <b>${escapeHtml(g.name)}</b>
+      <br><small style="color:#64748B">CC ${escapeHtml(g.document)}</small>
+    </div>
+    <small style="color:#64748B;white-space:nowrap">${g.bank ? `${escapeHtml(g.bank)} · ${escapeHtml(g.accountType)} · ${escapeHtml(g.accountNumber)}` : "<i>Sin datos bancarios</i>"}</small>
+    ${canEditBankInfo()
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#F59E0B;color:#fff;border-color:#F59E0B"
+           data-edit-bank="${g.anyTurnId}"
+           data-bank="${escapeHtml(g.bank)}"
+           data-account-type="${escapeHtml(g.accountType)}"
+           data-account-number="${escapeHtml(g.accountNumber)}">Datos bancarios</button>`
+      : ""}
+  </div>
+  ${turnTableHtml(g.turns)}
+  <div class="nm-turn-group-ft">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <b style="font-size:12px">Total: ${g.totalDays} día(s) · ${fmtCOP(g.totalValue)}</b>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${docStatus(g.cedulaUrl, "Cédula")}
+        ${docStatus(g.certBancariaUrl, "Cert. bancaria")}
+        ${docStatus(g.cuentaCobroUrl, "Cta. cobro")}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      <button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${g.anyTurnId}">Ver cta. cobro</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" data-dl-charge="${g.anyTurnId}" data-ext-doc="${escapeHtml(g.extDoc)}"
+        ${!allDocsOk ? `title="Faltan documentos: ${[!g.cedulaUrl && "cédula", !g.certBancariaUrl && "cert. bancaria", !g.cuentaCobroUrl && "cta. cobro"].filter(Boolean).join(", ")}" style="opacity:.6"` : ""}>Descargar</button>
+      ${g.workerId
+        ? `<button class="nm-pay-btn nm-pay-btn--sm" data-ext-docs="${g.workerId}" data-ext-name="${escapeHtml(g.name)}">Cargar soportes</button>`
+        : ""}
+    </div>
+  </div>
 </div>`;
+  }).join("");
+
+  const intCards = Array.from(intGroups.values()).map((g) => `
+<div class="nm-turn-group-card nm-turn-group--int">
+  <div class="nm-turn-group-hd">
+    <span class="nm-turn-type-badge nm-turn-badge--int">INTERNO</span>
+    <div style="flex:1;min-width:0">
+      <b>${escapeHtml(g.name)}</b>
+      <br><small style="color:#64748B">CC ${escapeHtml(g.document)}${g.position ? ` · ${escapeHtml(g.position)}` : ""}</small>
+    </div>
+  </div>
+  ${turnTableHtml(g.turns)}
+  <div class="nm-turn-group-ft">
+    <b style="font-size:12px">Total: ${g.totalDays} día(s)</b>
+  </div>
+</div>`).join("");
+
+  return `<div style="padding:10px">${filterBar}${extCards}${intCards}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1071,6 +1280,7 @@ function wireStaticEvents() {
     supportsData       = [];
     viewerSupportId    = null;
     supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
+    resetItemsFilter();
     await reloadWorkArea();
   });
   document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
@@ -1098,6 +1308,7 @@ function wireStaticEvents() {
     activeGroupId      = null;
     municipalitySearch = "";
     activeDetailTab    = "nomina";
+    resetItemsFilter();
     await reloadDetailOnly();
   }));
   document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
@@ -1108,11 +1319,13 @@ function wireStaticEvents() {
     render();
   }));
   document.querySelectorAll(".nm-pay-mun").forEach((btn) => btn.addEventListener("click", async () => {
-    activeGroupId = Number(btn.dataset.groupId);
+    activeGroupId  = Number(btn.dataset.groupId);
+    activeDetailTab = "nomina";
+    resetItemsFilter();
     await reloadDetailOnly();
   }));
   document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
-  document.getElementById("nmPayExport")?.addEventListener("click",   exportMunicipality);
+  document.getElementById("nmPayExport")?.addEventListener("click",   openExportModal);
   document.getElementById("nmPayClose")?.addEventListener("click",    closeAndSendGroup);
   document.getElementById("nmPayReopen")?.addEventListener("click",   openReopenModal);
   document.getElementById("nmPayHistory")?.addEventListener("click",  openHistoryModal);
@@ -1140,6 +1353,23 @@ function wireStaticEvents() {
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
   document.getElementById("turnoFilter")?.addEventListener("change", (e) => { turnosFilter.type = e.target.value; render(); });
   document.getElementById("turnoSearch")?.addEventListener("input",  (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
+
+  // ── Filtros de tabla de ítems de nómina ───────────────────────────────────
+  const applyFilter = async (key, val) => { itemsFilter[key] = val; await reloadDetailOnly(); };
+  document.getElementById("fltInstitution")?.addEventListener("change", (e) => applyFilter("institution_id", e.target.value));
+  document.getElementById("fltSite")?.addEventListener("change",        (e) => applyFilter("site_id",        e.target.value));
+  document.getElementById("fltModality")?.addEventListener("change",    (e) => applyFilter("modality",       e.target.value));
+  document.getElementById("fltNovedades")?.addEventListener("change",   (e) => applyFilter("has_novelties",  e.target.value));
+  document.getElementById("fltReviewed")?.addEventListener("change",    (e) => applyFilter("reviewed",       e.target.value));
+  document.getElementById("fltSupports")?.addEventListener("change",    (e) => applyFilter("support_status", e.target.value));
+  document.getElementById("fltSortBy")?.addEventListener("change",      (e) => applyFilter("sort_by",        e.target.value));
+  document.getElementById("fltSortDir")?.addEventListener("change",     (e) => applyFilter("sort_dir",       e.target.value));
+  document.getElementById("fltClear")?.addEventListener("click", async () => { resetItemsFilter(); await reloadDetailOnly(); });
+
+  // ── Documentos de trabajador externo ─────────────────────────────────────
+  document.querySelectorAll("[data-ext-docs]").forEach((btn) => btn.addEventListener("click", () => {
+    openExternalWorkerDocsModal(Number(btn.dataset.extDocs), btn.dataset.extName || "Trabajador externo");
+  }));
 
   // ── Revisión / reapertura de municipio ────────────────────────────────────
   document.querySelectorAll("[data-mun-review]").forEach((btn) => btn.addEventListener("click", async (e) => {
@@ -1257,24 +1487,87 @@ async function calculateGroup() {
   } catch (err) { showError(err.message); }
 }
 
-async function exportMunicipality() {
-  if (!activeGroupId) return;
-  try {
-    const token = state.token || localStorage.getItem("empiria_token") || "";
-    const res = await fetch(`/payroll/groups/${activeGroupId}/export`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) { showError("Error al exportar nómina"); return; }
-    const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = `nomina-${(activeGroupDetail?.group?.municipality_name || "municipio").replace(/[^a-z0-9]/gi, "-")}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    showError(err.message || "Error al exportar");
+function openExportModal() {
+  if (!activePeriod) return;
+  const munName = currentMunicipalityData()?.municipality_name
+    || activeGroupDetail?.group?.municipality_name
+    || "";
+  const periodLabel = activePeriod.label || String(activePeriod.id);
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:440px">
+  <div class="nm-pay-dialog-h">
+    <b>Exportar Variables de Nómina</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b" style="gap:10px">
+    <p style="font-size:13px;color:#475569;margin:0">Selecciona el alcance de la exportación:</p>
+    ${activeGroupId ? `
+    <button class="nm-pay-btn nm-pay-btn--primary" id="expMun" style="width:100%;text-align:left;padding:12px 14px;line-height:1.4">
+      <div style="font-weight:700;font-size:13px">Municipio seleccionado</div>
+      <div style="font-size:11px;opacity:.85;font-weight:400;margin-top:2px">${escapeHtml(munName)}</div>
+    </button>` : ""}
+    <button class="nm-pay-btn" id="expAll" style="width:100%;text-align:left;padding:12px 14px;line-height:1.4">
+      <div style="font-weight:700;font-size:13px">Todos los municipios</div>
+      <div style="font-size:11px;color:#64748B;font-weight:400;margin-top:2px">Período completo — ${escapeHtml(periodLabel)}</div>
+    </button>
+    <p id="expStatus" style="font-size:12px;color:#64748B;margin:0;min-height:16px"></p>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+
+  async function doExport(endpoint, filename) {
+    const btnMun = document.getElementById("expMun");
+    const btnAll = document.getElementById("expAll");
+    const status = document.getElementById("expStatus");
+    if (btnMun) btnMun.disabled = true;
+    if (btnAll) btnAll.disabled = true;
+    if (status) status.textContent = "Generando archivo…";
+    try {
+      const token = state.token || localStorage.getItem("empiria_token") || "";
+      const res   = await fetch(endpoint, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showError(err.message || "Error al exportar"); return;
+      }
+      const blob   = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a      = document.createElement("a");
+      a.href     = objUrl;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(objUrl);
+      closeModal();
+      showSuccess("Exportación completada");
+    } catch (err) {
+      showError(err.message || "Error al exportar");
+    } finally {
+      if (btnMun) btnMun.disabled = false;
+      if (btnAll) btnAll.disabled = false;
+      if (status) status.textContent = "";
+    }
   }
+
+  const safeLbl = periodLabel.replace(/[^a-z0-9]/gi, "-");
+  const safeMun = (munName || "municipio").replace(/[^a-z0-9]/gi, "-");
+
+  // Municipio: exportación completa del grupo (Variables + Nómina + Novedades + Turnos + Resumen + Soportes)
+  document.getElementById("expMun")?.addEventListener("click", () =>
+    doExport(
+      `/payroll/groups/${activeGroupId}/export`,
+      `nomina-${safeLbl}-${safeMun}.xlsx`
+    )
+  );
+  // Todos: Variables + Nómina + Resumen para todo el período
+  document.getElementById("expAll")?.addEventListener("click", () =>
+    doExport(
+      `/payroll/periods/${activePeriod.id}/full-export`,
+      `nomina-completa-${safeLbl}.xlsx`
+    )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2884,88 +3177,179 @@ function supportTypeName(code) {
   return SUPPORT_TYPE_LABELS[code] || escapeHtml(code || "—");
 }
 
-function renderSupportsSection(supports, isClosed) {
-  if (!supports || !supports.length) {
+function renderSupportsSection(supports, isClosed, covers) {
+  // ── 1. Agrupar soportes existentes por novelty_id ─────────────────────────
+  // Solo se agregan filas con support_id real; las filas del UNION "pendiente"
+  // (sin support_id) se usan solo para el meta del grupo.
+  const byNovelty = new Map();
+  for (const s of (supports || [])) {
+    const key = String(s.novelty_id);
+    if (!byNovelty.has(key)) {
+      byNovelty.set(key, {
+        novelty_id:      s.novelty_id,
+        novelty_type:    s.novelty_type,
+        employee_name:   s.employee_name,
+        document_number: s.document_number,
+        novelty_date:    s.novelty_date,
+        docs:            [],
+      });
+    }
+    if (s.support_id || s.id) {
+      byNovelty.get(key).docs.push(s);
+    }
+  }
+
+  // ── 2. Personal externo desde coberturas del grupo ────────────────────────
+  const extWorkerMap = new Map();
+  for (const c of (covers || [])) {
+    if (c.cover_type === "EXTERNA" && c.external_worker_id) {
+      if (!extWorkerMap.has(c.external_worker_id)) {
+        extWorkerMap.set(c.external_worker_id, {
+          id:   c.external_worker_id,
+          name: c.external_worker_name || c.external_worker_doc || "—",
+          doc:  c.external_worker_doc  || "",
+        });
+      }
+    }
+  }
+
+  const novEntries   = [...byNovelty.values()];
+  const hasNovelties = novEntries.length > 0;
+  const hasExt       = extWorkerMap.size > 0;
+
+  if (!hasNovelties && !hasExt) {
     return `<div class="nm-pay-empty" style="padding:20px">
       Sin novedades con soportes requeridos en este grupo.<br>
       <small style="color:#94A3B8">Los soportes se crean automáticamente cuando una novedad requiere documentación.</small>
     </div>`;
   }
 
-  // Agrupar por novelty_id
-  const byNovelty = new Map();
-  for (const s of supports) {
-    const key = String(s.novelty_id);
-    if (!byNovelty.has(key)) byNovelty.set(key, { meta: s, docs: [] });
-    if (s.support_id || s.id) byNovelty.get(key).docs.push(s);
-  }
-  // Novelties que vienen del UNION (sin soporte real aún)
-  for (const s of supports) {
-    const key = String(s.novelty_id);
-    if (byNovelty.has(key) && !byNovelty.get(key).docs.length) {
-      byNovelty.get(key).docs.push(s);
+  // ── 3. Estadísticas sobre soportes reales ────────────────────────────────
+  // Contar solo las filas que DEBERÍAN tener archivo (tipos esperados con doc real)
+  let totalExpected = 0;
+  let totalApproved = 0;
+  let totalMissing  = 0;
+
+  for (const { novelty_type, docs } of novEntries) {
+    const expectedTypes = SUPPORT_REQUIREMENTS[novelty_type];
+    if (!expectedTypes || expectedTypes.length === 0) continue;
+    totalExpected += expectedTypes.length;
+    for (const docType of expectedTypes) {
+      const rec = docs.find((d) => d.support_type === docType
+        // fallback: accept legacy type codes that map to same document
+        || (docType === "INCAPACIDAD_MEDICA_DOC" && d.support_type === "INCAPACIDAD_MEDICA")
+        || (docType === "COMPROBANTE_CITACION"   && d.support_type === "COMPROBANTE_ASISTENCIA")
+      );
+      if (rec && (rec.status || rec.support_status) === "aprobado") totalApproved++;
+      else if (!rec || !rec.file_url || rec.file_url === "") totalMissing++;
     }
   }
 
-  // Estadísticas
-  const allDocs = [...byNovelty.values()].flatMap((g) => g.docs);
-  const total    = allDocs.filter((d) => d.support_id || d.id).length;
-  const approved = allDocs.filter((d) => (d.status || d.support_status) === "aprobado").length;
-  const missing  = allDocs.filter((d) => !d.file_url || d.file_url === "").length;
-  const pct      = total > 0 ? Math.round((approved / total) * 100) : 0;
-  const hasMissing = missing > 0;
+  const pct        = totalExpected > 0 ? Math.round((totalApproved / totalExpected) * 100) : 100;
+  const hasMissing = totalMissing > 0;
 
-  return `
-<div class="nm-sup-inline">
-  <!-- Barra resumen -->
-  <div class="nm-sup-inline-bar">
-    <div class="nm-sup-inline-stat nm-sup-inline-stat--ok"><b>${approved}</b><span>aprobados</span></div>
-    <div class="nm-sup-inline-stat ${hasMissing ? "nm-sup-inline-stat--warn" : "nm-sup-inline-stat--ok"}"><b>${missing}</b><span>sin archivo</span></div>
-    <div class="nm-sup-inline-stat"><b>${total}</b><span>total docs</span></div>
-    <div class="nm-sup-inline-progress" title="${pct}% aprobados">
-      <div class="nm-sup-inline-progress-bar" style="width:${pct}%"></div>
-      <span>${pct}%</span>
-    </div>
-    ${hasMissing ? `<div class="nm-sup-inline-alert">&#9888; Faltan ${missing} documento${missing !== 1 ? "s" : ""} — complete antes de cerrar</div>` : `<div class="nm-sup-inline-ok">&#10003; Documentación completa</div>`}
-  </div>
-
-  <!-- Filas por novedad -->
-  <div class="nm-sup-inline-list">
-    ${[...byNovelty.values()].map(({ meta, docs }) => {
-      const nm = noveltyByCode(meta.novelty_type);
-      const novDate = String(meta.novelty_date || "").slice(0, 10);
-      return `
-<div class="nm-sup-inline-group">
-  <div class="nm-sup-inline-nov-hd">
-    <span class="nm-sup-inline-nov-type">${escapeHtml(nm?.name || meta.novelty_type || "—")}</span>
-    <span class="nm-sup-inline-nov-emp">${escapeHtml(meta.employee_name || "—")}</span>
-    ${novDate ? `<span class="nm-sup-inline-nov-date">${novDate}</span>` : ""}
-    <span class="nm-sup-inline-nov-doc">${escapeHtml(meta.document_number || "")}</span>
-  </div>
-  <div class="nm-sup-inline-docs">
-    ${docs.map((d) => {
-      const supId  = d.support_id || d.id;
-      const status = d.status || d.support_status || "pendiente";
-      const hasFile = Boolean(d.file_url && d.file_url !== "");
-      const label  = supportTypeName(d.support_type || meta.novelty_type);
-      return `
+  // ── 4. Función auxiliar: render de una fila de documento ─────────────────
+  function docRow(docType, record, novelty_id) {
+    const supId   = record ? (record.support_id || record.id) : null;
+    const status  = record ? (record.status || record.support_status || "pendiente") : "pendiente";
+    const hasFile = Boolean(record?.file_url && record.file_url !== "");
+    const label   = SUPPORT_TYPE_LABELS[docType] || docType;
+    return `
 <div class="nm-sup-inline-doc">
   <span class="nm-sup-inline-doc-label">${escapeHtml(label)}</span>
   <span>${supportStatusBadge(status)}</span>
   ${hasFile
     ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${supId}" title="Ver archivo">&#128206; Ver</button>
-       <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(d.file_url)}" download="${escapeHtml(d.file_name || "soporte")}" target="_blank">&#8615; Descargar</a>`
+       <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(record.file_url)}" download="${escapeHtml(record.file_name || "soporte")}" target="_blank">&#8615;</a>`
     : supId && !isClosed
-      ? `<label class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" style="cursor:pointer">
+      ? `<label class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" style="cursor:pointer;display:inline-flex;align-items:center;gap:3px">
            &#8593; Cargar
-           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none" data-upload-support="${supId}" data-novelty-id="${meta.novelty_id}">
+           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none"
+             data-upload-support="${supId}" data-novelty-id="${novelty_id}">
          </label>`
-      : `<span style="font-size:11px;color:#94A3B8">Sin archivo</span>`}
+      : `<span style="font-size:11px;color:#94A3B8">${supId ? "Sin archivo" : "Pendiente"}</span>`}
 </div>`;
-    }).join("")}
+  }
+
+  // ── 5. Tarjetas de novedades internas ────────────────────────────────────
+  const noveltyCardsHtml = novEntries.map(({ novelty_id, novelty_type, employee_name, document_number, novelty_date, docs }) => {
+    const nm           = noveltyByCode(novelty_type);
+    const novDate      = String(novelty_date || "").slice(0, 10);
+    const expectedTypes = SUPPORT_REQUIREMENTS[novelty_type];
+
+    let docsHtml;
+    if (!expectedTypes || expectedTypes.length === 0) {
+      // Novedad sin requisito de soporte
+      docsHtml = `<div class="nm-sup-inline-doc">
+        <span class="nm-sup-inline-doc-label" style="color:#64748B;font-style:italic">Esta novedad no requiere soporte documental.</span>
+        <span class="nm-sup-badge" style="background:#DCFCE7;color:#166534">&#10003; Sin requisito</span>
+      </div>`;
+    } else {
+      docsHtml = expectedTypes.map((docType) => {
+        // Buscar registro real; también aceptar códigos legacy equivalentes
+        const record = docs.find((d) =>
+          d.support_type === docType
+          || (docType === "INCAPACIDAD_MEDICA_DOC" && d.support_type === "INCAPACIDAD_MEDICA")
+          || (docType === "COMPROBANTE_CITACION"   && d.support_type === "COMPROBANTE_ASISTENCIA")
+        );
+        return docRow(docType, record, novelty_id);
+      }).join("");
+    }
+
+    return `
+<div class="nm-sup-inline-group">
+  <div class="nm-sup-inline-nov-hd">
+    <span class="nm-sup-inline-nov-type">${escapeHtml(nm?.name || novelty_type || "—")}</span>
+    <span class="nm-sup-inline-nov-emp">${escapeHtml(employee_name || "—")}</span>
+    ${novDate ? `<span class="nm-sup-inline-nov-date">${novDate}</span>` : ""}
+    <span class="nm-sup-inline-nov-doc">${escapeHtml(document_number || "")}</span>
   </div>
+  <div class="nm-sup-inline-docs">${docsHtml}</div>
 </div>`;
-    }).join("")}
+  }).join("");
+
+  // ── 6. Sección de personal externo ───────────────────────────────────────
+  const EXT_REQUIRED = ["Cuenta de Cobro", "Cédula de Ciudadanía", "Certificación Bancaria"];
+  const extHtml = hasExt ? `
+<div style="border-top:2px solid #FEF3C7;padding-top:10px;margin-top:10px">
+  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#92400E;padding:0 8px 8px">
+    &#9888; Personal Externo — Documentos Requeridos
+  </div>
+  ${[...extWorkerMap.values()].map((w) => `
+<div class="nm-sup-inline-group" style="border-color:#FDE68A">
+  <div class="nm-sup-inline-nov-hd" style="background:#FFFBEB">
+    <span class="nm-sup-inline-nov-type" style="color:#92400E">Personal Externo</span>
+    <span class="nm-sup-inline-nov-emp">${escapeHtml(w.name)}</span>
+    <span class="nm-sup-inline-nov-doc">CC ${escapeHtml(w.doc)}</span>
+  </div>
+  <div class="nm-sup-inline-docs">
+    ${EXT_REQUIRED.map((lbl) => `
+<div class="nm-sup-inline-doc">
+  <span class="nm-sup-inline-doc-label">${escapeHtml(lbl)}</span>
+  <span class="nm-sup-badge nm-sup-badge--pendiente">Pendiente</span>
+  <span style="font-size:11px;color:#94A3B8">Gestionar en Turnos → Cta. Cobro</span>
+</div>`).join("")}
+  </div>
+</div>`).join("")}
+</div>` : "";
+
+  return `
+<div class="nm-sup-inline">
+  <div class="nm-sup-inline-bar">
+    <div class="nm-sup-inline-stat nm-sup-inline-stat--ok"><b>${totalApproved}</b><span>aprobados</span></div>
+    <div class="nm-sup-inline-stat ${hasMissing ? "nm-sup-inline-stat--warn" : "nm-sup-inline-stat--ok"}"><b>${totalMissing}</b><span>sin archivo</span></div>
+    <div class="nm-sup-inline-stat"><b>${totalExpected}</b><span>total docs</span></div>
+    <div class="nm-sup-inline-progress" title="${pct}% aprobados">
+      <div class="nm-sup-inline-progress-bar" style="width:${pct}%"></div>
+      <span>${pct}%</span>
+    </div>
+    ${hasMissing
+      ? `<div class="nm-sup-inline-alert">&#9888; ${totalMissing} documento${totalMissing !== 1 ? "s" : ""} sin cargar</div>`
+      : `<div class="nm-sup-inline-ok">&#10003; Documentación completa</div>`}
+  </div>
+  <div class="nm-sup-inline-list">
+    ${noveltyCardsHtml}
+    ${extHtml}
   </div>
 </div>`;
 }
@@ -3298,6 +3682,140 @@ async function uploadSupportFile(supportId, noveltyId, file) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MODAL: DOCUMENTOS DE TRABAJADOR EXTERNO
+// ─────────────────────────────────────────────────────────────────────────────
+async function openExternalWorkerDocsModal(workerId, workerName) {
+  const modal = document.getElementById("nmPayModal");
+
+  // Load current turns data to get doc URLs
+  const currentTurns = activeGroupTurns || [];
+  const workerTurn = currentTurns.find((t) => t.external_worker_id === workerId);
+
+  const docs = {
+    cedula_url:         workerTurn?.cedula_url         || "",
+    cert_bancaria_url:  workerTurn?.cert_bancaria_url  || "",
+    cuenta_cobro_url:   workerTurn?.cuenta_cobro_url   || "",
+  };
+
+  const docLabels = {
+    cedula_url:        "Cédula de ciudadanía",
+    cert_bancaria_url: "Certificación bancaria",
+    cuenta_cobro_url:  "Cuenta de cobro (firmada)",
+  };
+
+  function docRow(key) {
+    const url = docs[key];
+    const label = docLabels[key];
+    return `
+<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F1F5F9">
+  <div style="flex:1">
+    <div style="font-size:13px;font-weight:600;color:#0F172A">${label}</div>
+    ${url ? `<a href="${escapeHtml(url)}" target="_blank" style="font-size:11px;color:#0F766E;text-decoration:underline">Ver archivo</a>` : `<span style="font-size:11px;color:#94A3B8">Sin archivo</span>`}
+  </div>
+  <div>
+    <label class="nm-pay-btn nm-pay-btn--sm" style="cursor:pointer;position:relative;display:inline-block">
+      ${url ? "Reemplazar" : "Cargar"}
+      <input type="file" accept=".pdf,.jpg,.jpeg,.png" style="position:absolute;inset:0;opacity:0;cursor:pointer" data-doc-key="${key}">
+    </label>
+    ${url ? `<button class="nm-pay-btn nm-pay-btn--sm" style="color:#B91C1C;border-color:#FECACA;margin-left:4px" data-clear-doc="${key}">Quitar</button>` : ""}
+  </div>
+</div>`;
+  }
+
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:540px">
+  <div class="nm-pay-dialog-h">
+    <b>Documentos — ${escapeHtml(workerName)}</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b" style="gap:0">
+    <div style="font-size:12px;color:#475569;margin-bottom:10px">
+      Los tres documentos son obligatorios para habilitar la descarga de la cuenta de cobro.
+    </div>
+    <div id="extDocList">
+      ${docRow("cedula_url")}
+      ${docRow("cert_bancaria_url")}
+      ${docRow("cuenta_cobro_url")}
+    </div>
+    <p id="extDocStatus" style="font-size:12px;color:#64748B;margin-top:8px;min-height:16px"></p>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+
+  // Handle file uploads
+  modal.querySelectorAll("[data-doc-key]").forEach((input) => {
+    input.addEventListener("change", async (e) => {
+      const key  = input.dataset.docKey;
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const status = document.getElementById("extDocStatus");
+      if (status) status.textContent = "Subiendo archivo…";
+      try {
+        const token = state.token || localStorage.getItem("empiria_token") || "";
+        const form  = new FormData();
+        form.append("file", file);
+        const res  = await fetch("/payroll/supports/upload", {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.message || "Error al subir archivo");
+
+        await apiFetch(`/payroll/external-workers/${workerId}/docs`, {
+          method: "PATCH",
+          body: JSON.stringify({ [key]: json.data.url }),
+        });
+        docs[key] = json.data.url;
+        if (status) status.textContent = "Documento guardado correctamente.";
+        document.getElementById("extDocList").innerHTML =
+          docRow("cedula_url") + docRow("cert_bancaria_url") + docRow("cuenta_cobro_url");
+        // Re-wire clear buttons
+        modal.querySelectorAll("[data-clear-doc]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const k = btn.dataset.clearDoc;
+            await apiFetch(`/payroll/external-workers/${workerId}/docs`, {
+              method: "PATCH",
+              body: JSON.stringify({ [k]: null }),
+            });
+            docs[k] = "";
+            document.getElementById("extDocList").innerHTML =
+              docRow("cedula_url") + docRow("cert_bancaria_url") + docRow("cuenta_cobro_url");
+          });
+        });
+        // Re-wire file inputs
+        modal.querySelectorAll("[data-doc-key]").forEach((inp) => inp.addEventListener("change", () => {}));
+        // Reload turns to reflect updated docs
+        await loadGroupTurns();
+        render();
+      } catch (err) {
+        if (status) status.textContent = "";
+        showError(err.message || "Error al subir documento");
+      }
+    });
+  });
+
+  // Wire clear buttons
+  modal.querySelectorAll("[data-clear-doc]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const k = btn.dataset.clearDoc;
+      try {
+        await apiFetch(`/payroll/external-workers/${workerId}/docs`, {
+          method: "PATCH",
+          body: JSON.stringify({ [k]: null }),
+        });
+        docs[k] = "";
+        document.getElementById("extDocList").innerHTML =
+          docRow("cedula_url") + docRow("cert_bancaria_url") + docRow("cuenta_cobro_url");
+        await loadGroupTurns();
+        render();
+      } catch (err) { showError(err.message); }
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // UTILIDADES DE MODAL
 // ─────────────────────────────────────────────────────────────────────────────
 function wireModalClose() {
@@ -3325,6 +3843,7 @@ export async function loadPayrollModule() {
   supportsData       = [];
   supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
   viewerSupportId    = null;
+  resetItemsFilter();
   await loadPeriods();
   await loadGroups();
   await loadGroupDetail();

@@ -194,10 +194,13 @@ function handleCoverageSummary(req, res, url) {
       };
 
       const cacheKey = getCoverageSummaryCacheKey(filters);
-      const cached = readCoverageSummaryCache(cacheKey);
-      if (cached) {
-        sendJson(innerRes, 200, { ok: true, cached: true, data: cached });
-        return;
+      const forceRefresh = innerUrl.searchParams.get("refresh") === "1";
+      if (!forceRefresh) {
+        const cached = readCoverageSummaryCache(cacheKey);
+        if (cached) {
+          sendJson(innerRes, 200, { ok: true, cached: true, data: cached });
+          return;
+        }
       }
 
       const summary = await getCoverageSummary(filters);
@@ -424,4 +427,5 @@ module.exports = {
   handleCoverageByContract,
   handleCoverageByMunicipality,
   handleCoverageEmployees,
+  clearCoverageSummaryCache,
 };

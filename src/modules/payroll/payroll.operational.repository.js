@@ -26,7 +26,7 @@ const OFFICIAL_NOVELTY_CODES = Object.freeze([
   "CALAMIDAD_FAMILIAR",
   "LUTO",
   "PERMISOS_NO_REMUNERADOS",
-  "CITACION_COLEGIO",
+  "CITACIONES_OFICIALES",
   "LICENCIA_MATERNIDAD_PATERNIDAD",
   "SUSPENSION",
   "FECHA_INGRESO",
@@ -52,7 +52,7 @@ const TRANSPORT_AFFECTING = new Set([
   "INCAPACIDAD_ACCIDENTE_LABORAL",
   "CALAMIDAD_FAMILIAR",
   "LUTO",
-  "CITACION_COLEGIO",
+  "CITACIONES_OFICIALES",
   "LICENCIA_MATERNIDAD_PATERNIDAD",
   "PERMISOS_NO_REMUNERADOS",
   "SUSPENSION",
@@ -74,13 +74,13 @@ const ADDITIONAL_AFFECTING = new Set([
 const SUPPORT_REQUIREMENTS = Object.freeze({
   CITA_MEDICA:                    ["COMPROBANTE_CITA_MEDICA"],
   CITA_MEDICA_FAMILIAR:           ["COMPROBANTE_CITA_MEDICA"],
-  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA"],
-  INCAPACIDAD_ACCIDENTE_LABORAL:  ["INCAPACIDAD_MEDICA"],
+  INCAPACIDAD_MEDICA:             ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
+  INCAPACIDAD_ACCIDENTE_LABORAL:  ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
   PERMISOS_NO_REMUNERADOS:        ["AUTORIZACION_DESCUENTO"],
-  CITACION_COLEGIO:               ["COMPROBANTE_ASISTENCIA"],
+  CITACIONES_OFICIALES:           ["COMPROBANTE_CITACION"],
   CALAMIDAD_FAMILIAR:             ["COMPROBANTE_CALAMIDAD"],
   LUTO:                           ["ACTA_DEFUNCION"],
-  LICENCIA_MATERNIDAD_PATERNIDAD: ["INCAPACIDAD_MEDICA"],
+  LICENCIA_MATERNIDAD_PATERNIDAD: ["HISTORIA_CLINICA", "INCAPACIDAD_MEDICA_DOC"],
   DIAS_NO_CLASE:                  [],
   SUSPENSION:                     [],
   FECHA_INGRESO:                  [],
@@ -88,16 +88,18 @@ const SUPPORT_REQUIREMENTS = Object.freeze({
 });
 
 const SUPPORT_TYPE_LABELS = Object.freeze({
-  COMPROBANTE_CITA_MEDICA: "Comprobante de Cita Médica",
-  HISTORIA_CLINICA:        "Historia Clínica",
-  INCAPACIDAD_MEDICA:      "Incapacidad Médica",
-  AUTORIZACION_DESCUENTO:  "Autorización de Descuento",
-  COMPROBANTE_ASISTENCIA:  "Comprobante de Asistencia",
-  COMPROBANTE_CALAMIDAD:   "Comprobante de Calamidad",
-  ACTA_DEFUNCION:          "Acta de Defunción",
-  CEDULA_CIUDADANIA:       "Cédula de Ciudadanía",
-  CUENTA_COBRO:            "Cuenta de Cobro",
-  CERTIFICACION_BANCARIA:  "Certificación Bancaria",
+  COMPROBANTE_CITA_MEDICA:  "Comprobante de asistencia a la cita",
+  HISTORIA_CLINICA:         "Historia Clínica",
+  INCAPACIDAD_MEDICA_DOC:   "Incapacidad Médica",
+  INCAPACIDAD_MEDICA:       "Incapacidad Médica",
+  AUTORIZACION_DESCUENTO:   "Autorización de Descuento",
+  COMPROBANTE_CITACION:     "Soporte de Citación",
+  COMPROBANTE_ASISTENCIA:   "Soporte de Citación",
+  COMPROBANTE_CALAMIDAD:    "Soporte de la Calamidad",
+  ACTA_DEFUNCION:           "Acta de Defunción",
+  CEDULA_CIUDADANIA:        "Cédula de Ciudadanía",
+  CUENTA_COBRO:             "Cuenta de Cobro",
+  CERTIFICACION_BANCARIA:   "Certificación Bancaria",
 });
 
 const MEDICAL_INCAPACITY_TYPES = new Set([
@@ -196,8 +198,10 @@ const _NOVELTY_LABEL_MAP = {
   "LUTO":                               "LUTO",
   "PERMISOS NO REMUNERADOS":            "PERMISOS_NO_REMUNERADOS",
   "PERMISO NO REMUNERADO":              "PERMISOS_NO_REMUNERADOS",
-  "CITACION COLEGIO":                   "CITACION_COLEGIO",
-  "CITACION EN COLEGIO":                "CITACION_COLEGIO",
+  "CITACION COLEGIO":                   "CITACIONES_OFICIALES",
+  "CITACION EN COLEGIO":                "CITACIONES_OFICIALES",
+  "CITACIONES OFICIALES":               "CITACIONES_OFICIALES",
+  "CITACION OFICIAL":                   "CITACIONES_OFICIALES",
   "LICENCIA MATERNIDAD PATERNIDAD":     "LICENCIA_MATERNIDAD_PATERNIDAD",
   "LICENCIA DE MATERNIDAD PATERNIDAD":  "LICENCIA_MATERNIDAD_PATERNIDAD",
   "LICENCIA MATERNIDAD":                "LICENCIA_MATERNIDAD_PATERNIDAD",
@@ -1308,11 +1312,53 @@ async function listGroupTurnCovers(groupId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DETALLE DE GRUPO (items + novedades + soportes)
 // ─────────────────────────────────────────────────────────────────────────────
-async function getPayrollGroupDetail(periodId, groupId) {
+async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
   const group = await getGroup(groupId);
   if (!group || Number(group.period_id) !== Number(periodId)) {
     throw new Error("Grupo de nomina no encontrado");
   }
+
+  // Build filtered items query
+  const itemParams = [groupId];
+  const itemWhere = ["pi.group_id = $1"];
+  const itemHaving = [];
+
+  if (filters.institution_id) {
+    itemParams.push(Number(filters.institution_id));
+    itemWhere.push(`pi.institution_id = $${itemParams.length}`);
+  }
+  if (filters.site_id) {
+    itemParams.push(Number(filters.site_id));
+    itemWhere.push(`pi.site_id = $${itemParams.length}`);
+  }
+  if (filters.modality) {
+    itemParams.push(String(filters.modality));
+    itemWhere.push(`UPPER(pi.modality) = UPPER($${itemParams.length})`);
+  }
+  if (filters.reviewed === true)  itemWhere.push("pi.reviewed = true");
+  if (filters.reviewed === false) itemWhere.push("pi.reviewed = false");
+  if (filters.has_novelties === true)
+    itemHaving.push("COUNT(DISTINCT pn.id) FILTER (WHERE pn.novelty_type <> 'CAMBIO_OPERATIVO_COBERTURA') > 0");
+  if (filters.has_novelties === false)
+    itemHaving.push("COUNT(DISTINCT pn.id) FILTER (WHERE pn.novelty_type <> 'CAMBIO_OPERATIVO_COBERTURA') = 0");
+  if (filters.support_status === "pending")
+    itemHaving.push(`COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")}) > 0`);
+  if (filters.support_status === "complete")
+    itemHaving.push(`COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")}) = 0`);
+
+  const sortMap = {
+    documento:  "pi.document_number",
+    institucion:"pi.institution_name",
+    sede:       "pi.site_name",
+    modalidad:  "pi.modality",
+    cargo:      "pi.operational_position",
+    devengado:  "pi.total_devengado",
+    neto:       "pi.neto_pagar",
+    novedades:  "novelty_count",
+  };
+  const sortCol = sortMap[filters.sort_by] || "pi.employee_name";
+  const sortDir = filters.sort_dir === "desc" ? "DESC" : "ASC";
+  const havingSql = itemHaving.length ? `HAVING ${itemHaving.join(" AND ")}` : "";
 
   const [
     { rows: items },
@@ -1329,10 +1375,11 @@ async function getPayrollGroupDetail(periodId, groupId) {
               COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")})::int AS pending_supports
          FROM payroll_items pi
          LEFT JOIN payroll_novelties pn ON pn.payroll_item_id = pi.id
-        WHERE pi.group_id = $1
+        WHERE ${itemWhere.join(" AND ")}
         GROUP BY pi.id
-        ORDER BY pi.employee_name`,
-      [groupId]
+        ${havingSql}
+        ORDER BY ${sortCol} ${sortDir}`,
+      itemParams
     ),
     pool.query(
       `SELECT DISTINCT ON (pn.id)
@@ -2344,7 +2391,7 @@ async function buildChargeAccountHtml(coverId) {
             pi.employee_name AS origin_employee_name,
             pi.document_number AS origin_doc,
             pp.label AS period_label, pp.period_start, pp.period_end,
-            e.gestor_zona
+            emp.gestor_zona
        FROM payroll_turn_covers ptc
        JOIN payroll_novelties pn       ON pn.id  = ptc.novelty_id
        JOIN external_turn_workers etw  ON etw.id = ptc.external_worker_id
@@ -2354,6 +2401,7 @@ async function buildChargeAccountHtml(coverId) {
        LEFT JOIN municipalities m       ON m.id = pi.municipality_id
        LEFT JOIN institutions i         ON i.id = pi.institution_id
        LEFT JOIN educational_sites s    ON s.id = pi.site_id
+       LEFT JOIN employees emp          ON emp.id = pi.employee_id
       WHERE ptc.external_worker_id = $1
         AND ptc.payroll_period_id  = $2
         AND ptc.cover_type = 'EXTERNA'
@@ -3067,7 +3115,10 @@ async function listGroupTurns(groupId) {
        etw.phone                  AS external_phone,
        etw.bank                   AS external_bank,
        etw.account_type           AS external_account_type,
-       etw.account_number         AS external_account_number
+       etw.account_number         AS external_account_number,
+       etw.cedula_url,
+       etw.cert_bancaria_url,
+       etw.cuenta_cobro_url
      FROM payroll_turn_covers ptc
      JOIN payroll_novelties pn        ON pn.id   = ptc.novelty_id
      JOIN payroll_items pi            ON pi.id   = ptc.payroll_item_id
@@ -3080,6 +3131,122 @@ async function listGroupTurns(groupId) {
     [groupId]
   );
   return { group, turns: rows };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENTOS DE TRABAJADOR EXTERNO (cédula, cert. bancaria, cta. cobro firmada)
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateExternalWorkerDocs(workerId, docs = {}) {
+  const wId = id(workerId);
+  if (!wId) throw new Error("ID de trabajador externo inválido");
+  const fields = [];
+  const params = [wId];
+  const allowed = ["cedula_url", "cert_bancaria_url", "cuenta_cobro_url"];
+  for (const col of allowed) {
+    if (docs[col] !== undefined) {
+      params.push(docs[col] || null);
+      fields.push(`${col} = $${params.length}`);
+    }
+  }
+  if (!fields.length) return;
+  await pool.query(
+    `UPDATE external_turn_workers SET ${fields.join(", ")}, updated_at = NOW() WHERE id = $1`,
+    params
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTACIÓN COMPLETA DEL PERÍODO — todos los items + novedades + totales
+// Usada por handlePeriodFullExport para el workbook de todos los municipios.
+// ─────────────────────────────────────────────────────────────────────────────
+async function getPeriodItemsForExport(periodId) {
+  const periodDbId = id(periodId);
+  if (!periodDbId) throw new Error("ID de período inválido");
+
+  const [{ rows: items }, { rows: novelties }, { rows: periodRows }, { rows: totRows }] = await Promise.all([
+    pool.query(
+      `SELECT pi.*,
+              COUNT(DISTINCT pn.id)::int AS novelty_count
+         FROM payroll_items pi
+         LEFT JOIN payroll_novelties pn
+                ON pn.payroll_item_id = pi.id
+               AND pn.novelty_type <> 'CAMBIO_OPERATIVO_COBERTURA'
+        WHERE pi.period_id = $1
+        GROUP BY pi.id
+        ORDER BY pi.municipality_name, pi.employee_name`,
+      [periodDbId]
+    ),
+    pool.query(
+      `SELECT pn.*, pnt.name AS novelty_name
+         FROM payroll_novelties pn
+         LEFT JOIN payroll_novelty_types pnt ON pnt.code = pn.novelty_type
+        WHERE pn.payroll_item_id IN (
+          SELECT id FROM payroll_items WHERE period_id = $1
+        )
+          AND pn.novelty_type <> 'CAMBIO_OPERATIVO_COBERTURA'`,
+      [periodDbId]
+    ),
+    pool.query(`SELECT label FROM payroll_periods WHERE id = $1`, [periodDbId]),
+    pool.query(
+      `SELECT
+         COUNT(DISTINCT pi.id)::int                        AS employees,
+         COUNT(DISTINCT pi.id) FILTER (WHERE pi.reviewed)::int AS items_reviewed,
+         COALESCE(SUM(pi.total_devengado),   0)::bigint    AS total_devengado,
+         COALESCE(SUM(pi.total_deducciones), 0)::bigint    AS total_deducciones,
+         COALESCE(SUM(pi.neto_pagar),        0)::bigint    AS neto,
+         COUNT(DISTINCT pn.id)::int                        AS novelties
+       FROM payroll_items pi
+       LEFT JOIN payroll_novelties pn ON pn.payroll_item_id = pi.id
+      WHERE pi.period_id = $1`,
+      [periodDbId]
+    ),
+  ]);
+
+  return {
+    periodLabel: periodRows[0]?.label || String(periodId),
+    items,
+    novelties,
+    totals: { ...totRows[0], items_pending: Number(totRows[0]?.employees || 0) - Number(totRows[0]?.items_reviewed || 0) },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTACIÓN FORMATO VARIABLES DE NÓMINA
+// Una fila por empleado×municipio con días de cada tipo de novedad agregados.
+// ─────────────────────────────────────────────────────────────────────────────
+async function getVariablesExportData(periodId, groupId) {
+  const periodDbId = id(periodId);
+  const groupDbId  = id(groupId) || null;
+  if (!periodDbId) throw new Error("ID de período inválido");
+
+  const { rows } = await pool.query(
+    `SELECT
+       pi.document_number,
+       pi.employee_name,
+       pi.municipality_name,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'DIAS_NO_CLASE'), 0)::int                 AS dias_no_clase,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'CITA_MEDICA'), 0)::int                   AS cita_medica,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'CITA_MEDICA_FAMILIAR'), 0)::int          AS cita_medica_familiar,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'INCAPACIDAD_MEDICA'), 0)::int            AS incapacidad_medica,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'INCAPACIDAD_ACCIDENTE_LABORAL'), 0)::int AS incapacidad_accidente,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'CALAMIDAD_FAMILIAR'), 0)::int            AS calamidad_familiar,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'CITACIONES_OFICIALES'), 0)::int          AS citaciones_oficiales,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'LICENCIA_MATERNIDAD_PATERNIDAD'), 0)::int AS licencia_maternidad,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'SUSPENSION'), 0)::int                    AS suspension,
+       COALESCE(SUM(pn.days) FILTER (WHERE pn.novelty_type = 'PERMISOS_NO_REMUNERADOS'), 0)::int       AS permisos_no_remunerados,
+       MAX(pn.start_date) FILTER (WHERE pn.novelty_type = 'FECHA_RETIRO')  AS fecha_retiro,
+       MAX(pn.start_date) FILTER (WHERE pn.novelty_type = 'FECHA_INGRESO') AS fecha_ingreso
+     FROM payroll_items pi
+     LEFT JOIN payroll_novelties pn
+            ON pn.payroll_item_id = pi.id
+           AND pn.novelty_type <> 'CAMBIO_OPERATIVO_COBERTURA'
+    WHERE pi.period_id = $1
+      AND ($2::int IS NULL OR pi.group_id = $2)
+    GROUP BY pi.document_number, pi.employee_name, pi.municipality_name
+    ORDER BY pi.municipality_name, pi.employee_name`,
+    [periodDbId, groupDbId]
+  );
+  return rows;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3124,4 +3291,7 @@ module.exports = {
   listGroupTurnCovers,
   getCoverageStatsForGroup,
   listGroupTurns,
+  updateExternalWorkerDocs,
+  getVariablesExportData,
+  getPeriodItemsForExport,
 };

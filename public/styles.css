@@ -23648,3 +23648,171 @@ button.dashboard-kpi-card:disabled {
   .pnl-filter-gate-inner { padding: 24px 18px; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SISTEMA GLOBAL DE CARGA — EMPIRIA
+   Overlay, barra de progreso y estado de botones
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Barra de progreso superior ─────────────────────────────────────────── */
+#ld-progress {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%;
+  height: 3px;
+  z-index: 10500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+#ld-progress.ld-on { opacity: 1; }
+
+#ld-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #4f46e5 0%, #0891b2 60%, #4f46e5 100%);
+  background-size: 200% 100%;
+  animation: ld-shimmer 1.6s linear infinite;
+  border-radius: 0 2px 2px 0;
+}
+
+#ld-progress-label {
+  position: absolute;
+  top: 6px; right: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4f46e5;
+  letter-spacing: .03em;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+#ld-progress.ld-on #ld-progress-label:not(:empty) { opacity: 1; }
+
+/* ── Overlay global ──────────────────────────────────────────────────────── */
+#ld-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 17, 32, 0.52);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+#ld-overlay.ld-on {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* Tarjeta central */
+.ld-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 48px 32px;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.06),
+    0 24px 64px rgba(0,0,0,0.22),
+    0 8px 24px rgba(0,0,0,0.12);
+  min-width: 240px;
+  transform: translateY(6px) scale(0.97);
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#ld-overlay.ld-on .ld-card {
+  transform: translateY(0) scale(1);
+}
+
+/* Marca de Empiria */
+.ld-brand {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  user-select: none;
+}
+
+/* Spinner: dos anillos */
+.ld-spinner-wrap {
+  position: relative;
+  width: 52px;
+  height: 52px;
+}
+.ld-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #4f46e5;
+  animation: ld-spin 0.85s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.ld-ring-b {
+  inset: 8px;
+  border-top-color: #0891b2;
+  animation-direction: reverse;
+  animation-duration: 0.65s;
+}
+
+/* Textos */
+.ld-msg {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+.ld-sub {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: -8px 0 0;
+  text-align: center;
+  font-weight: 500;
+}
+
+/* ── Estado de carga en botones ──────────────────────────────────────────── */
+.ld-btn-arc {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  animation: ld-spin 0.7s linear infinite;
+  margin-right: 7px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Para botones oscuros vs claros */
+.btn-secondary .ld-btn-arc,
+.btn-outline .ld-btn-arc,
+[class*="btn-sec"] .ld-btn-arc {
+  border-color: rgba(15,23,42,0.2);
+  border-top-color: #0f172a;
+}
+
+/* ── Animaciones ─────────────────────────────────────────────────────────── */
+@keyframes ld-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ld-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+/* ── Accesibilidad: sin animación ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .ld-ring, .ld-ring-b, .ld-btn-arc { animation: none; opacity: 0.6; }
+  #ld-progress-fill { animation: none; }
+  #ld-overlay, .ld-card { transition: none; }
+}
+

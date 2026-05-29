@@ -876,6 +876,14 @@ async function createEmployee(data) {
 }
 
 async function updateEmployee(id, data) {
+  console.log("[updateEmployee] modality received:", {
+    id,
+    educationalModality: data.educationalModality,
+    modality:            data.modality,
+    modalidad:           data.modalidad,
+    institution:         data.institution,
+    site:                data.site,
+  });
   const existing = await getEmployeeById(id);
   if (!existing) return null;
 

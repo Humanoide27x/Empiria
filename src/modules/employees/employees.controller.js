@@ -1,6 +1,7 @@
 const { sendJson } = require("../../http/response");
 const { readJsonBody } = require("../../http/request");
 const { withModuleProtection, isDemoUser } = require("../../http/protection");
+const { clearCoverageSummaryCache } = require("../coverage/coverage.controller");
 
 const {
   getEmployees,
@@ -840,6 +841,9 @@ function handlePersonnel(req, res) {
             message: "Empleado no encontrado",
           });
         }
+
+        // Limpiar caché de cobertura para que refleje los cambios inmediatamente
+        try { clearCoverageSummaryCache(); } catch (_) {}
 
         return sendJson(res, 200, {
           ok: true,

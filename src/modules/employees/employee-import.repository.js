@@ -420,9 +420,10 @@ async function validateBatch(importBatchId, clientArg = null) {
 
     if (!existingEmployee) {
       if (!cleanText(row.full_name)) pushIssue(issues, "REQUIRED_NAME", "Nombre obligatorio faltante.", "full_name");
-      if (!cleanText(row.municipality_text)) pushIssue(issues, "REQUIRED_MUNICIPALITY", "Municipio obligatorio faltante.", "municipality_text");
-      if (!cleanText(row.contract_text)) pushIssue(issues, "REQUIRED_CONTRACT", "Contrato obligatorio faltante.", "contract_text");
-      if (!cleanText(row.real_position_text)) pushIssue(issues, "REQUIRED_POSITION", "Cargo real obligatorio faltante.", "real_position_text");
+      // Contrato, municipio y cargo son completables desde el contexto del usuario o en pantalla — no bloquean.
+      if (!cleanText(row.contract_text))     pushIssue(issues, "REQUIRED_CONTRACT",     "Contrato no especificado en el Excel.",  "contract_text",     "INFO");
+      if (!cleanText(row.municipality_text)) pushIssue(issues, "REQUIRED_MUNICIPALITY", "Municipio no especificado en el Excel.", "municipality_text", "INFO");
+      if (!cleanText(row.real_position_text))pushIssue(issues, "REQUIRED_POSITION",     "Cargo real no especificado en el Excel.","real_position_text","INFO");
     }
 
     const company = row.resolved_company_id
@@ -461,7 +462,10 @@ async function validateBatch(importBatchId, clientArg = null) {
     }
     if (!resolved.companyId && contract.match?.company_id) resolved.companyId = contract.match.company_id;
     if (!resolved.companyId && !existingEmployee) {
-      pushIssue(issues, "COMPANY_NOT_FOUND", "Empresa no encontrada.", "company_text", row.company_text ? "NEEDS_REVIEW" : "ERROR");
+      // Si el usuario especificó empresa pero no se encontró → NEEDS_REVIEW para resolver manualmente.
+      // Si no especificó empresa (viene del contexto del usuario) → INFO, no bloquea.
+      pushIssue(issues, "COMPANY_NOT_FOUND", "Empresa no encontrada.", "company_text",
+        row.company_text ? "NEEDS_REVIEW" : "INFO");
     }
 
     const municipality = row.resolved_municipality_id
@@ -843,26 +847,154 @@ async function applySizeFieldsToCreatedEmployee(client, employeeId, raw = {}) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INSERT rápido para importación masiva.
+// Usa los IDs ya resueltos en staging — sin consultas extras de lookup.
+// Corre dentro del client de la transacción para coherencia con SAVEPOINT.
+// ─────────────────────────────────────────────────────────────────────────────
+async function _batchInsertEmployee(client, row, defaultCompanyId, defaultContractId) {
+  const raw  = row.raw_data || {};
+  const emp  = mapRawToEmployee(raw, row);
+
+  // IDs resueltos en preview (ya validados) — sin queries adicionales
+  const municipalityId = toInt(row.resolved_municipality_id) || null;
+  const companyId      = toInt(row.resolved_company_id)  || defaultCompanyId  || null;
+  const contractId     = toInt(row.resolved_contract_id) || defaultContractId || null;
+  const positionLabel  = cleanText(row.resolved_position_label || emp.cargo_real);
+
+  // Nombre completo
+  const fullName = cleanText(
+    [emp.primer_nombre, emp.segundo_nombre, emp.primer_apellido, emp.segundo_apellido]
+      .filter(Boolean).join(" ") || emp.fullName
+  );
+  if (!fullName) throw new Error("Nombre completo vacío — fila omitida");
+
+  const docNumber = cleanText(emp.documentNumber || row.document_number);
+  if (!docNumber) throw new Error("Número de documento vacío — fila omitida");
+
+  const normalizedName = normalizeText(fullName);
+
+  const { rows: inserted } = await client.query(
+    `INSERT INTO employees (
+       tenant_id, full_name, normalized_full_name,
+       first_name, second_name, first_last_name, second_last_name,
+       document_type, document_number,
+       phone, email, address, neighborhood, civil_status,
+       real_position, company_id, contract_id, municipality_id,
+       modality, workday_type, status, gestor_zona, arl,
+       eps, pension_fund, compensation_box
+     ) VALUES (
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,
+       $10,$11,$12,$13,$14,$15,$16,$17,$18,
+       $19,$20,$21,$22,$23,$24,$25,$26
+     )
+     ON CONFLICT (document_number) DO NOTHING
+     RETURNING id`,
+    [
+      1,
+      fullName, normalizedName,
+      emp.primer_nombre  || "", emp.segundo_nombre  || "",
+      emp.primer_apellido|| "", emp.segundo_apellido|| "",
+      cleanText(emp.documentType) || "CC",
+      docNumber,
+      cleanText(emp.phone)     || null,
+      cleanText(emp.email)     || null,
+      cleanText(emp.address)   || null,
+      cleanText(emp.neighborhood) || null,
+      cleanText(emp.civilStatus)  || null,
+      positionLabel || null,
+      companyId, contractId, municipalityId,
+      cleanText(emp.modality)   || null,
+      emp.workdayType            || "TC",
+      emp.status                 || "ACTIVO",
+      cleanText(emp.gestorZona)  || null,
+      cleanText(emp.arl)         || "SURA",
+      cleanText(emp.eps)         || null,
+      cleanText(emp.pensionFund) || null,
+      cleanText(emp.compensationBox) || "COFREM",
+    ]
+  );
+  return inserted[0] || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-check mínimo en memoria (solo campos críticos).
+// Evita llamar validateBatch() completo (que hace N×4 queries de lookup).
+// Devuelve { ok: true } o { ok: false, reason, field }
+// ─────────────────────────────────────────────────────────────────────────────
+function _quickCheck(row) {
+  if (!cleanText(row.document_number))
+    return { ok: false, reason: "Número de documento vacío", field: "document_number" };
+  if (!cleanText(row.full_name))
+    return { ok: false, reason: "Nombre completo vacío", field: "full_name" };
+  return { ok: true };
+}
+
 async function commitBatch(importBatchId, options = {}) {
+  const t0 = Date.now();
+  const defaultCompanyId  = toInt(options.defaultCompanyId);
+  const defaultContractId = toInt(options.defaultContractId);
+
+  console.info("[employee-import commit] START", {
+    batchId: importBatchId,
+    defaultCompanyId,
+    defaultContractId,
+  });
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const summary = await validateBatch(importBatchId, client);
+
+    // Leer filas a commitear usando el status ya calculado en preview.
+    // NO se vuelve a llamar validateBatch() — eso es la causa del timeout de 60s
+    // porque hace N×4+ queries de lookup por fila.
     const { rows } = await client.query(
       `SELECT * FROM employee_import_staging
        WHERE import_batch_id = $1
-         AND status IN ('VALID','EXISTING_EMPLOYEE','HAS_CONFLICTS')
+         AND status NOT IN ('ERROR', 'IMPORTED', 'UPDATED', 'SKIPPED')
        ORDER BY row_number`,
       [importBatchId]
     );
 
+    console.info("[employee-import commit] filas a procesar:", rows.length);
+
     let imported = 0;
-    let updated = 0;
-    let skipped = 0;
+    let updated  = 0;
+    let skipped  = 0;
     const failures = [];
+
     for (const row of rows) {
+      // Pre-check ligero: solo documento y nombre
+      const check = _quickCheck(row);
+      if (!check.ok) {
+        console.error("[employee-import commit 400-row]", {
+          batchId: importBatchId,
+          rowNumber: row.row_number,
+          documentNumber: row.document_number,
+          fullName: row.full_name,
+          reason: check.reason,
+          field: check.field,
+          defaultCompanyId,
+          defaultContractId,
+          resolvedCompanyId:  row.resolved_company_id,
+          resolvedContractId: row.resolved_contract_id,
+        });
+        failures.push({ rowNumber: row.row_number, message: check.reason });
+        await client.query(
+          `UPDATE employee_import_staging
+           SET status = 'ERROR',
+               errors = COALESCE(errors, '[]'::jsonb) || $2::jsonb
+           WHERE id = $1`,
+          [row.id, JSON.stringify([{ code: "REQUIRED_FIELD", message: check.reason, field: check.field, severity: "ERROR" }])]
+        );
+        continue;
+      }
+
+      // Savepoint por fila: un fallo de DB aísla solo esa fila
+      await client.query("SAVEPOINT sp_row");
       try {
         if (row.existing_employee_id) {
+          // Actualizar empleado existente con los campos seleccionados
           const changed = await updateEmployeeSelectedFields(client, row, options);
           await client.query(
             `UPDATE employee_import_staging SET status = $2 WHERE id = $1`,
@@ -871,28 +1003,67 @@ async function commitBatch(importBatchId, options = {}) {
           if (changed) updated += 1;
           else skipped += 1;
         } else {
-          const newEmployee = await createEmployee(mapRawToEmployee(row.raw_data || {}, row));
-          await applySizeFieldsToCreatedEmployee(client, newEmployee.id, row.raw_data || {});
-          await client.query(`UPDATE employee_import_staging SET status = 'IMPORTED' WHERE id = $1`, [row.id]);
-          imported += 1;
+          // Inserción directa sin queries extra de lookup
+          const newEmp = await _batchInsertEmployee(client, row, defaultCompanyId, defaultContractId);
+          if (newEmp) {
+            await applySizeFieldsToCreatedEmployee(client, newEmp.id, row.raw_data || {});
+            await client.query(`UPDATE employee_import_staging SET status = 'IMPORTED' WHERE id = $1`, [row.id]);
+            imported += 1;
+          } else {
+            // ON CONFLICT DO NOTHING — empleado ya existe (carrera de condición)
+            await client.query(`UPDATE employee_import_staging SET status = 'SKIPPED' WHERE id = $1`, [row.id]);
+            skipped += 1;
+          }
         }
+        await client.query("RELEASE SAVEPOINT sp_row");
       } catch (error) {
-        failures.push({ rowNumber: row.row_number, message: error.message || "Error importando fila" });
+        await client.query("ROLLBACK TO SAVEPOINT sp_row");
+        const msg = error.message || "Error importando fila";
+        console.error("[employee-import commit row-error]", {
+          batchId:        importBatchId,
+          rowNumber:      row.row_number,
+          documentNumber: row.document_number,
+          fullName:       row.full_name,
+          companyId:      row.resolved_company_id  || defaultCompanyId,
+          contractId:     row.resolved_contract_id || defaultContractId,
+          error:          msg,
+        });
+        failures.push({ rowNumber: row.row_number, message: msg });
         await client.query(
           `UPDATE employee_import_staging
            SET status = 'ERROR',
-               errors = errors || $2::jsonb
+               errors = COALESCE(errors, '[]'::jsonb) || $2::jsonb
            WHERE id = $1`,
-          [row.id, JSON.stringify([{ code: "COMMIT_FAILED", message: error.message || "Error importando fila", field: "row", severity: "ERROR" }])]
+          [row.id, JSON.stringify([{ code: "COMMIT_FAILED", message: msg, field: "row", severity: "ERROR" }])]
         );
       }
     }
 
     const after = await getBatchSummary(importBatchId, client);
     await client.query("COMMIT");
-    return { ...after, importedRows: imported, updatedRows: updated, skippedRows: skipped, failedOnCommit: failures.length, failures, beforeCommit: summary };
+
+    const elapsed = Date.now() - t0;
+    console.info("[employee-import commit] DONE", {
+      batchId: importBatchId, elapsed: `${elapsed}ms`,
+      imported, updated, skipped, failed: failures.length,
+    });
+
+    return {
+      ...after,
+      importedRows:   imported,
+      updatedRows:    updated,
+      skippedRows:    skipped,
+      failedOnCommit: failures.length,
+      failures,
+    };
   } catch (error) {
     await client.query("ROLLBACK");
+    console.error("[employee-import commit FATAL]", {
+      batchId: importBatchId,
+      error:   error.message,
+      defaultCompanyId,
+      defaultContractId,
+    });
     throw error;
   } finally {
     client.release();

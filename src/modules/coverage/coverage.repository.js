@@ -18,6 +18,14 @@ function isActiveEmployeeStatus(status) {
   return !["RETIRADO", "RETIRADA", "INACTIVO", "INACTIVA"].includes(value);
 }
 
+function normalizeWorkdayType(value) {
+  const v = normalize(value);
+  if (v.includes("MT") || v.includes("MEDIO") || v.includes("MEDIA") || v.includes("HALF")) return "MT";
+  return "TC";
+}
+
+const COVERAGE_DEBUG = process.env.COVERAGE_DEBUG === "1";
+
 function calculateRequiredPersonnel(cupos, modalidad) {
   const seats = Number(cupos);
   const mode = normalize(modalidad);
@@ -129,13 +137,18 @@ async function getCoverageByContract(filters = {}) {
       co.id AS company_id,
       co.name AS company_name,
       e.id AS employee_id,
-      e.status AS employee_status
+      e.status AS employee_status,
+      e.workday_type AS employee_workday_type,
+      e.municipality_id AS employee_municipality_id,
+      e.institution_id  AS employee_institution_id,
+      e.site_id         AS employee_site_id,
+      e.modality        AS employee_modality
     FROM contract_positions cp
     JOIN contracts c ON c.id = cp.contract_id
     JOIN companies co ON co.id = cp.company_id
     LEFT JOIN employees e
-      ON e.contract_id = cp.contract_id
-      AND e.company_id = cp.company_id
+      ON e.company_id = cp.company_id
+      AND (e.contract_id = cp.contract_id OR e.contract_id IS NULL)
       AND UPPER(TRIM(e.real_position)) = UPPER(TRIM(cp.name))${empMunFilter}
     WHERE ${conditions.join(" AND ")}
     ORDER BY co.name, c.name, cp.category, cp.name
@@ -151,15 +164,17 @@ async function getCoverageByContract(filters = {}) {
 
     if (!grouped.has(key)) {
       grouped.set(key, {
-        contractId: row.contract_id,
-        contractName: row.contract_name,
-        companyId: row.company_id,
-        companyName: row.company_name,
-        positionId: row.id,
-        positionName: row.position_name,
-        category: row.category,
+        contractId:        row.contract_id,
+        contractName:      row.contract_name,
+        companyId:         row.company_id,
+        companyName:       row.company_name,
+        positionId:        row.id,
+        positionName:      row.position_name,
+        category:          row.category,
         countsForCoverage: row.counts_for_coverage === true,
-        filledCount: 0,
+        filledCount:       0,
+        tcFilledCount:     0,
+        mtFilledCount:     0,
         documentRiskCount: 0,
       });
     }
@@ -167,10 +182,29 @@ async function getCoverageByContract(filters = {}) {
     const item = grouped.get(key);
 
     if (row.employee_id && isActiveEmployeeStatus(row.employee_status)) {
+      const wt = normalizeWorkdayType(row.employee_workday_type);
       item.filledCount += 1;
+      if (wt === "MT") item.mtFilledCount += 1;
+      else item.tcFilledCount += 1;
 
       if (documentRiskMap.get(String(row.employee_id))) {
         item.documentRiskCount += 1;
+      }
+
+      if (COVERAGE_DEBUG) {
+        console.log("[coverage employee match debug]", {
+          employeeId:            row.employee_id,
+          employeeStatus:        row.employee_status,
+          realPosition:          row.position_name,
+          workdayType:           row.employee_workday_type,
+          employeeMunicipalityId:row.employee_municipality_id,
+          employeeInstitutionId: row.employee_institution_id,
+          employeeSiteId:        row.employee_site_id,
+          employeeModality:      row.employee_modality,
+          coveragePositionId:    row.id,
+          coveragePositionName:  row.position_name,
+          countedAs:             wt,
+        });
       }
     }
   });
@@ -192,12 +226,16 @@ async function getCoverageByMunicipality(filters = {}) {
   const conditions = ["TRUE"];
   const values = [];
 
-  if (filters.contractId) {
+  // Incluye empleados con contract_id = X o con contract_id IS NULL (mismo company)
+  // para cubrir empleados editados manualmente sin contrato aún asignado.
+  if (filters.contractId && filters.companyId) {
+    values.push(Number(filters.companyId));
+    values.push(Number(filters.contractId));
+    conditions.push(`e.company_id = $${values.length - 1} AND (e.contract_id = $${values.length} OR e.contract_id IS NULL)`);
+  } else if (filters.contractId) {
     values.push(Number(filters.contractId));
     conditions.push(`e.contract_id = $${values.length}`);
-  }
-
-  if (filters.companyId) {
+  } else if (filters.companyId) {
     values.push(Number(filters.companyId));
     conditions.push(`e.company_id = $${values.length}`);
   }
@@ -218,9 +256,13 @@ async function getCoverageByMunicipality(filters = {}) {
       e.id,
       e.status,
       e.real_position,
+      e.workday_type,
+      e.modality,
       e.company_id,
       e.contract_id,
-      m.id AS municipality_id,
+      e.institution_id,
+      e.site_id,
+      m.id   AS municipality_id,
       m.name AS municipality_name
     FROM employees e
     LEFT JOIN municipalities m ON m.id = e.municipality_id
@@ -236,25 +278,47 @@ async function getCoverageByMunicipality(filters = {}) {
   result.rows.forEach((row) => {
     if (!isActiveEmployeeStatus(row.status)) return;
 
-    const key = `${row.company_id}-${row.contract_id}-${row.municipality_id}-${normalize(row.real_position)}`;
+    const wt  = normalizeWorkdayType(row.workday_type);
+    const key = `${row.company_id}-${row.contract_id}-${row.municipality_id}-${normalize(row.real_position)}-${wt}`;
 
     if (!grouped.has(key)) {
       grouped.set(key, {
-        municipalityId: row.municipality_id,
-        municipalityName: row.municipality_name || "Sin municipio",
-        position: row.real_position || "Sin cargo",
-        employeeCount: 0,
+        municipalityId:    row.municipality_id,
+        municipalityName:  row.municipality_name || "Sin municipio",
+        position:          row.real_position || "Sin cargo",
+        workdayType:       wt,
+        employeeCount:     0,
+        tcCount:           0,
+        mtCount:           0,
         documentRiskCount: 0,
-        companyId: row.company_id,
-        contractId: row.contract_id,
+        companyId:         row.company_id,
+        contractId:        row.contract_id,
       });
     }
 
     const item = grouped.get(key);
     item.employeeCount += 1;
+    if (wt === "MT") item.mtCount += 1;
+    else item.tcCount += 1;
 
     if (documentRiskMap.get(String(row.id))) {
       item.documentRiskCount += 1;
+    }
+
+    if (COVERAGE_DEBUG) {
+      console.log("[coverage employee match debug]", {
+        employeeId:            row.id,
+        status:                row.status,
+        realPosition:          row.real_position,
+        workTimeType:          row.workday_type,
+        employeeMunicipalityId:row.municipality_id,
+        employeeInstitutionId: row.institution_id,
+        employeeSiteId:        row.site_id,
+        employeeModality:      row.modality,
+        coverageMunicipalityId:row.municipality_id,
+        matchedMunicipality:   Boolean(row.municipality_id),
+        countedAs:             wt,
+      });
     }
   });
 
@@ -275,12 +339,14 @@ async function getEmployeesByMunicipalityAndPosition(filters = {}) {
   const conditions = ["TRUE"];
   const values = [];
 
-  if (filters.contractId) {
+  if (filters.contractId && filters.companyId) {
+    values.push(Number(filters.companyId));
+    values.push(Number(filters.contractId));
+    conditions.push(`e.company_id = $${values.length - 1} AND (e.contract_id = $${values.length} OR e.contract_id IS NULL)`);
+  } else if (filters.contractId) {
     values.push(Number(filters.contractId));
     conditions.push(`e.contract_id = $${values.length}`);
-  }
-
-  if (filters.companyId) {
+  } else if (filters.companyId) {
     values.push(Number(filters.companyId));
     conditions.push(`e.company_id = $${values.length}`);
   }
@@ -358,18 +424,23 @@ async function getCoverageSummary(filters = {}) {
   const empValues = [];
   const posValues = [];
 
-  if (filters.contractId) {
+  if (filters.contractId && filters.companyId) {
+    empValues.push(Number(filters.companyId));
     empValues.push(Number(filters.contractId));
-    empConditions.push(`e.contract_id = $${empValues.length}`);
+    empConditions.push(`e.company_id = $${empValues.length - 1} AND (e.contract_id = $${empValues.length} OR e.contract_id IS NULL)`);
 
     posValues.push(Number(filters.contractId));
     posConditions.push(`cp.contract_id = $${posValues.length}`);
-  }
-
-  if (filters.companyId) {
+    posValues.push(Number(filters.companyId));
+    posConditions.push(`cp.company_id = $${posValues.length}`);
+  } else if (filters.contractId) {
+    empValues.push(Number(filters.contractId));
+    empConditions.push(`e.contract_id = $${empValues.length}`);
+    posValues.push(Number(filters.contractId));
+    posConditions.push(`cp.contract_id = $${posValues.length}`);
+  } else if (filters.companyId) {
     empValues.push(Number(filters.companyId));
     empConditions.push(`e.company_id = $${empValues.length}`);
-
     posValues.push(Number(filters.companyId));
     posConditions.push(`cp.company_id = $${posValues.length}`);
   }

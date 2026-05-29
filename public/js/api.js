@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { _apiLoadingStart, _apiLoadingEnd } from './loading.js';
 
 const SESSION_CACHE_TTL = 5 * 60 * 1000;
 const sessionGetCache = new Map();
@@ -57,6 +58,11 @@ export async function apiFetch(path, options = {}) {
   if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  // Activar overlay después de 300 ms si la petición sigue pendiente.
+  // `options.silent = true` desactiva el overlay para polls y requests en background.
+  const silent = options.silent === true;
+  if (!silent) _apiLoadingStart();
+
   const startedAt = performance.now();
   let response;
   try {
@@ -65,8 +71,10 @@ export async function apiFetch(path, options = {}) {
     const elapsedMs = Math.round(performance.now() - startedAt);
     console.error(`[apiFetch] fallo de red ${endpoint} ${elapsedMs}ms:`, error.message);
     error.endpoint = endpoint;
+    if (!silent) _apiLoadingEnd();
     throw error;
   }
+
   const elapsedMs = Math.round(performance.now() - startedAt);
   if (elapsedMs >= 800) {
     console.warn(`[apiFetch] ${response.status} ${endpoint} ${elapsedMs}ms`);
@@ -87,6 +95,7 @@ export async function apiFetch(path, options = {}) {
     error.payload = payload;
     error.endpoint = endpoint;
     console.warn(`[apiFetch] endpoint fallido ${response.status}: ${endpoint}`);
+    if (!silent) _apiLoadingEnd();
     throw error;
   }
 
@@ -94,5 +103,6 @@ export async function apiFetch(path, options = {}) {
     sessionGetCache.set(cacheKey, { ts: Date.now(), payload });
   }
 
+  if (!silent) _apiLoadingEnd();
   return payload;
 }

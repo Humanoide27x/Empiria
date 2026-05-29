@@ -39,6 +39,9 @@ const {
   handleGroupReopen,
   handleGroupHistory,
   handleGroupTurns,
+  handleExternalWorkerDocs,
+  handleVariablesExport,
+  handlePeriodFullExport,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
@@ -82,6 +85,9 @@ async function handlePayrollRoutes(req, res, url) {
   if (/^\/payroll\/groups\/\d+\/turns$/.test(pathname)) {
     await handleGroupTurns(req, res, url); return true;
   }
+  if (/^\/payroll\/external-workers\/\d+\/docs$/.test(pathname)) {
+    await handleExternalWorkerDocs(req, res, url); return true;
+  }
   if (/^\/payroll\/groups\/\d+\/close$/.test(pathname)) {
     await handleGroupClose(req, res, url); return true;
   }
@@ -121,6 +127,14 @@ async function handlePayrollRoutes(req, res, url) {
   // GET /payroll/periods/:id/results
   if (/^\/payroll\/periods\/\d+\/results$/.test(pathname)) {
     await handlePeriodResults(req, res, url); return true;
+  }
+  // GET /payroll/periods/:id/full-export  (Variables + Nómina + Resumen, todos los municipios)
+  if (/^\/payroll\/periods\/\d+\/full-export$/.test(pathname)) {
+    await handlePeriodFullExport(req, res, url); return true;
+  }
+  // GET /payroll/periods/:id/variables-export  (solo hoja Variables, legacy)
+  if (/^\/payroll\/periods\/\d+\/variables-export$/.test(pathname)) {
+    await handleVariablesExport(req, res, url); return true;
   }
   // GET /payroll/periods/:id/export
   if (/^\/payroll\/periods\/\d+\/export$/.test(pathname)) {

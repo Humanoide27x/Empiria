@@ -975,44 +975,67 @@ function findCatalogKey(object, value) {
 function syncInstitutionalSelectionsWithCatalog(draft = state.personnelDraft || {}, educationalCatalog = {}) {
   if (!draft || !educationalCatalog || typeof educationalCatalog !== "object") return;
 
-  const municipalityId = getDraftMunicipalityId(draft);
+  const municipalityId   = getDraftMunicipalityId(draft);
   const municipalityName = getDraftMunicipalityName(draft);
-  draft.educationalMunicipality = municipalityName;
+  draft.educationalMunicipality  = municipalityName;
   draft.educational_municipality = municipalityName;
   const municipalityKey = municipalityId ? String(municipalityId) : "";
+
+  // Sin municipio seleccionado → limpiar todo
   if (!municipalityKey) {
-    draft.institution = "";
-    draft.site = "";
+    draft.institution       = "";
+    draft.site              = "";
     draft.educationalModality = "";
     return;
   }
 
+  // Si el catálogo está vacío (aún no cargó o el contrato no tiene cobertura),
+  // NO limpiar los valores existentes — solo preservar.
+  const catalogHasData = Object.keys(educationalCatalog).length > 0;
+  if (!catalogHasData) return;
+
   const municipalityCatalog = educationalCatalog[municipalityKey] || {};
+  const municipalityHasData = Object.keys(municipalityCatalog).length > 0;
 
   const institutionKey = findCatalogKey(municipalityCatalog, draft.institution || draft.institucion_educativa || "");
   if (!institutionKey) {
-    draft.institution = "";
-    draft.site = "";
-    draft.educationalModality = "";
+    // Solo limpiar si el catálogo del municipio realmente tiene instituciones
+    // (evita limpiar cuando la clave del municipio simplemente no está en el catálogo)
+    if (municipalityHasData) {
+      draft.institution       = "";
+      draft.site              = "";
+      draft.educationalModality = "";
+    }
     return;
   }
 
-  draft.institution = institutionKey;
-  const siteCatalog = municipalityCatalog[institutionKey] || {};
+  draft.institution   = institutionKey;
+  const siteCatalog   = municipalityCatalog[institutionKey] || {};
+  const siteHasData   = Object.keys(siteCatalog).length > 0;
 
   const siteKey = findCatalogKey(siteCatalog, draft.site || draft.sede_educativa || "");
   if (!siteKey) {
-    draft.site = "";
-    draft.educationalModality = "";
+    if (siteHasData) {
+      draft.site              = "";
+      draft.educationalModality = "";
+    }
     return;
   }
 
   draft.site = siteKey;
   const modalityCatalog = Array.isArray(siteCatalog[siteKey]) ? siteCatalog[siteKey] : [];
+  const currentModality = draft.educationalModality || draft.modality || draft.modalidad || "";
+
   const modalityMatch = modalityCatalog.find(
-    (item) => normalizeCatalogText(item) === normalizeCatalogText(draft.educationalModality || draft.modality || draft.modalidad || "")
+    (item) => normalizeCatalogText(item) === normalizeCatalogText(currentModality)
   );
-  draft.educationalModality = modalityMatch || "";
+
+  // Solo actualizar si el catálogo tiene modalidades Y se encontró match.
+  // Si no se encuentra, conservar el valor existente — nunca borrar.
+  if (modalityMatch !== undefined) {
+    draft.educationalModality = modalityMatch;
+  }
+  // else: draft.educationalModality ya tiene el valor correcto, no se toca
 }
 
 // ── Age helpers ───────────────────────────────────────────────────────────────
@@ -3668,6 +3691,13 @@ export async function handlePersonnelFormSubmit(event) {
   const isEdit = state.personnelViewMode === "edit" && state.personnelEditingId;
   if (isEdit) payload.id = state.personnelEditingId;
 
+  console.log("[personnel save] modality payload", {
+    educationalModality: payload.educationalModality,
+    institution:         payload.institution,
+    site:                payload.site,
+    id:                  payload.id,
+  });
+
   try {
     await apiFetch("/personnel", {
       method: isEdit ? "PUT" : "POST",
@@ -5031,8 +5061,8 @@ function openSafeImportPersonnelModal() {
           body: JSON.stringify({
             fileBase64: e.target.result,
             fileName: file.name,
-            contractId: contractId ? Number(contractId) : null,
-            companyId: cu.companyId || null,
+            contractId: contractId ? Number(contractId) : (Number(cu.contractId) || null),
+            companyId:  cu.companyId  ? Number(cu.companyId)  : null,
           }),
         });
         setPreviewState(res);
@@ -5081,6 +5111,7 @@ function openSafeImportPersonnelModal() {
       const massValue = document.getElementById("importMassValue")?.value ?? "";
       const allowOverwriteEmpty = document.getElementById("importAllowOverwriteEmpty")?.checked || false;
       const overrideValues = massField && (massValue !== "" || allowOverwriteEmpty) ? { [massField]: massValue } : {};
+      const contractIdForCommit = document.getElementById("importContractId")?.value || null;
       const res = await apiFetch(`/employee-import/${currentBatchId}/commit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -5088,13 +5119,18 @@ function openSafeImportPersonnelModal() {
           updateFields,
           overrideValues,
           allowOverwriteEmpty,
+          // Contexto del usuario para rellenar company/contract en filas sin esos datos
+          contractId: contractIdForCommit ? Number(contractIdForCommit) : (Number(cu.contractId) || null),
+          companyId:  cu.companyId ? Number(cu.companyId) : null,
         }),
       });
       setPreviewState(res);
       const imported = res.summary?.importedRows || 0;
-      const updated = res.summary?.updatedRows || 0;
-      const skipped = res.summary?.skippedRows || 0;
-      showSuccess(`${imported} empleados creados, ${updated} actualizados, ${skipped} existentes sin cambios.`);
+      const updated  = res.summary?.updatedRows  || 0;
+      const skipped  = res.summary?.skippedRows  || 0;
+      const failed   = res.summary?.failedOnCommit || 0;
+      const msg = `${imported} empleados creados, ${updated} actualizados, ${skipped} sin cambios${failed ? `, ${failed} con errores` : ""}.`;
+      showSuccess(msg);
       if (imported > 0 || updated > 0) setTimeout(() => { close(); openModule("gestion_personal"); }, 1200);
     } catch (err) {
       showError(err.message);
@@ -5212,8 +5248,8 @@ function openImportPersonnelModal() {
           body: JSON.stringify({
             fileBase64: base64,
             fileName: file.name,
-            contractId: contractId ? Number(contractId) : null,
-            companyId:  cu.companyId || null,
+            contractId: contractId ? Number(contractId) : (Number(cu.contractId) || null),
+            companyId:  cu.companyId  ? Number(cu.companyId)  : null,
           }),
         });
         const d = res.data || {};
