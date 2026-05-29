@@ -1123,12 +1123,8 @@ async function handlePaySlip(req, res, url) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /payroll/groups/:groupId/export → XLSX multi-hoja por municipio
 // ─────────────────────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-function buildGroupXlsx({ group, items, novelties, supports, covers, totals, coverage }) {
-=======
 function buildGroupXlsx(options) {
   const { group, items, novelties, supports, totals, coverage } = options;
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   function n(v) { return Number(v || 0); }
   function s(v) { return String(v == null ? "" : v); }
 
@@ -1269,9 +1265,6 @@ function buildGroupXlsx(options) {
       ];
     });
   const wsNov = makeSheet(novHdr, novRows2, [8,9],
-<<<<<<< HEAD
-    [10,28,14,26,20,12,12,5,13,13,14,8]);
-=======
     [10,28,14,26,20,12,12,5,13,13,14,12,8]);
 
   const coverHdr = ["Empleado reemplazante", "Documento", "Concepto", "Referencia", "Días", "Valor día", "Valor"];
@@ -1287,7 +1280,6 @@ function buildGroupXlsx(options) {
       n(t.total_value),
     ]);
   const wsCover = makeSheet(coverHdr, coverRows, [5,6], [30,14,24,30,8,14,14]);
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
   // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
   const resHdr  = ["Concepto", "Valor"];
@@ -1341,35 +1333,7 @@ function buildGroupXlsx(options) {
   ]);
   const wsSup = makeSheet(supHdr, supRows, [], [12,12,28,14,22,16,20,12,18,24,36]);
 
-  // ── Hoja 5: Turnos (una fila por payroll_turn_covers.id) ────────────────
-  const turnHdr = [
-    "ID turno", "ID novedad", "Tipo novedad", "Empleado origen", "Documento origen",
-    "Municipio", "Institución", "Sede",
-    "Tipo cobertura", "Empleado/Externo que cubrió", "Documento cobertura",
-    "Días", "Valor día", "Total",
-    "Fecha novedad inicio", "Fecha novedad fin",
-  ];
-  const turnRows = (covers || []).map((c) => [
-    n(c.turn_cover_id),
-    n(c.novelty_id),
-    s(c.novelty_type_name || c.novelty_type),
-    s(c.origin_employee_name),
-    s(c.origin_document),
-    s(c.municipality_name),
-    s(c.institution_name),
-    s(c.site_name),
-    s(c.cover_type),
-    s(c.cover_type === "INTERNA" ? c.internal_cover_name : c.external_worker_name),
-    s(c.cover_type === "INTERNA" ? c.internal_cover_doc  : c.external_worker_doc),
-    n(c.days),
-    n(c.value_per_day),
-    n(c.total_value),
-    c.novelty_start ? s(c.novelty_start).slice(0,10) : "",
-    c.novelty_end   ? s(c.novelty_end).slice(0,10)   : "",
-  ]);
-  const wsTurn = makeSheet(turnHdr, turnRows, [12,13], [10,10,24,28,16,18,24,18,14,28,16,5,14,14,14,14]);
-
-  // ── Hoja 5: Turnos ──────────────────────────────────────────────────────────
+  // ── Hoja 5: Turnos externos e internos ──────────────────────────────────────
   const turns = Array.isArray(options.turns) ? options.turns : [];
   const turnHdr = [
     "Período", "Fecha turno", "Empleado con novedad", "Documento novedad",
@@ -1408,7 +1372,6 @@ function buildGroupXlsx(options) {
   XLSX.utils.book_append_sheet(wb, wsCover, "Reemplazos");
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsSup, "Soportes");
-  XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
@@ -1590,10 +1553,7 @@ module.exports = {
   // Exportación por municipio
   handleGroupExport,
   handleGroupClose,
-<<<<<<< HEAD
   handleGroupReopen,
   handleGroupHistory,
-=======
   handleGroupTurns,
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 };

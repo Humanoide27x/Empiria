@@ -40,15 +40,12 @@ let turnosFilter      = { type: "TODOS", search: "" };
 let periodMonth      = new Date().toISOString().slice(0, 7);
 let municipalitySearch = "";
 let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos"
-<<<<<<< HEAD
 
 // ── Soportes tab state ────────────────────────────────────────────────────────
 let activePrimaryTab = "nomina"; // "nomina" | "soportes"
 let supportsData     = [];
 let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
 let viewerSupportId  = null;
-=======
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -636,26 +633,13 @@ ${recalcBanner}
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
-<<<<<<< HEAD
-      Turnos <span class="nm-pay-count">${(covers || []).length}</span>
-=======
       Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
     </button>
   </div>
   ${activeDetailTab === "nomina"
     ? (items.length
         ? renderItemsTable(items)
         : `<div class="nm-pay-empty">Pulsa "Calcular" para cargar los empleados activos.</div>`)
-<<<<<<< HEAD
-    : activeDetailTab === "turnos"
-      ? ((covers || []).length
-          ? `<div class="nm-pay-table-wrap">${renderTurnsTable(covers)}</div>`
-          : `<div class="nm-pay-empty">Sin turnos registrados en este municipio.</div>`)
-      : (novelties.length
-          ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
-          : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)}
-=======
     : activeDetailTab === "novedades"
     ? (novelties.length
         ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
@@ -663,7 +647,6 @@ ${recalcBanner}
     : (activeGroupTurns === null
         ? `<div class="nm-pay-empty">Cargando turnos…</div>`
         : renderTurnosSection(activeGroupTurns, isClosed))}
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 </div>`;
 }
 
@@ -775,17 +758,10 @@ function renderNoveltiesTable(novelties) {
       const meta = noveltyByCode(nov.novelty_type);
       const isReviewed     = Boolean(nov.reviewed);
       const isItemLocked   = Boolean(nov.item_reviewed);
-<<<<<<< HEAD
-      const isLocked       = groupLocked || isReviewed || isItemLocked;
-      const lockTitle      = groupLocked ? "Nómina cerrada — reabrir para editar" : isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
-      // Impacto económico: usa computed_impact si viene del API, si no: nov.value
-      const impactAmt      = Number(nov.computed_impact || nov.value || 0);
-=======
       const isLocked       = isReviewed || isItemLocked;
       const lockTitle      = isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
       // Impacto del afectado: nunca usar el valor del reemplazo como fallback.
       const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? 0);
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
       const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
       const replacementText = Number(nov.replacement_amount || 0)
         ? `<br><small style="color:#047857">Reemplazo: ${escapeHtml(nov.replacement_employee_name || "interno")} · ${Number(nov.covered_days || 0)}d · +${fmtCOP(nov.replacement_amount)}</small>`
@@ -834,70 +810,6 @@ function renderNoveltiesTable(novelties) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-// TABLA DE TURNOS (una fila por payroll_turn_covers.id)
-// ─────────────────────────────────────────────────────────────────────────────
-function renderTurnsTable(covers) {
-  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
-  return `
-<table class="nm-pay-table">
-  <thead>
-    <tr>
-      <th>Empleado origen</th>
-      <th>Tipo novedad</th>
-      <th>Municipio / Institución</th>
-      <th>Cobertura</th>
-      <th>Quien cubrió</th>
-      <th class="num">Días</th>
-      <th class="num">Valor día</th>
-      <th class="num">Total</th>
-      <th>Acción</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${(covers || []).map((c) => {
-      const coverName = c.cover_type === "INTERNA"
-        ? (c.internal_cover_name || "—")
-        : (c.external_worker_name || "—");
-      const coverDoc  = c.cover_type === "INTERNA"
-        ? (c.internal_cover_doc || "")
-        : (c.external_worker_doc || "");
-      const coverBadge = c.cover_type === "INTERNA"
-        ? `<span class="nm-pay-badge" style="background:#DBEAFE;color:#1E40AF">INTERNA</span>`
-        : `<span class="nm-pay-badge" style="background:#FEF3C7;color:#92400E">EXTERNA</span>`;
-      return `
-      <tr>
-        <td>
-          <b>${escapeHtml(c.origin_employee_name || "—")}</b><br>
-          <small style="color:#64748B">${escapeHtml(c.origin_document || "")}</small>
-        </td>
-        <td>
-          <small>${escapeHtml(c.novelty_type_name || c.novelty_type || "—")}</small><br>
-          <small style="color:#94A3B8">${escapeHtml(String(c.novelty_start || "").slice(0,10))} – ${escapeHtml(String(c.novelty_end || "").slice(0,10))}</small>
-        </td>
-        <td>
-          <small>${escapeHtml(c.municipality_name || "—")}</small><br>
-          <small style="color:#64748B">${escapeHtml(c.institution_name || "—")} · ${escapeHtml(c.site_name || "—")}</small>
-        </td>
-        <td>${coverBadge}</td>
-        <td>
-          <b>${escapeHtml(coverName)}</b><br>
-          <small style="color:#64748B">${escapeHtml(coverDoc)}</small>
-        </td>
-        <td class="num">${Number(c.days || 0)}</td>
-        <td class="num">${fmtCOP(c.value_per_day)}</td>
-        <td class="num"><b>${fmtCOP(c.total_value)}</b></td>
-        <td>
-          ${c.cover_type === "EXTERNA"
-            ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${c.turn_cover_id}" title="Ver cuenta de cobro">Ver cta. cobro</button>
-               <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${c.turn_cover_id}" data-ext-doc="${escapeHtml(c.external_worker_doc || String(c.turn_cover_id))}" title="Descargar cuenta de cobro">Descargar</button>`
-            : "—"}
-        </td>
-      </tr>`;
-    }).join("")}
-  </tbody>
-</table>`;
-=======
 // TABLA DE TURNOS
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTurnosSection(turns, isClosed) {
@@ -947,7 +859,8 @@ function renderTurnosSection(turns, isClosed) {
       ? `<br><small style="color:#64748B">${escapeHtml(t.external_bank || "")} ${escapeHtml(t.external_account_number || "")}</small>`
       : "";
     const chargeBtn  = !isInterna && t.id
-      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${t.id}" title="Descargar cuenta de cobro PDF">Cta. cobro</button>`
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${t.id}" title="Ver cuenta de cobro">Cta. cobro</button>
+         <button class="nm-pay-btn nm-pay-btn--sm" style="margin-top:3px" data-dl-charge="${t.id}" data-ext-doc="${escapeHtml(t.external_document || String(t.id))}" title="Descargar cuenta de cobro">Descargar</button>`
       : "";
     const noveltyDate = t.novelty_start ? String(t.novelty_start).slice(0, 10) : "—";
 
@@ -998,7 +911,6 @@ ${filterBar}
   <tbody>${tableRows}</tbody>
 </table>
 </div>`;
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1113,18 +1025,12 @@ async function createPeriod() {
 async function reloadWorkArea() {
   await loadGroups();
   await loadGroupDetail();
-<<<<<<< HEAD
   if (activePrimaryTab === "soportes") await loadSupports();
-  render();
-}
-async function reloadDetailOnly() { await loadGroupDetail(); render(); }
-=======
   if (activeDetailTab === "turnos" && activeGroupId) await loadGroupTurns();
   render();
 }
 async function reloadDetailOnly() {
   await loadGroupDetail();
-  // Sync sidebar municipality counts from fresh detail so the badge stays accurate
   if (activeGroupId && activeGroupDetail) {
     const { totals } = activeGroupDetail;
     for (const pos of groupsState.positions) {
@@ -1139,7 +1045,6 @@ async function reloadDetailOnly() {
   if (activeDetailTab === "turnos" && activeGroupId) await loadGroupTurns();
   render();
 }
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 
 async function calculateGroup() {
   if (!activeGroupId) return;
@@ -1269,23 +1174,6 @@ function openNoveltyModal(itemId) {
   document.getElementById("novType")?.addEventListener("change", updateImpact);
   updateImpact();
 
-<<<<<<< HEAD
-  let _isSavingNovelty = false;
-  document.getElementById("novSave")?.addEventListener("click", async () => {
-    if (_isSavingNovelty) return;
-    const btn = document.getElementById("novSave");
-    try {
-      _isSavingNovelty = true;
-      if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
-      const days = Number(document.getElementById("novDays").value);
-      if (!days || days < 1) { showError("Los días deben ser mayor a 0"); return; }
-      await apiFetch(`/payroll/items/${itemId}/novelties`, {
-        method: "POST",
-        body: JSON.stringify({
-          novelty_type:    document.getElementById("novType").value,
-          start_date:      document.getElementById("novStart").value || null,
-          end_date:        document.getElementById("novEnd").value   || null,
-=======
   let _savingNovelty = false;
   document.getElementById("novSave")?.addEventListener("click", async () => {
     if (_savingNovelty) return;
@@ -1315,7 +1203,6 @@ function openNoveltyModal(itemId) {
           novelty_type:     code,
           start_date:       document.getElementById("novStart").value || null,
           end_date:         document.getElementById("novEnd").value   || null,
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
           days,
           support_required: document.getElementById("novSupport").value === "true",
           observations:     document.getElementById("novDesc").value,
@@ -1328,11 +1215,7 @@ function openNoveltyModal(itemId) {
     } catch (err) {
       showError(err.message);
     } finally {
-<<<<<<< HEAD
-      _isSavingNovelty = false;
-=======
       _savingNovelty = false;
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
       if (btn) { btn.disabled = false; btn.textContent = "Guardar novedad"; }
     }
   });
@@ -1854,7 +1737,6 @@ function openCoverModal(noveltyId, itemId) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUENTA DE COBRO (HTML/impresión) para turno externo
-<<<<<<< HEAD
 // Usa fetch autenticado en lugar de window.open directo para enviar el token
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchChargeAccountHtml(coverId) {
@@ -1899,33 +1781,6 @@ async function downloadChargeAccount(coverId, extDoc, periodLabel) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
   } catch (err) {
     showError(err.message || "Error descargando cuenta de cobro");
-=======
-// Usa fetch autenticado → blob URL para evitar redirect a login
-// ─────────────────────────────────────────────────────────────────────────────
-async function openChargeAccount(coverId) {
-  try {
-    const token = state.token || localStorage.getItem("empiria_token") || "";
-    const res = await fetch(`/payroll/turn-covers/${coverId}/charge-account`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.message || `Error ${res.status}`);
-    }
-    const html = await res.text();
-    const blob    = new Blob([html], { type: "text/html; charset=utf-8" });
-    const blobUrl = URL.createObjectURL(blob);
-    const win = window.open(blobUrl, "_blank");
-    if (!win) {
-      showError("El navegador bloqueó la ventana emergente. Permite ventanas emergentes e intenta de nuevo.");
-      URL.revokeObjectURL(blobUrl);
-      return;
-    }
-    // Liberar la URL del blob una vez cargada la ventana
-    win.addEventListener("load", () => URL.revokeObjectURL(blobUrl), { once: true });
-  } catch (err) {
-    showError(err.message || "No se pudo cargar la cuenta de cobro");
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   }
 }
 
@@ -1974,11 +1829,7 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       ${Number(earnings.other_recargos_value) ? `<div class="row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
   }
 
-<<<<<<< HEAD
   // Coberturas internas realizadas POR este empleado (suman a su devengado)
-=======
-  // Coberturas internas realizadas POR este empleado (suman a sus devengados)
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
   const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
     `<div class="row"><span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
@@ -2144,11 +1995,7 @@ async function openPayslipModal(itemId) {
         ${Number(earnings.other_recargos_value) ? `<div class="nm-slip-row"><span>Otros recargos prop. (${tpd}/${wd})</span><b>${fmt(earnings.other_recargos_value)}</b></div>` : ""}`;
     }
 
-<<<<<<< HEAD
     // Coberturas internas que realizó este empleado (suman a su devengado)
-=======
-    // Coberturas internas que realizó este empleado (suman a sus devengados)
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
     const performedCoverHtml = (data.performed_covers || []).map((c) => `
       <div class="nm-slip-row">
         <span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
@@ -2976,23 +2823,14 @@ function closeModal() {
 // ENTRYPOINTS EXPORTADOS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function loadPayrollModule() {
-<<<<<<< HEAD
   periods            = [];
   activePeriod       = null;
   groupsState        = { positions: [], groups: [] };
   activePosition     = "";
   activeGroupId      = null;
   activeGroupDetail  = null;
-=======
-  periods           = [];
-  activePeriod      = null;
-  groupsState       = { positions: [], groups: [] };
-  activePosition    = "";
-  activeGroupId     = null;
-  activeGroupDetail = null;
-  activeGroupTurns  = null;
-  turnosFilter      = { type: "TODOS", search: "" };
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
+  activeGroupTurns   = null;
+  turnosFilter       = { type: "TODOS", search: "" };
   municipalitySearch = "";
   activePrimaryTab   = "nomina";
   supportsData       = [];

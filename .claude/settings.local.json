@@ -99,7 +99,8 @@
       "Bash(python3 *)",
       "Bash(pkill -f \"node app.js\")",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(grep -E \"\\\\.\\(js|ts\\)$\")"
+      "Bash(grep -E \"\\\\.\\(js|ts\\)$\")",
+      "Bash(grep -E \"\\\\.\\(sql|js\\)$\")"
     ]
   }
 }

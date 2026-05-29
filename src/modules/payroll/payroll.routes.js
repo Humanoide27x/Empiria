@@ -35,12 +35,9 @@ const {
   handleDeleteNovelty,
   handleGroupExport,
   handleGroupClose,
-<<<<<<< HEAD
   handleGroupReopen,
   handleGroupHistory,
-=======
   handleGroupTurns,
->>>>>>> 6120b432495893f311778ac268bed2d89c4171a4
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
