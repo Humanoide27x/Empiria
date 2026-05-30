@@ -65,7 +65,7 @@ let activePosition   = "";
 let activeGroupId    = null;
 let activeGroupDetail = null;
 let activeGroupTurns  = null;  // null = sin cargar, [] = sin turnos
-let turnosFilter      = { type: "TODOS", search: "" };
+let turnosFilter      = { search: "", hasCuentaCobro: "" };
 let supportsFilter    = { status: "", noveltyType: "", search: "" };
 let supportsViewer    = null;   // { url, name, type: "image"|"doc" }
 let periodMonth      = new Date().toISOString().slice(0, 7);
@@ -78,18 +78,25 @@ let supportsData     = [];
 let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
 let viewerSupportId  = null;
 
+// ── Filtro de novedades (pestaña Novedades del grupo) ────────────────────────
+let noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" };
+
 // ── Filtros de tabla de empleados (nómina) ────────────────────────────────────
 let itemsFilter = {
   institution_id: "",
   site_id:        "",
   modality:       "",
+  cargo:          "",
   has_novelties:  "",
   reviewed:       "",
   support_status: "",
   sort_by:        "",
   sort_dir:       "asc",
 };
-let groupFilterCatalog = { institutions: [], sites: [], modalities: [] };
+let groupFilterCatalog = { institutions: [], sites: [], modalities: [], cargos: [] };
+
+// ── Configuración salarial individual (modal) ─────────────────────────────────
+let salaryCfgState = { employeeId: null, employeeName: "", docNumber: "", history: [], loading: false };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -112,6 +119,20 @@ function fmtCOP(value) {
   return Number(value || 0).toLocaleString("es-CO", {
     style: "currency", currency: "COP", maximumFractionDigits: 0,
   });
+}
+function fmtDateDMY(d) {
+  if (!d) return "—";
+  const s = String(d).slice(0, 10);
+  const [y, m, day] = s.split("-");
+  return `${day}/${m}/${y}`;
+}
+function fmtDateRange(start, end) {
+  const s = start ? String(start).slice(0, 10) : "";
+  const e = end   ? String(end).slice(0, 10)   : "";
+  if (!s && !e) return "—";
+  if (!s) return fmtDateDMY(end);
+  if (!e || s === e) return fmtDateDMY(start);
+  return `${fmtDateDMY(start)} al ${fmtDateDMY(end)}`;
 }
 function normalized(value) {
   return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
@@ -189,6 +210,13 @@ function currentMunicipalityData() {
   const position = currentPositionData();
   return position?.municipalities?.find((m) => Number(m.id) === Number(activeGroupId)) || null;
 }
+function isConsolidatedView() {
+  return activeGroupDetail?.group?.municipality_id === null || activeGroupDetail?.group?.group_type === "CONSOLIDATED";
+}
+function isCurrentUserAdmin() {
+  const role = String(state.user?.role || "").toLowerCase();
+  return ["administrador", "administrator", "talento_humano", "human_resources"].some((r) => role.includes(r));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CSS DEL MÓDULO
@@ -236,16 +264,23 @@ function shell() {
 .nm-pay-municipality-panel{width:220px;flex:0 0 220px;min-height:0;overflow:hidden;border-right:1px solid #E2E8F0;background:#F8FAFC;display:flex;flex-direction:column}
 .nm-pay-mun-head{padding:10px;border-bottom:1px solid #E2E8F0}
 .nm-pay-mun-title{font-size:12px;font-weight:800;color:#334155;text-transform:uppercase;margin-bottom:8px}
-.nm-pay-mun-head{padding:8px 10px;border-bottom:1px solid #E2E8F0;flex:0 0 auto}
-.nm-pay-mun-title{font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;margin-bottom:6px}
+.nm-pay-mun-head{padding:6px 8px;border-bottom:1px solid #E2E8F0;flex:0 0 auto}
+.nm-pay-mun-title{font-size:10px;font-weight:800;color:#334155;text-transform:uppercase;margin-bottom:4px}
 .nm-pay-mun-search{width:100%;border:1px solid #CBD5E1;border-radius:5px;padding:4px 8px;font-size:12px;background:#fff}
-.nm-pay-mun-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px}
-.nm-pay-mun{width:100%;border:0;background:transparent;border-radius:5px;padding:6px 8px;cursor:pointer;text-align:left;display:grid;grid-template-columns:1fr auto;gap:2px 6px;align-items:center;color:#0F172A}
+.nm-pay-mun-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:2px}
+.nm-pay-mun{flex:1;min-width:0;border:0;background:transparent;border-radius:4px;padding:3px 5px;cursor:pointer;text-align:left;display:flex;align-items:center;gap:3px;color:#0F172A;overflow:hidden}
 .nm-pay-mun:hover{background:#EEF2F7}
-.nm-pay-mun.active{background:#ECFDF5;color:#0F766E;box-shadow:inset 3px 0 0 #0F766E}
-.nm-pay-mun-name{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nm-pay-mun-meta{font-size:11px;color:#64748B}
-.nm-pay-mun-alert{font-size:11px;background:#FEF3C7;color:#92400E;border-radius:999px;padding:2px 6px;justify-self:end}
+.nm-pay-mun.active{background:#ECFDF5;color:#0F766E;box-shadow:inset 2px 0 0 #0F766E}
+.nm-pay-mc-name{font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:30px}
+.nm-pay-mc-chips{display:flex;gap:2px;align-items:center;flex-shrink:0}
+.nm-pay-mc-chip{font-size:9px;font-weight:700;padding:1px 3px;border-radius:2px;white-space:nowrap;line-height:1.5;letter-spacing:.02em}
+.nm-pay-mc-chip--s{background:#E2E8F0;color:#475569}
+.nm-pay-mc-chip--rev{background:#DBEAFE;color:#1E40AF}
+.nm-pay-mc-chip--ok{background:#DCFCE7;color:#166534}
+.nm-pay-mc-chip--partial{background:#FEF9C3;color:#854D0E}
+.nm-pay-mc-chip--doc{background:#FEE2E2;color:#991B1B}
+.nm-pay-mc-chip--closed{background:#1E293B;color:#F8FAFC}
+.nm-pay-mc-chip--reopened{background:#FEF3C7;color:#92400E}
 
 /* ── Panel de contenido: flex column, toolbar fijo, body scrollable ── */
 .nm-pay-content{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:#fff}
@@ -341,6 +376,17 @@ function shell() {
 .nm-prompt-field label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px}
 .nm-prompt-input{width:100%;border:1px solid #CBD5E1;border-radius:5px;padding:7px 9px;font-size:13px;color:#0F172A}
 
+/* ── Registro masivo de novedades ────────────────────────────────── */
+.nm-bulk-block{border:1px solid #E2E8F0;border-radius:6px;padding:10px 12px;margin-bottom:8px;background:#F8FAFC}
+.nm-bulk-block-label{font-size:11px;font-weight:700;color:#0F766E;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.nm-bulk-singles{display:grid;gap:6px;max-height:320px;overflow-y:auto;padding:2px}
+.nm-bulk-single-row{display:flex;align-items:center;gap:10px}
+.nm-bulk-single-label{font-size:12px;font-weight:600;color:#475569;min-width:58px;flex-shrink:0}
+.nm-bulk-summary{background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:12px 14px}
+.nm-bulk-summary-title{font-size:12px;font-weight:700;color:#166534;margin-bottom:6px}
+.nm-bulk-summary-list{margin:0;padding-left:18px;font-size:13px;color:#14532D;line-height:1.8;max-height:260px;overflow-y:auto}
+.nm-bulk-summary-total{margin-top:8px;font-size:12px;color:#166534;font-weight:600;border-top:1px solid #BBF7D0;padding-top:6px}
+
 /* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width:900px){
   .nm-pay-card-main{height:auto}
@@ -399,8 +445,11 @@ function shell() {
 .nm-sup-table thead th{font-size:11px;padding:5px 7px;white-space:nowrap}
 
 /* ── Municipio: wrap con botón de revisión ───────────────────────── */
-.nm-pay-mun-wrap{display:flex;flex-direction:column;gap:2px;padding:2px 4px}
-.nm-pay-mun-actions{display:flex;gap:4px;padding:0 4px 2px;justify-content:flex-end}
+.nm-pay-mun-wrap{display:flex;align-items:center;gap:1px;padding:0 2px}
+.nm-pay-mc-rev-btn{flex-shrink:0;border:1px solid transparent;cursor:pointer;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;line-height:1.5;white-space:nowrap;background:transparent;color:#CBD5E1}
+.nm-pay-mc-rev-btn:hover{background:#DBEAFE;color:#1D4ED8;border-color:#BFDBFE}
+.nm-pay-mc-rev-btn--done{color:#10B981}
+.nm-pay-mc-rev-btn--done:hover{background:#FEF3C7;color:#92400E;border-color:#FDE68A}
 
 /* ── Barra de filtros de items de nómina ────────────────────────── */
 .nm-items-fbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:6px 10px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex:0 0 auto}
@@ -419,6 +468,20 @@ function shell() {
 .nm-turn-badge--ext{background:#FEF9C3;color:#92400E}
 .nm-turn-badge--int{background:#DBEAFE;color:#1E40AF}
 .nm-turn-group-ft{padding:8px 12px;background:#F8FAFC;border-top:1px solid #E2E8F0;display:flex;flex-direction:column;gap:6px}
+
+/* ── Filtro de novedades ─────────────────────────────────────────── */
+.nm-nov-fbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:6px 10px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;flex:0 0 auto}
+
+/* ── Días SS ─────────────────────────────────────────────────────── */
+.nm-ss-cell{display:flex;flex-direction:column;gap:2px}
+.nm-ss-val{font-size:13px;font-weight:800;color:#0F172A}
+.nm-ss-reason{font-size:10px;font-weight:700;border-radius:3px;padding:1px 5px;white-space:nowrap;display:inline-block;margin-top:1px}
+.nm-ss-reason--cupos{background:#DCFCE7;color:#166534}
+.nm-ss-reason--renuncia{background:#FEF3C7;color:#92400E}
+.nm-ss-reason--terminacion{background:#FEE2E2;color:#991B1B}
+.nm-ss-repl{font-size:10px;color:#0F766E;font-weight:600}
+.nm-ss-norepl{font-size:10px;color:#B91C1C;font-weight:600}
+.nm-ss-alert{display:flex;align-items:center;gap:4px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:4px;padding:3px 6px;font-size:11px;color:#92400E;margin-top:3px}
 
 /* ── Soportes inline (pestaña Soportes dentro del grupo) ─────────── */
 .nm-sup-inline{display:flex;flex-direction:column;gap:0;overflow:auto;max-height:calc(100vh - 380px)}
@@ -473,8 +536,8 @@ async function loadGroups() {
 }
 
 function resetItemsFilter() {
-  itemsFilter = { institution_id: "", site_id: "", modality: "", has_novelties: "", reviewed: "", support_status: "", sort_by: "", sort_dir: "asc" };
-  groupFilterCatalog = { institutions: [], sites: [], modalities: [] };
+  itemsFilter = { institution_id: "", site_id: "", modality: "", cargo: "", has_novelties: "", reviewed: "", support_status: "", sort_by: "", sort_dir: "asc" };
+  groupFilterCatalog = { institutions: [], sites: [], modalities: [], cargos: [] };
 }
 
 function buildFilterParams() {
@@ -482,6 +545,7 @@ function buildFilterParams() {
   if (itemsFilter.institution_id) p.set("institution_id", itemsFilter.institution_id);
   if (itemsFilter.site_id)        p.set("site_id",        itemsFilter.site_id);
   if (itemsFilter.modality)       p.set("modality",       itemsFilter.modality);
+  if (itemsFilter.cargo)          p.set("cargo",          itemsFilter.cargo);
   if (itemsFilter.has_novelties !== "") p.set("has_novelties", itemsFilter.has_novelties);
   if (itemsFilter.reviewed !== "")      p.set("reviewed",      itemsFilter.reviewed);
   if (itemsFilter.support_status)       p.set("support_status",itemsFilter.support_status);
@@ -492,7 +556,7 @@ function buildFilterParams() {
 
 function isFilterActive() {
   const f = itemsFilter;
-  return !!(f.institution_id || f.site_id || f.modality || f.has_novelties || f.reviewed || f.support_status || f.sort_by || (f.sort_dir && f.sort_dir !== "asc"));
+  return !!(f.institution_id || f.site_id || f.modality || f.cargo || f.has_novelties || f.reviewed || f.support_status || f.sort_by || (f.sort_dir && f.sort_dir !== "asc"));
 }
 
 async function loadGroupDetail() {
@@ -502,22 +566,25 @@ async function loadGroupDetail() {
   activeGroupDetail = response.data || null;
   activeGroupTurns  = null;
 
-  // Rebuild catalog only when no filters are active (stores all institutions/sites/modalities)
+  // Rebuild catalog only when no filters are active (stores all institutions/sites/modalities/cargos)
   if (!isFilterActive() && activeGroupDetail?.items?.length) {
     const institutions = new Map();
     const sites = new Map();
     const modalities = new Set();
+    const cargos = new Set();
     for (const item of activeGroupDetail.items) {
       if (item.institution_id && item.institution_name)
         institutions.set(Number(item.institution_id), item.institution_name);
       if (item.site_id && item.site_name)
         sites.set(Number(item.site_id), item.site_name);
       if (item.modality) modalities.add(item.modality);
+      if (item.operational_position) cargos.add(item.operational_position);
     }
     groupFilterCatalog = {
       institutions: Array.from(institutions.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es")),
       sites:        Array.from(sites.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "es")),
       modalities:   Array.from(modalities).sort(),
+      cargos:       Array.from(cargos).sort((a, b) => a.localeCompare(b, "es")),
     };
   }
 }
@@ -616,27 +683,14 @@ function render() {
   ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" id="nmPayCreate">+ Periodo</button>` : ""}
 </div>
 
-<!-- ── Pestañas primarias: Nómina | Soportes ──────────────────────── -->
-${renderPrimaryTabs()}
-
-${activePrimaryTab === "soportes" ? renderSupportsShell() : renderNominaPanel()}
+${renderNominaPanel()}
 </div>
 `;
   wireStaticEvents();
 }
 
 function renderPrimaryTabs() {
-  if (!activePeriod) return "";
-  const pendingCount = activePrimaryTab === "soportes"
-    ? supportsData.filter((s) => (s.status || s.support_status) === "pendiente").length
-    : groupsState.positions.reduce((s, p) => s + Number(p.pending_supports || 0), 0);
-  return `
-<div class="nm-primary-tabs">
-  <button class="nm-primary-tab ${activePrimaryTab === "nomina" ? "active" : ""}" data-primary-tab="nomina">Nómina</button>
-  <button class="nm-primary-tab ${activePrimaryTab === "soportes" ? "active" : ""}" data-primary-tab="soportes">
-    Soportes${pendingCount > 0 ? ` <span class="nm-pay-count">${pendingCount}</span>` : ""}
-  </button>
-</div>`;
+  return ""; // Primary Soportes tab removed — soportes are managed within the inline group detail
 }
 
 function renderNominaPanel() {
@@ -671,6 +725,24 @@ function renderOperationalBody() {
 </div>`;
 }
 
+function munStatusChip(status) {
+  const s = String(status || "");
+  const map = {
+    pendiente:   ["PEND",  "s"],
+    DRAFT:       ["BORRA", "s"],
+    en_revision: ["REV",   "rev"],
+    IN_REVIEW:   ["REV",   "rev"],
+    revisada:    ["OK",    "ok"],
+    cerrada:     ["CER",   "closed"],
+    CLOSED:      ["CER",   "closed"],
+    REOPENED:    ["REAB",  "reopened"],
+    SENT:        ["ENV",   "rev"],
+    PAID:        ["PAG",   "ok"],
+  };
+  const [label, cls] = map[s] || [s.slice(0, 4).toUpperCase() || "?", "s"];
+  return `<span class="nm-pay-mc-chip nm-pay-mc-chip--${cls}">${label}</span>`;
+}
+
 function renderMunicipalityPanel(position) {
   const municipalities = Array.isArray(position?.municipalities) ? position.municipalities : [];
   const filtered = municipalities.filter((mun) =>
@@ -684,28 +756,38 @@ function renderMunicipalityPanel(position) {
   </div>
   <div class="nm-pay-mun-list">
     ${filtered.length ? filtered.map((mun) => {
-      const rev = Number(mun.items_reviewed || 0);
-      const tot = Number(mun.employees || 0);
+      const rev      = Number(mun.items_reviewed || 0);
+      const tot      = Number(mun.employees || 0);
+      const docs     = Number(mun.pending_supports || 0);
       const isReviewed = Boolean(mun.municipality_reviewed);
+      const isCons     = Boolean(mun.is_consolidated);
+      const isActive   = Number(mun.id) === Number(activeGroupId);
+
+      // Chip de progreso de revisión
+      const revChip = isReviewed
+        ? `<span class="nm-pay-mc-chip nm-pay-mc-chip--ok" title="Revisado por ${escapeHtml(mun.municipality_reviewed_by || '')}">&#10003;${tot}/${tot}</span>`
+        : (tot > 0 && rev >= tot)
+          ? `<span class="nm-pay-mc-chip nm-pay-mc-chip--ok">&#10003;${tot}/${tot}</span>`
+          : (tot > 0 && rev > 0)
+            ? `<span class="nm-pay-mc-chip nm-pay-mc-chip--partial">${rev}/${tot}</span>`
+            : "";
+
+      // Botón de revisión compacto (solo para no-consolidados)
+      const revBtn = isCons ? "" : isReviewed
+        ? `<button class="nm-pay-mc-rev-btn nm-pay-mc-rev-btn--done" data-mun-unreview="${mun.municipality_id || ""}" data-mun-name="${escapeHtml(mun.municipality_name)}" title="Quitar revisión">&#8635;</button>`
+        : `<button class="nm-pay-mc-rev-btn" data-mun-review="${mun.municipality_id || ""}" data-mun-name="${escapeHtml(mun.municipality_name)}" title="Marcar como revisado">&#10003;</button>`;
+
       return `
       <div class="nm-pay-mun-wrap">
-        <button class="nm-pay-mun ${Number(mun.id) === Number(activeGroupId) ? "active" : ""}" data-group-id="${mun.id}">
-          <span class="nm-pay-mun-name">${escapeHtml(mun.municipality_name)}</span>
-          <span class="nm-pay-count">${mun.employees}</span>
-          <span class="nm-pay-mun-meta">${statusBadge(mun.status)}</span>
-          ${Number(mun.pending_supports || 0) ? `<span class="nm-pay-mun-alert">${Number(mun.pending_supports)} doc</span>` : ""}
-          ${isReviewed ? `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px" title="Revisado por ${escapeHtml(mun.municipality_reviewed_by || '')}">&#10003; Revisado</span>` : ""}
-          ${(!isReviewed && tot > 0) ? (rev >= tot
-            ? `<span class="nm-pay-ok" style="font-size:10px;padding:1px 5px">&#10003; ${tot}/${tot} rev.</span>`
-            : rev > 0
-              ? `<span style="font-size:10px;padding:1px 5px;background:#FEF3C7;color:#92400E;border-radius:3px;display:inline-block">${rev}/${tot} rev.</span>`
-              : "") : ""}
+        <button class="nm-pay-mun ${isActive ? "active" : ""}" data-group-id="${mun.id}">
+          <span class="nm-pay-mc-name">${isCons ? "Consolidado" : escapeHtml(mun.municipality_name)}</span>
+          <span class="nm-pay-mc-chips">
+            ${munStatusChip(mun.status)}
+            ${docs > 0 ? `<span class="nm-pay-mc-chip nm-pay-mc-chip--doc">DOC:${docs}</span>` : ""}
+            ${revChip}
+          </span>
         </button>
-        <div class="nm-pay-mun-actions">
-          ${isReviewed
-            ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" data-mun-unreview="${escapeHtml(mun.municipality_name)}" title="Quitar estado revisado — conserva todos los datos">Reabrir</button>`
-            : `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" data-mun-review="${escapeHtml(mun.municipality_name)}" title="Marcar municipio como revisado">Revisar</button>`}
-        </div>
+        ${revBtn}
       </div>`;
     }).join("") : `<div class="nm-pay-empty" style="padding:16px">Sin municipios.</div>`}
   </div>
@@ -735,7 +817,8 @@ function renderGroupDetail() {
   <span class="nm-banner__icon">🔒</span>
   <div class="nm-banner__body">
     <div class="nm-banner__title">Nómina cerrada — v${version}</div>
-    <div class="nm-banner__detail">Cerrada el ${group.closed_at ? new Date(group.closed_at).toLocaleString("es-CO") : "—"}. Solo lectura.</div>
+    <div class="nm-banner__detail">Cerrada el ${group.closed_at ? new Date(group.closed_at).toLocaleString("es-CO") : "—"}.
+      Liquidación protegida · Soportes y turnos externos disponibles.</div>
   </div>
   ${canReopen ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayReopen" style="align-self:center;flex-shrink:0">Reabrir nómina</button>` : ""}
 </div>`;
@@ -787,7 +870,7 @@ ${recalcBanner}
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
-      Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}
+      Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.filter((t) => t.cover_type === "EXTERNA").length}</span>` : ""}
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">
       Soportes${totals.pending_supports > 0 ? ` <span class="nm-pay-count" style="background:#FEF3C7;color:#92400E">${totals.pending_supports} pend.</span>` : (supports && supports.length ? ` <span class="nm-pay-count">${supports.length}</span>` : "")}
@@ -798,9 +881,7 @@ ${recalcBanner}
         ? renderItemsTable(items)
         : `<div class="nm-pay-empty" style="margin:10px">${isFilterActive() ? "Ningún empleado coincide con los filtros aplicados." : "Pulsa \"Calcular\" para cargar los empleados activos."}</div>`}`
     : activeDetailTab === "novedades"
-    ? (novelties.length
-        ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(novelties)}</div>`
-        : `<div class="nm-pay-empty">Sin novedades registradas en este municipio.</div>`)
+    ? renderNoveltiesWithFilter(novelties)
     : activeDetailTab === "soportes"
     ? renderSupportsSection(supports || [], isClosed, covers)
     : (activeGroupTurns === null
@@ -833,6 +914,11 @@ function renderNominaItemsFilterBar(itemCount) {
   <select class="${selClass(f.modality)}" id="fltModality" style="max-width:100px">
     <option value="">Modalidad</option>
     ${groupFilterCatalog.modalities.map(m => `<option value="${escapeHtml(m)}" ${f.modality === m ? "selected" : ""}>${escapeHtml(m)}</option>`).join("")}
+  </select>` : ""}
+  ${groupFilterCatalog.cargos.length ? `
+  <select class="${selClass(f.cargo)}" id="fltCargo" style="max-width:160px">
+    <option value="">Cargo</option>
+    ${groupFilterCatalog.cargos.map(c => `<option value="${escapeHtml(c)}" ${f.cargo === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
   </select>` : ""}
   <select class="${selClass(f.has_novelties)}" id="fltNovedades" style="max-width:140px">
     <option value="">Novedades: todas</option>
@@ -887,12 +973,20 @@ function salaryCategoryBadge(code) {
 }
 
 function renderItemsTable(items) {
-  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+  const groupLocked    = !isGroupEditable(activeGroupDetail?.group);
+  const consolidated   = isConsolidatedView();
+  const canCfgSalary   = consolidated && isCurrentUserAdmin();
   const extCoverItemIds = new Set(
     ((activeGroupDetail?.covers) || [])
       .filter((c) => c.cover_type === "EXTERNA")
       .map((c) => c.payroll_item_id)
   );
+  const MOTIVO_LABEL = {
+    disminucion_cupos:    { label: "Disminución de cupos", cls: "nm-ss-reason--cupos" },
+    renuncia:             { label: "Renuncia",             cls: "nm-ss-reason--renuncia" },
+    terminacion_contrato: { label: "Terminación contrato", cls: "nm-ss-reason--terminacion" },
+  };
+
   return `
 <div class="nm-pay-table-wrap">
 <table class="nm-pay-table">
@@ -900,6 +994,7 @@ function renderItemsTable(items) {
     <tr>
       <th>Empleado</th><th>Sede · Modalidad · Categoría</th>
       <th class="num">Devengado</th><th class="num">Deducciones</th><th class="num">Neto</th>
+      <th class="num">Días lab.</th><th class="num">Días SS</th>
       <th>Nov.</th><th>Acciones</th><th>REVISADA</th>
     </tr>
   </thead>
@@ -908,11 +1003,33 @@ function renderItemsTable(items) {
       const isReviewed = Boolean(item.reviewed);
       const locked = groupLocked || isReviewed;
       const hasExtCover = extCoverItemIds.has(item.id);
+      const ssDays = item.ss_days != null ? item.ss_days : 30;
+      const motivoMeta = item.retirement_reason ? MOTIVO_LABEL[item.retirement_reason] : null;
+      const ssHtml = (() => {
+        if (!item.retirement_reason && item.ss_days == null) return `<span class="nm-ss-val">30</span>`;
+        const parts = [`<span class="nm-ss-val">${ssDays}</span>`];
+        if (motivoMeta) parts.push(`<span class="nm-ss-reason ${motivoMeta.cls}">${motivoMeta.label}</span>`);
+        if (item.requires_replacement === true) {
+          if (item.replacement_found === true && item.replacement_employee_name) {
+            parts.push(`<span class="nm-ss-repl">↪ ${escapeHtml(item.replacement_employee_name)}</span>`);
+          } else if (item.replacement_found === false) {
+            parts.push(`<span class="nm-ss-norepl">Sin reemplazo</span>`);
+          }
+        } else if (item.requires_replacement === false) {
+          parts.push(`<span style="font-size:10px;color:#64748B">Sin reemplazo</span>`);
+        }
+        return parts.join("");
+      })();
+      const ssAlert = (item.requires_replacement === true && item.replacement_found === false)
+        ? `<div class="nm-ss-alert" title="Retiro requiere reemplazo, pero no se encontró ingreso asociado para la misma sede.">⚠ Sin reemplazo</div>`
+        : "";
       return `
       <tr class="${isReviewed ? "item-reviewed-row" : ""}">
         <td>
           <b>${escapeHtml(item.employee_name)}</b><br>
           <small style="color:#64748B">${escapeHtml(item.document_number || "")}</small>
+          ${consolidated ? `<br><small style="color:#7C3AED;font-weight:600">${escapeHtml(item.municipality_name || "")}</small>` : ""}
+          ${ssAlert}
         </td>
         <td>
           <small>${escapeHtml(item.institution_name || "-")}</small><br>
@@ -925,6 +1042,8 @@ function renderItemsTable(items) {
         </td>
         <td class="num">${fmtCOP(item.total_deducciones)}</td>
         <td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td>
+        <td class="num" style="white-space:nowrap">${item.display_worked_days ?? item.worked_days ?? 30}</td>
+        <td class="num"><div class="nm-ss-cell">${ssHtml}</div></td>
         <td>${(() => {
           const total    = Number(item.novelty_count  || 0);
           const reviewed = Number(item.reviewed_count || 0);
@@ -937,13 +1056,16 @@ function renderItemsTable(items) {
         <td>
           ${groupLocked
             ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+               ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}
                <span style="display:block;margin-top:3px;font-size:10px;color:#94A3B8">Bloqueado por cierre</span>`
             : locked
               ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                 ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}
                  <span style="display:block;margin-top:3px;font-size:10px;color:#64748B">Bloqueado</span>`
               : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button>
                  <button class="nm-pay-btn nm-pay-btn--sm" data-cambio-operativo="${item.id}" title="Registrar cambio temporal/definitivo de modalidad, sede o jornada">Cambio op.</button>
-                 <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>`}
+                 <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                 ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}`}
         </td>
         <td>
           <label class="nm-item-review-label" title="${isReviewed ? `Revisado · Para editar quite la marca` : `Marcar como revisado y bloquear`}">
@@ -961,8 +1083,67 @@ function renderItemsTable(items) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TABLA DE NOVEDADES
+// FILTRO + TABLA DE NOVEDADES
 // ─────────────────────────────────────────────────────────────────────────────
+function applyNoveltiesFilter(novelties) {
+  let rows = novelties;
+  if (noveltiesFilter.type)
+    rows = rows.filter((n) => n.novelty_type === noveltiesFilter.type);
+  if (noveltiesFilter.reviewed === "true")
+    rows = rows.filter((n) => Boolean(n.reviewed));
+  else if (noveltiesFilter.reviewed === "false")
+    rows = rows.filter((n) => !n.reviewed);
+  if (noveltiesFilter.withSupport === "true")
+    rows = rows.filter((n) => n.support_status && n.support_status !== "aprobado");
+  else if (noveltiesFilter.withSupport === "false")
+    rows = rows.filter((n) => !n.support_status || n.support_status === "aprobado");
+  if (noveltiesFilter.search) {
+    const q = normalized(noveltiesFilter.search);
+    rows = rows.filter((n) =>
+      normalized(n.employee_name || "").includes(q) ||
+      normalized(n.document_number || "").includes(q)
+    );
+  }
+  return rows;
+}
+
+function renderNoveltiesWithFilter(allNovelties) {
+  const filtered = applyNoveltiesFilter(allNovelties);
+  const hasFilter = noveltiesFilter.type || noveltiesFilter.reviewed || noveltiesFilter.withSupport || noveltiesFilter.search;
+  const selClass = (v) => v ? "nm-pay-select nm-pay-input--sm nm-fbar-active" : "nm-pay-select nm-pay-input--sm";
+
+  const filterBar = `
+<div class="nm-nov-fbar">
+  <label style="font-size:11px;font-weight:700;color:#475569">Filtrar:</label>
+  <select class="${selClass(noveltiesFilter.type)}" id="novFltType" style="max-width:180px">
+    <option value="">Tipo: todos</option>
+    ${NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA").map((t) =>
+      `<option value="${t.code}" ${noveltiesFilter.type === t.code ? "selected" : ""}>${escapeHtml(t.name)}</option>`
+    ).join("")}
+  </select>
+  <select class="${selClass(noveltiesFilter.reviewed)}" id="novFltReviewed" style="max-width:120px">
+    <option value="">Revisión: todas</option>
+    <option value="true"  ${noveltiesFilter.reviewed === "true"  ? "selected" : ""}>Revisadas</option>
+    <option value="false" ${noveltiesFilter.reviewed === "false" ? "selected" : ""}>Pendientes</option>
+  </select>
+  <select class="${selClass(noveltiesFilter.withSupport)}" id="novFltSupport" style="max-width:140px">
+    <option value="">Soporte: todos</option>
+    <option value="true"  ${noveltiesFilter.withSupport === "true"  ? "selected" : ""}>Con soporte pendiente</option>
+    <option value="false" ${noveltiesFilter.withSupport === "false" ? "selected" : ""}>Sin pendiente</option>
+  </select>
+  <input class="nm-pay-input nm-pay-input--sm" id="novFltSearch" placeholder="Buscar empleado…"
+         value="${escapeHtml(noveltiesFilter.search)}" style="min-width:150px">
+  ${hasFilter ? `<button class="nm-pay-btn nm-pay-btn--sm" id="novFltClear" style="color:#B91C1C;border-color:#FECACA">✕ Limpiar</button>` : ""}
+  <span style="font-size:11px;color:#94A3B8;margin-left:4px">${filtered.length}/${allNovelties.length}</span>
+</div>`;
+
+  const tableHtml = filtered.length
+    ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(filtered)}</div>`
+    : `<div class="nm-pay-empty" style="margin:10px">${hasFilter ? "Ninguna novedad coincide con los filtros." : "Sin novedades registradas en este municipio."}</div>`;
+
+  return filterBar + tableHtml;
+}
+
 function renderNoveltiesTable(novelties) {
   const groupLocked = !isGroupEditable(activeGroupDetail?.group);
   return `
@@ -981,6 +1162,8 @@ function renderNoveltiesTable(novelties) {
       const isItemLocked   = Boolean(nov.item_reviewed);
       const isLocked       = groupLocked || isReviewed || isItemLocked;
       const lockTitle      = groupLocked ? "Nómina cerrada — reabrir para editar" : isItemLocked ? "Registro de nómina bloqueado por revisión" : "Novedad revisada — quite la revisión para editar";
+      // El botón "Cubrió" tiene lock propio: permite registrar coberturas externas aunque la nómina esté cerrada
+      const isCoverLocked  = isReviewed || isItemLocked;
       const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? nov.value ?? 0);
       const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
       const replacementText = Number(nov.replacement_amount || 0)
@@ -997,11 +1180,29 @@ function renderNoveltiesTable(novelties) {
           <small style="color:#64748B">${escapeHtml(nov.description || nov.observations || "")}</small>${replacementText}
         </td>
         <td>${noveltyImpactNoticeHtml(meta || nov)}</td>
-        <td>
-          <small>${escapeHtml(String(nov.start_date || "—").slice(0, 10))}</small><br>
-          <small>${escapeHtml(String(nov.end_date || "—").slice(0, 10))}</small>
+        <td style="white-space:nowrap">
+          ${nov.is_continuation
+            ? `<span style="font-size:10px;background:#EEF2FF;color:#4338CA;border-radius:4px;padding:1px 5px;font-weight:700;display:inline-block;margin-bottom:2px">↩ Continuación</span><br>`
+            : nov.original_end_date
+              ? `<span style="font-size:10px;background:#FEF3C7;color:#92400E;border-radius:4px;padding:1px 5px;font-weight:700;display:inline-block;margin-bottom:2px">↔ Multi-período</span><br>`
+              : ""}
+          <small>${
+            nov.original_end_date
+              ? fmtDateRange(nov.original_start_date || nov.start_date, nov.original_end_date)
+              : fmtDateRange(nov.start_date, nov.end_date) || fmtDateDMY(nov.novelty_date)
+          }</small>
+          ${nov.original_end_date && !nov.is_continuation
+            ? `<br><small style="color:#7C3AED;font-size:10px;font-weight:600">
+                &#x1F4C5; Este período: ${nov.period_days ?? nov.days} d
+                ${nov.original_days && Number(nov.original_days) !== Number(nov.period_days ?? nov.days)
+                  ? `<span style="color:#94A3B8;font-weight:400">/ ${nov.original_days} totales</span>`
+                  : ""}
+               </small>`
+            : nov.is_continuation && nov.original_days
+              ? `<br><small style="color:#0891B2;font-size:10px">&#x21BA; Continuación · ${nov.period_days ?? nov.days} d de este período</small>`
+              : ""}
         </td>
-        <td class="num">${Number(nov.days || 0)}</td>
+        <td class="num">${Number(nov.period_days ?? nov.days ?? 0)}</td>
         <td class="num">
           ${impactAmt ? `<b style="color:#991B1B">-${fmtCOP(impactAmt)}</b>${impactLabel ? `<br><small style="color:#94A3B8">${impactLabel}</small>` : ""}` : "—"}
         </td>
@@ -1016,8 +1217,8 @@ function renderNoveltiesTable(novelties) {
         </td>
         <td>
           <button class="nm-pay-btn nm-pay-btn--sm" data-edit-novelty="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""}>Editar</button>
-          <button class="nm-pay-btn nm-pay-btn--sm" data-cover-novelty="${nov.id}" data-cover-item="${nov.payroll_item_id}" ${isLocked ? "disabled" : ""}>Cubrió</button>
-          ${nov.turn_cover_id ? `<button class="nm-pay-btn nm-pay-btn--sm" data-remove-cover="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""}>Quitar cubrió</button>` : ""}
+          <button class="nm-pay-btn nm-pay-btn--sm" data-cover-novelty="${nov.id}" data-cover-item="${nov.payroll_item_id}" ${isCoverLocked ? "disabled" : ""} title="${groupLocked ? "Nómina cerrada — solo coberturas externas" : ""}">Cubrió</button>
+          ${nov.turn_cover_id ? `<button class="nm-pay-btn nm-pay-btn--sm" data-remove-cover="${nov.id}" ${isCoverLocked ? `disabled title="${groupLocked ? "Nómina cerrada" : lockTitle}"` : ""}>Quitar cubrió</button>` : ""}
           <button class="nm-pay-btn nm-pay-btn--sm" data-delete-novelty="${nov.id}" ${isLocked ? `disabled title="${lockTitle}"` : ""} style="color:#B91C1C;border-color:#FECACA">Eliminar</button>
           ${nov.cover_type === "EXTERNA" && nov.turn_cover_id
             ? `<button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${nov.turn_cover_id}">Cta. cobro</button>`
@@ -1068,7 +1269,7 @@ function renderTurnsTable(covers) {
         </td>
         <td>
           <small>${escapeHtml(c.novelty_type_name || c.novelty_type || "—")}</small><br>
-          <small style="color:#94A3B8">${escapeHtml(String(c.novelty_start || "").slice(0,10))} – ${escapeHtml(String(c.novelty_end || "").slice(0,10))}</small>
+          <small style="color:#94A3B8">${fmtDateRange(c.novelty_start, c.novelty_end)}</small>
         </td>
         <td>
           <small>${escapeHtml(c.municipality_name || "—")}</small><br>
@@ -1093,86 +1294,72 @@ function renderTurnsTable(covers) {
 </table>`;
 }
 
-// SECCIÓN TURNOS — agrupada por persona que cubrió
+// SECCIÓN TURNOS — solo personal externo, agrupado por persona que cubrió
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTurnosSection(turns, isClosed) {
-  const { type, search } = turnosFilter;
-  let rows = turns;
+  const { search, hasCuentaCobro } = turnosFilter;
 
-  if (type !== "TODOS") rows = rows.filter((t) => t.cover_type === type);
+  // Solo coberturas externas
+  const totalExt = (turns || []).filter((t) => t.cover_type === "EXTERNA").length;
+  let rows = (turns || []).filter((t) => t.cover_type === "EXTERNA");
+
   if (search) {
     const q = normalized(search);
     rows = rows.filter((t) =>
-      normalized(t.origin_employee_name   || "").includes(q) ||
-      normalized(t.origin_document        || "").includes(q) ||
-      normalized(t.internal_employee_name || "").includes(q) ||
-      normalized(t.external_worker_name   || "").includes(q) ||
-      normalized(t.internal_document      || "").includes(q) ||
-      normalized(t.external_document      || "").includes(q)
+      normalized(t.external_worker_name || "").includes(q) ||
+      normalized(t.external_worker_doc  || "").includes(q) ||
+      normalized(t.origin_employee_name || "").includes(q) ||
+      normalized(t.origin_document      || "").includes(q)
     );
   }
 
-  const filterBar = `
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-  <select class="nm-pay-select nm-pay-input--sm" id="turnoFilter" style="width:auto">
-    <option value="TODOS"   ${type === "TODOS"   ? "selected" : ""}>Todos los tipos</option>
-    <option value="INTERNA" ${type === "INTERNA" ? "selected" : ""}>Solo internos</option>
-    <option value="EXTERNA" ${type === "EXTERNA" ? "selected" : ""}>Solo externos</option>
-  </select>
-  <input class="nm-pay-input nm-pay-input--sm" id="turnoSearch" placeholder="Buscar nombre o documento…"
-         value="${escapeHtml(search)}" style="min-width:200px">
-  <span style="font-size:12px;color:#94A3B8">${rows.length} turno(s)</span>
-</div>`;
-
-  if (!rows.length) {
-    return `<div style="padding:10px">${filterBar}<div class="nm-pay-empty">Sin turnos que coincidan con los filtros.</div></div>`;
+  // Agrupar por persona externa
+  const extGroups = new Map();
+  for (const t of rows) {
+    const key = t.external_worker_id || t.external_document || "ext_unknown";
+    if (!extGroups.has(key)) {
+      extGroups.set(key, {
+        workerId:        t.external_worker_id,
+        name:            t.external_worker_name || "—",
+        document:        t.external_document || "",
+        bank:            t.external_bank || "",
+        accountType:     t.external_account_type || "AHORROS",
+        accountNumber:   t.external_account_number || "",
+        cedulaUrl:       t.cedula_url || "",
+        certBancariaUrl: t.cert_bancaria_url || "",
+        cuentaCobroUrl:  t.cuenta_cobro_url || "",
+        turns:           [],
+        totalDays:       0,
+        totalValue:      0,
+        anyTurnId:       t.id,
+        extDoc:          t.external_document || String(t.id),
+      });
+    }
+    const g = extGroups.get(key);
+    g.turns.push(t);
+    g.totalDays  += Number(t.covered_days || 0);
+    g.totalValue += Number(t.total_value  || 0);
   }
 
-  // ── Agrupar por persona que cubrió ──────────────────────────────────────────
-  const extGroups = new Map();
-  const intGroups = new Map();
+  // Aplicar filtro con/sin cuenta de cobro sobre grupos
+  let groupList = [...extGroups.values()];
+  if (hasCuentaCobro === "true")  groupList = groupList.filter((g) => Boolean(g.cuentaCobroUrl));
+  if (hasCuentaCobro === "false") groupList = groupList.filter((g) => !g.cuentaCobroUrl);
 
-  for (const t of rows) {
-    if (t.cover_type === "EXTERNA") {
-      const key = t.external_worker_id || t.external_document || "ext_unknown";
-      if (!extGroups.has(key)) {
-        extGroups.set(key, {
-          workerId:       t.external_worker_id,
-          name:           t.external_worker_name || "—",
-          document:       t.external_document || "",
-          bank:           t.external_bank || "",
-          accountType:    t.external_account_type || "AHORROS",
-          accountNumber:  t.external_account_number || "",
-          cedulaUrl:      t.cedula_url || "",
-          certBancariaUrl:t.cert_bancaria_url || "",
-          cuentaCobroUrl: t.cuenta_cobro_url || "",
-          turns: [],
-          totalDays: 0,
-          totalValue: 0,
-          anyTurnId: t.id,
-          extDoc: t.external_document || String(t.id),
-        });
-      }
-      const g = extGroups.get(key);
-      g.turns.push(t);
-      g.totalDays  += Number(t.covered_days || 0);
-      g.totalValue += Number(t.total_value  || 0);
-    } else {
-      const key = t.internal_employee_id || t.internal_document || "int_unknown";
-      if (!intGroups.has(key)) {
-        intGroups.set(key, {
-          employeeId: t.internal_employee_id,
-          name:       t.internal_employee_name || "—",
-          document:   t.internal_document || "",
-          position:   t.internal_position || "",
-          turns: [],
-          totalDays: 0,
-        });
-      }
-      const g = intGroups.get(key);
-      g.turns.push(t);
-      g.totalDays += Number(t.covered_days || 0);
-    }
+  const filterBar = `
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+  <input class="nm-pay-input nm-pay-input--sm" id="turnoSearch" placeholder="Buscar externo o empleado…"
+         value="${escapeHtml(search)}" style="min-width:200px">
+  <select class="nm-pay-select nm-pay-input--sm" id="turnoFltCuentaCobro" style="width:auto">
+    <option value=""      ${hasCuentaCobro === ""      ? "selected" : ""}>Cta. cobro: todas</option>
+    <option value="true"  ${hasCuentaCobro === "true"  ? "selected" : ""}>Con cta. cobro</option>
+    <option value="false" ${hasCuentaCobro === "false" ? "selected" : ""}>Sin cta. cobro</option>
+  </select>
+  <span style="font-size:12px;color:#94A3B8">${totalExt} turno(s) externo(s)</span>
+</div>`;
+
+  if (!groupList.length) {
+    return `<div style="padding:10px">${filterBar}<div class="nm-pay-empty">${totalExt === 0 ? "Sin turnos externos registrados en este grupo." : "Ningún externo coincide con los filtros."}</div></div>`;
   }
 
   const turnTableHtml = (gTurns) => `
@@ -1190,7 +1377,7 @@ function renderTurnosSection(turns, isClosed) {
   <tbody>
     ${gTurns.map((t) => `
     <tr>
-      <td><small>${escapeHtml(String(t.novelty_start || "—").slice(0, 10))}</small></td>
+      <td style="white-space:nowrap"><small>${fmtDateRange(t.novelty_start, t.novelty_end)}</small></td>
       <td>
         <b>${escapeHtml(t.origin_employee_name || "—")}</b><br>
         <small style="color:#64748B">${escapeHtml(t.origin_document || "")}</small>
@@ -1203,9 +1390,7 @@ function renderTurnosSection(turns, isClosed) {
   </tbody>
 </table>`;
 
-  const periodLabel = activePeriod?.label || "";
-
-  const extCards = Array.from(extGroups.values()).map((g) => {
+  const extCards = groupList.map((g) => {
     const docStatus = (url, label) =>
       `<span style="font-size:11px;font-weight:600;${url ? "color:#166534" : "color:#B91C1C"}">${url ? "✓" : "✗"} ${label}</span>`;
     const allDocsOk = g.cedulaUrl && g.certBancariaUrl && g.cuentaCobroUrl;
@@ -1239,7 +1424,7 @@ function renderTurnosSection(turns, isClosed) {
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
       <button class="nm-pay-btn nm-pay-btn--sm" data-charge-account="${g.anyTurnId}">Ver cta. cobro</button>
       <button class="nm-pay-btn nm-pay-btn--sm" data-dl-charge="${g.anyTurnId}" data-ext-doc="${escapeHtml(g.extDoc)}"
-        ${!allDocsOk ? `title="Faltan documentos: ${[!g.cedulaUrl && "cédula", !g.certBancariaUrl && "cert. bancaria", !g.cuentaCobroUrl && "cta. cobro"].filter(Boolean).join(", ")}" style="opacity:.6"` : ""}>Descargar</button>
+        ${!allDocsOk ? `disabled title="Faltan documentos: ${[!g.cedulaUrl && "cédula", !g.certBancariaUrl && "cert. bancaria", !g.cuentaCobroUrl && "cta. cobro"].filter(Boolean).join(", ")}"` : ""}>Descargar</button>
       ${g.workerId
         ? `<button class="nm-pay-btn nm-pay-btn--sm" data-ext-docs="${g.workerId}" data-ext-name="${escapeHtml(g.name)}">Cargar soportes</button>`
         : ""}
@@ -1248,22 +1433,7 @@ function renderTurnosSection(turns, isClosed) {
 </div>`;
   }).join("");
 
-  const intCards = Array.from(intGroups.values()).map((g) => `
-<div class="nm-turn-group-card nm-turn-group--int">
-  <div class="nm-turn-group-hd">
-    <span class="nm-turn-type-badge nm-turn-badge--int">INTERNO</span>
-    <div style="flex:1;min-width:0">
-      <b>${escapeHtml(g.name)}</b>
-      <br><small style="color:#64748B">CC ${escapeHtml(g.document)}${g.position ? ` · ${escapeHtml(g.position)}` : ""}</small>
-    </div>
-  </div>
-  ${turnTableHtml(g.turns)}
-  <div class="nm-turn-group-ft">
-    <b style="font-size:12px">Total: ${g.totalDays} día(s)</b>
-  </div>
-</div>`).join("");
-
-  return `<div style="padding:10px">${filterBar}${extCards}${intCards}</div>`;
+  return `<div style="padding:10px">${filterBar}${extCards}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1277,25 +1447,10 @@ function wireStaticEvents() {
     activeGroupId      = null;
     municipalitySearch = "";
     activeDetailTab    = "nomina";
-    supportsData       = [];
-    viewerSupportId    = null;
-    supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
     resetItemsFilter();
     await reloadWorkArea();
   });
   document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
-
-  // ── Pestañas primarias ────────────────────────────────────────────────────
-  document.querySelectorAll("[data-primary-tab]").forEach((btn) => btn.addEventListener("click", async () => {
-    activePrimaryTab = btn.dataset.primaryTab;
-    if (activePrimaryTab === "soportes" && !supportsData.length) await loadSupports();
-    render();
-  }));
-
-  if (activePrimaryTab === "soportes") {
-    wireSupportEvents();
-    return;
-  }
 
   // ── Eventos de pestaña Nómina ─────────────────────────────────────────────
   document.getElementById("nmPayMunSearch")?.addEventListener("input", (e) => {
@@ -1307,8 +1462,15 @@ function wireStaticEvents() {
     activePosition     = btn.dataset.position || "";
     activeGroupId      = null;
     municipalitySearch = "";
+    noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
     activeDetailTab    = "nomina";
     resetItemsFilter();
+    // Auto-seleccionar grupo consolidado: si la posición tiene un solo grupo sin municipio
+    const pos = groupsState.positions.find((p) => p.position === activePosition);
+    const munis = pos?.municipalities || [];
+    if (munis.length === 1 && munis[0].is_consolidated) {
+      activeGroupId = munis[0].id;
+    }
     await reloadDetailOnly();
   }));
   document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
@@ -1319,8 +1481,9 @@ function wireStaticEvents() {
     render();
   }));
   document.querySelectorAll(".nm-pay-mun").forEach((btn) => btn.addEventListener("click", async () => {
-    activeGroupId  = Number(btn.dataset.groupId);
-    activeDetailTab = "nomina";
+    activeGroupId      = Number(btn.dataset.groupId);
+    activeDetailTab    = "nomina";
+    noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
     resetItemsFilter();
     await reloadDetailOnly();
   }));
@@ -1348,17 +1511,28 @@ function wireStaticEvents() {
       btn.dataset.accountNumber || "",
     );
   }));
+  document.querySelectorAll("[data-salary-cfg]").forEach((btn) => btn.addEventListener("click", () => {
+    openSalaryConfigModal(Number(btn.dataset.salaryCfg), btn.dataset.salaryName || "", btn.dataset.salaryDoc || "");
+  }));
   document.querySelectorAll("[data-reviewed]").forEach((input)     => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
   document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
-  document.getElementById("turnoFilter")?.addEventListener("change", (e) => { turnosFilter.type = e.target.value; render(); });
+  document.getElementById("turnoFltCuentaCobro")?.addEventListener("change", (e) => { turnosFilter.hasCuentaCobro = e.target.value; render(); });
   document.getElementById("turnoSearch")?.addEventListener("input",  (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
+
+  // ── Filtros de novedades ──────────────────────────────────────────────────
+  document.getElementById("novFltType")?.addEventListener("change",    (e) => { noveltiesFilter.type = e.target.value; render(); });
+  document.getElementById("novFltReviewed")?.addEventListener("change",(e) => { noveltiesFilter.reviewed = e.target.value; render(); });
+  document.getElementById("novFltSupport")?.addEventListener("change", (e) => { noveltiesFilter.withSupport = e.target.value; render(); });
+  document.getElementById("novFltSearch")?.addEventListener("input",   (e) => { noveltiesFilter.search = e.target.value || ""; render(); document.getElementById("novFltSearch")?.focus(); });
+  document.getElementById("novFltClear")?.addEventListener("click",    () => { noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" }; render(); });
 
   // ── Filtros de tabla de ítems de nómina ───────────────────────────────────
   const applyFilter = async (key, val) => { itemsFilter[key] = val; await reloadDetailOnly(); };
   document.getElementById("fltInstitution")?.addEventListener("change", (e) => applyFilter("institution_id", e.target.value));
   document.getElementById("fltSite")?.addEventListener("change",        (e) => applyFilter("site_id",        e.target.value));
   document.getElementById("fltModality")?.addEventListener("change",    (e) => applyFilter("modality",       e.target.value));
+  document.getElementById("fltCargo")?.addEventListener("change",       (e) => applyFilter("cargo",          e.target.value));
   document.getElementById("fltNovedades")?.addEventListener("change",   (e) => applyFilter("has_novelties",  e.target.value));
   document.getElementById("fltReviewed")?.addEventListener("change",    (e) => applyFilter("reviewed",       e.target.value));
   document.getElementById("fltSupports")?.addEventListener("change",    (e) => applyFilter("support_status", e.target.value));
@@ -1374,13 +1548,14 @@ function wireStaticEvents() {
   // ── Revisión / reapertura de municipio ────────────────────────────────────
   document.querySelectorAll("[data-mun-review]").forEach((btn) => btn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    const munName = btn.dataset.munReview;
-    if (!munName || !activePeriod) return;
+    const munId   = Number(btn.dataset.munReview);
+    const munName = btn.dataset.munName || "";
+    if (!munId || !activePeriod) return;
     btn.disabled = true;
     try {
       await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
         method: "POST",
-        body: JSON.stringify({ municipality: munName, isComplete: true }),
+        body: JSON.stringify({ municipalityId: munId, municipality: munName, isComplete: true }),
       });
       showSuccess(`Municipio "${munName}" marcado como revisado`);
       await reloadWorkArea();
@@ -1388,13 +1563,14 @@ function wireStaticEvents() {
   }));
   document.querySelectorAll("[data-mun-unreview]").forEach((btn) => btn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    const munName = btn.dataset.munUnreview;
-    if (!munName || !activePeriod) return;
+    const munId   = Number(btn.dataset.munUnreview);
+    const munName = btn.dataset.munName || "";
+    if (!munId || !activePeriod) return;
     btn.disabled = true;
     try {
       await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
         method: "POST",
-        body: JSON.stringify({ municipality: munName, isComplete: false }),
+        body: JSON.stringify({ municipalityId: munId, municipality: munName, isComplete: false }),
       });
       showSuccess(`Revisión de "${munName}" removida — datos conservados`);
       await reloadWorkArea();
@@ -1403,22 +1579,36 @@ function wireStaticEvents() {
 
   // ── Upload en pestaña soportes inline del grupo ───────────────────────────
   document.querySelectorAll("[data-upload-support]").forEach((input) => input.addEventListener("change", async (e) => {
-    const supId     = Number(input.dataset.uploadSupport);
+    const supId     = Number(input.dataset.uploadSupport) || null;  // null si vacío o 0
     const noveltyId = Number(input.dataset.noveltyId);
+    const docType   = input.dataset.docType || "";
     const file      = e.target.files?.[0];
-    if (!file || (!supId && !noveltyId)) return;
+    // Permitir carga si tenemos noveltyId válido (supId puede ser null → crea el registro)
+    if (!file || !noveltyId) return;
     const form = new FormData();
     form.append("file", file);
     form.append("noveltyId", String(noveltyId));
+    input.disabled = true;
     try {
       const up = await apiFetch("/payroll/supports/upload", { method: "POST", body: form, noContentType: true });
+      // Si supId existe: actualiza el registro. Si no: crea uno nuevo con el support_type del documento.
       await apiFetch("/payroll/supports", {
         method: "POST",
-        body: JSON.stringify({ id: supId || undefined, novelty_id: noveltyId, file_url: up.data.url, file_name: up.data.fileName, status: "cargado" }),
+        body: JSON.stringify({
+          id:           supId || undefined,
+          novelty_id:   noveltyId,
+          file_url:     up.data.url,
+          file_name:    up.data.fileName,
+          status:       "cargado",
+          support_type: supId ? undefined : (docType || "otros"),
+        }),
       });
       showSuccess("Soporte cargado correctamente");
       await reloadDetailOnly();
-    } catch (err) { showError("Error cargando soporte: " + err.message); }
+    } catch (err) {
+      showError("Error cargando soporte: " + err.message);
+      input.disabled = false;
+    }
   }));
 }
 
@@ -1457,7 +1647,6 @@ async function createPeriod() {
 async function reloadWorkArea() {
   await loadGroups();
   await loadGroupDetail();
-  if (activePrimaryTab === "soportes") await loadSupports();
   if (activeDetailTab === "turnos" && activeGroupId) await loadGroupTurns();
   render();
 }
@@ -1489,85 +1678,234 @@ async function calculateGroup() {
 
 function openExportModal() {
   if (!activePeriod) return;
-  const munName = currentMunicipalityData()?.municipality_name
-    || activeGroupDetail?.group?.municipality_name
-    || "";
-  const periodLabel = activePeriod.label || String(activePeriod.id);
+  const periodLabel     = activePeriod.label || String(activePeriod.id);
+  const safeLbl         = periodLabel.replace(/[^a-z0-9]/gi, "-");
+  const currentPosition = groupsState.positions.find((p) => p.position === activePosition);
+  const posMunis        = Array.isArray(currentPosition?.municipalities) ? currentPosition.municipalities : [];
+  const defaultSelected = new Set(
+    activeGroupId ? [String(activeGroupId)] : posMunis.map((m) => String(m.id))
+  );
+
+  // ── Función que actualiza los contadores en tiempo real ──────────────────
+  function updateExpCounters() {
+    const checked = [...document.querySelectorAll(".exp-mun-cb:checked")];
+    const ids = new Set(checked.map((cb) => cb.value));
+    const selMunis  = posMunis.filter((m) => ids.has(String(m.id)));
+    const empCount  = selMunis.reduce((s, m) => s + Number(m.employees     || 0), 0);
+    const novCount  = selMunis.reduce((s, m) => s + Number(m.novelties     || 0), 0);
+    document.getElementById("expCntMun")?.textContent && (document.getElementById("expCntMun").textContent = selMunis.length);
+    document.getElementById("expCntEmp")?.textContent && (document.getElementById("expCntEmp").textContent = empCount);
+    document.getElementById("expCntNov")?.textContent && (document.getElementById("expCntNov").textContent = novCount);
+    if (document.getElementById("expCntMun")) document.getElementById("expCntMun").textContent = selMunis.length;
+    if (document.getElementById("expCntEmp")) document.getElementById("expCntEmp").textContent = empCount;
+    if (document.getElementById("expCntNov")) document.getElementById("expCntNov").textContent = novCount;
+    const btn = document.getElementById("expDoBtn");
+    if (btn) btn.disabled = (checked.length === 0);
+    // Actualizar aspecto visual de las tarjetas
+    document.querySelectorAll(".exp-mun-card").forEach((card) => {
+      const cb = card.querySelector(".exp-mun-cb");
+      card.classList.toggle("exp-mun-card--selected", cb?.checked ?? false);
+    });
+  }
+
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
-<div class="nm-pay-dialog" style="max-width:440px">
-  <div class="nm-pay-dialog-h">
-    <b>Exportar Variables de Nómina</b>
-    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+<style>
+/* === Modal exportación === */
+.exp-dialog-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 0}
+.exp-dialog-body{padding:18px 20px 20px;display:flex;flex-direction:column;gap:18px}
+.exp-section-label{font-size:10.5px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px}
+/* Grid de tarjetas */
+.exp-mun-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;max-height:300px;overflow-y:auto;padding-right:4px}
+.exp-mun-grid::-webkit-scrollbar{width:4px}
+.exp-mun-grid::-webkit-scrollbar-track{background:#F1F5F9;border-radius:4px}
+.exp-mun-grid::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
+/* Tarjeta */
+.exp-mun-card{border:2px solid #E2E8F0;border-radius:10px;padding:14px 14px 12px;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s;user-select:none;background:#fff}
+.exp-mun-card:hover{border-color:#0D9488;box-shadow:0 2px 8px rgba(13,148,136,.14)}
+.exp-mun-card--selected{border-color:#0D9488;background:#F0FDF4;box-shadow:0 0 0 1px #0D9488}
+.exp-mun-card input[type=checkbox]{display:none}
+/* Indicador check */
+.exp-mun-card-check{width:18px;height:18px;border:2px solid #CBD5E1;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;background:#fff;transition:all .15s;font-size:12px;color:transparent;margin-bottom:9px}
+.exp-mun-card--selected .exp-mun-card-check{background:#0D9488;border-color:#0D9488;color:#fff}
+/* Nombre municipio */
+.exp-mun-card-name{font-size:11.5px;font-weight:800;color:#0F172A;text-transform:uppercase;letter-spacing:.04em;line-height:1.25;margin-bottom:7px}
+/* Meta datos */
+.exp-mun-card-meta{font-size:11px;color:#64748B;line-height:1.85}
+.exp-mun-card-meta b{color:#1E293B;font-weight:700}
+/* Botones acciones rápidas */
+.exp-quick-btn{background:none;border:1px solid #E2E8F0;border-radius:6px;padding:5px 14px;font-size:11.5px;font-weight:600;color:#475569;cursor:pointer;transition:all .15s;white-space:nowrap}
+.exp-quick-btn:hover{border-color:#0D9488;color:#0D9488;background:#F0FDF4}
+/* Barra de contadores */
+.exp-counter-bar{display:flex;gap:0;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;background:#F8FAFC}
+.exp-counter{flex:1;display:flex;flex-direction:column;align-items:center;padding:13px 8px;border-right:1px solid #E2E8F0}
+.exp-counter:last-child{border-right:none}
+.exp-counter-val{font-size:24px;font-weight:800;color:#0D9488;line-height:1}
+.exp-counter-lbl{font-size:9.5px;color:#94A3B8;text-transform:uppercase;letter-spacing:.07em;margin-top:4px;font-weight:600}
+/* Sección modo exportación */
+.exp-mode-box{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:12px 14px}
+.exp-mode-opt{display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;padding:4px 0;color:#334155}
+.exp-mode-opt input[type=radio]{accent-color:#0D9488;width:14px;height:14px}
+.exp-mode-opt-sub{color:#94A3B8;font-size:11px;margin-left:22px;margin-top:-2px}
+/* Footer */
+.exp-footer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+@media(max-width:540px){.exp-mun-grid{grid-template-columns:repeat(2,1fr)}.exp-counter-val{font-size:19px}}
+@media(max-width:380px){.exp-quick-btn span.exp-btn-label{display:none}}
+</style>
+<div class="nm-pay-dialog" style="max-width:590px;border-radius:14px;overflow:hidden">
+  <div class="exp-dialog-header">
+    <div>
+      <div style="font-size:16px;font-weight:800;color:#0F172A;line-height:1.2">Exportar Nómina</div>
+      <div style="font-size:12px;color:#64748B;margin-top:4px">Seleccione los municipios que desea incluir en el archivo Excel.</div>
+    </div>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal style="flex-shrink:0;margin-top:2px">&#10005;</button>
   </div>
-  <div class="nm-pay-dialog-b" style="gap:10px">
-    <p style="font-size:13px;color:#475569;margin:0">Selecciona el alcance de la exportación:</p>
-    ${activeGroupId ? `
-    <button class="nm-pay-btn nm-pay-btn--primary" id="expMun" style="width:100%;text-align:left;padding:12px 14px;line-height:1.4">
-      <div style="font-weight:700;font-size:13px">Municipio seleccionado</div>
-      <div style="font-size:11px;opacity:.85;font-weight:400;margin-top:2px">${escapeHtml(munName)}</div>
-    </button>` : ""}
-    <button class="nm-pay-btn" id="expAll" style="width:100%;text-align:left;padding:12px 14px;line-height:1.4">
-      <div style="font-weight:700;font-size:13px">Todos los municipios</div>
-      <div style="font-size:11px;color:#64748B;font-weight:400;margin-top:2px">Período completo — ${escapeHtml(periodLabel)}</div>
-    </button>
-    <p id="expStatus" style="font-size:12px;color:#64748B;margin:0;min-height:16px"></p>
+
+  <div class="exp-dialog-body">
+    ${posMunis.length > 0 ? `
+    <!-- Acciones rápidas + etiqueta cargo -->
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="exp-section-label" style="margin-bottom:0;flex:1">Cargo: <span style="color:#0D9488;font-style:normal">${escapeHtml(activePosition || "")}</span></div>
+        <button class="exp-quick-btn" id="expSelAll"><span class="exp-btn-label">Seleccionar todos</span></button>
+        <button class="exp-quick-btn" id="expSelNone"><span class="exp-btn-label">Limpiar selección</span></button>
+      </div>
+    </div>
+
+    <!-- Tarjetas de municipios -->
+    <div class="exp-mun-grid" id="expMuniGrid">
+      ${posMunis.map((mun) => `
+      <label class="exp-mun-card ${defaultSelected.has(String(mun.id)) ? "exp-mun-card--selected" : ""}">
+        <input type="checkbox" class="exp-mun-cb" value="${mun.id}" ${defaultSelected.has(String(mun.id)) ? "checked" : ""}>
+        <div class="exp-mun-card-check">${defaultSelected.has(String(mun.id)) ? "&#10003;" : ""}</div>
+        <div class="exp-mun-card-name">${escapeHtml(mun.municipality_name)}</div>
+        <div class="exp-mun-card-meta">
+          <b>${mun.employees || 0}</b> empleados<br>
+          <b>${mun.novelties || 0}</b> novedades
+        </div>
+      </label>`).join("")}
+    </div>
+
+    <!-- Barra de contadores en tiempo real -->
+    <div class="exp-counter-bar">
+      <div class="exp-counter">
+        <div class="exp-counter-val" id="expCntMun">${defaultSelected.size}</div>
+        <div class="exp-counter-lbl">Municipios seleccionados</div>
+      </div>
+      <div class="exp-counter">
+        <div class="exp-counter-val" id="expCntEmp">${posMunis.filter(m=>defaultSelected.has(String(m.id))).reduce((s,m)=>s+Number(m.employees||0),0)}</div>
+        <div class="exp-counter-lbl">Empleados incluidos</div>
+      </div>
+      <div class="exp-counter">
+        <div class="exp-counter-val" id="expCntNov">${posMunis.filter(m=>defaultSelected.has(String(m.id))).reduce((s,m)=>s+Number(m.novelties||0),0)}</div>
+        <div class="exp-counter-lbl">Novedades incluidas</div>
+      </div>
+    </div>
+
+    <!-- Modo de exportación -->
+    <div class="exp-mode-box">
+      <div class="exp-section-label">Modo de exportación</div>
+      <label class="exp-mode-opt">
+        <input type="radio" name="expMode" value="selected" checked>
+        Municipios seleccionados
+      </label>
+      <div class="exp-mode-opt-sub">Variables, Nómina, Novedades, Turnos, Resumen comparativo</div>
+      <label class="exp-mode-opt" style="margin-top:8px">
+        <input type="radio" name="expMode" value="full">
+        Nómina completa del período
+      </label>
+      <div class="exp-mode-opt-sub">Todos los cargos · ${escapeHtml(periodLabel)}</div>
+    </div>` : `
+    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:22px;font-size:13px;color:#64748B;text-align:center;line-height:1.7">
+      No hay municipios disponibles para este cargo.<br>
+      <span style="color:#94A3B8;font-size:12px">Calcula la nómina primero para ver los municipios disponibles.</span>
+    </div>`}
+
+    <!-- Botones finales -->
+    <div class="exp-footer">
+      <span id="expStatus" style="font-size:12px;color:#64748B;flex:1;min-width:60px"></span>
+      <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
+      <button class="nm-pay-btn nm-pay-btn--primary" id="expDoBtn" ${!defaultSelected.size ? "disabled" : ""} style="padding:7px 18px;font-size:13px">&#8595; Exportar Excel</button>
+    </div>
   </div>
 </div>`;
   modal.hidden = false;
   wireModalClose();
 
+  // ── Seleccionar / Limpiar todos ──────────────────────────────────────────
+  document.getElementById("expSelAll")?.addEventListener("click", () => {
+    document.querySelectorAll(".exp-mun-cb").forEach((cb) => { cb.checked = true; });
+    updateExpCounters();
+  });
+  document.getElementById("expSelNone")?.addEventListener("click", () => {
+    document.querySelectorAll(".exp-mun-cb").forEach((cb) => { cb.checked = false; });
+    updateExpCounters();
+  });
+
+  // ── Click en tarjeta: toggle checkbox + actualizar visual ────────────────
+  document.querySelectorAll(".exp-mun-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const cb   = card.querySelector(".exp-mun-cb");
+      const chk  = card.querySelector(".exp-mun-card-check");
+      if (cb) cb.checked = !cb.checked;
+      if (chk) chk.innerHTML = cb?.checked ? "&#10003;" : "";
+      updateExpCounters();
+    });
+  });
+  // Evitar doble toggle por label nativo del checkbox
+  document.querySelectorAll(".exp-mun-cb").forEach((cb) => {
+    cb.addEventListener("click", (e) => e.stopPropagation());
+  });
+
+  // ── Función de descarga ──────────────────────────────────────────────────
   async function doExport(endpoint, filename) {
-    const btnMun = document.getElementById("expMun");
-    const btnAll = document.getElementById("expAll");
+    const btn    = document.getElementById("expDoBtn");
     const status = document.getElementById("expStatus");
-    if (btnMun) btnMun.disabled = true;
-    if (btnAll) btnAll.disabled = true;
+    if (btn) btn.disabled = true;
     if (status) status.textContent = "Generando archivo…";
     try {
       const token = state.token || localStorage.getItem("empiria_token") || "";
-      const res   = await fetch(endpoint, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res   = await fetch(endpoint, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         showError(err.message || "Error al exportar"); return;
       }
       const blob   = await res.blob();
       const objUrl = URL.createObjectURL(blob);
-      const a      = document.createElement("a");
-      a.href     = objUrl;
-      a.download = filename;
-      a.click();
+      const a = document.createElement("a");
+      a.href = objUrl; a.download = filename; a.click();
       URL.revokeObjectURL(objUrl);
       closeModal();
       showSuccess("Exportación completada");
     } catch (err) {
       showError(err.message || "Error al exportar");
     } finally {
-      if (btnMun) btnMun.disabled = false;
-      if (btnAll) btnAll.disabled = false;
+      updateExpCounters();
       if (status) status.textContent = "";
     }
   }
 
-  const safeLbl = periodLabel.replace(/[^a-z0-9]/gi, "-");
-  const safeMun = (munName || "municipio").replace(/[^a-z0-9]/gi, "-");
+  // ── Exportar ─────────────────────────────────────────────────────────────
+  document.getElementById("expDoBtn")?.addEventListener("click", () => {
+    const mode       = document.querySelector("[name='expMode']:checked")?.value || "selected";
+    const checkedIds = [...document.querySelectorAll(".exp-mun-cb:checked")].map((cb) => cb.value);
 
-  // Municipio: exportación completa del grupo (Variables + Nómina + Novedades + Turnos + Resumen + Soportes)
-  document.getElementById("expMun")?.addEventListener("click", () =>
-    doExport(
-      `/payroll/groups/${activeGroupId}/export`,
-      `nomina-${safeLbl}-${safeMun}.xlsx`
-    )
-  );
-  // Todos: Variables + Nómina + Resumen para todo el período
-  document.getElementById("expAll")?.addEventListener("click", () =>
-    doExport(
-      `/payroll/periods/${activePeriod.id}/full-export`,
-      `nomina-completa-${safeLbl}.xlsx`
-    )
-  );
+    if (mode === "full") {
+      doExport(`/payroll/periods/${activePeriod.id}/full-export`, `nomina-completa-${safeLbl}.xlsx`);
+      return;
+    }
+    if (!checkedIds.length) { showError("Selecciona al menos un municipio."); return; }
+
+    if (checkedIds.length === 1) {
+      const munName = posMunis.find((m) => String(m.id) === checkedIds[0])?.municipality_name || "municipio";
+      const safeMun = munName.replace(/[^a-z0-9]/gi, "-");
+      doExport(`/payroll/groups/${checkedIds[0]}/export`, `nomina-${safeLbl}-${safeMun}.xlsx`);
+    } else {
+      const munNames = checkedIds.map((id) => posMunis.find((m) => String(m.id) === id)?.municipality_name || "").filter(Boolean);
+      const safeMuns = munNames.slice(0, 2).join("-").replace(/[^a-z0-9]/gi, "-");
+      doExport(`/payroll/groups/multi-export?groupIds=${checkedIds.join(",")}`, `nomina-${safeLbl}-${safeMuns}.xlsx`);
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1608,19 +1946,160 @@ function wireDateAutocalc(startId, endId, daysId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MODAL: CONFIGURACIÓN SALARIAL INDIVIDUAL (grupos consolidados, solo admins)
+// ─────────────────────────────────────────────────────────────────────────────
+async function openSalaryConfigModal(employeeId, employeeName, docNumber) {
+  salaryCfgState = { employeeId, employeeName, docNumber, history: [], loading: true };
+  const modal = document.getElementById("nmPayModal");
+  if (!modal) return;
+  modal.innerHTML = renderSalaryConfigModal();
+  modal.removeAttribute("hidden");
+  // Cargar historial
+  try {
+    const r = await apiFetch(`/payroll/employees/${employeeId}/salary-config`);
+    salaryCfgState.history  = Array.isArray(r.data) ? r.data : [];
+    salaryCfgState.loading  = false;
+  } catch {
+    salaryCfgState.history = [];
+    salaryCfgState.loading = false;
+  }
+  modal.innerHTML = renderSalaryConfigModal();
+  wireSalaryConfigModal();
+}
+
+function renderSalaryConfigModal() {
+  const { employeeName, docNumber, history, loading } = salaryCfgState;
+  const fmtCOP2 = (v) => Number(v || 0).toLocaleString("es-CO");
+  return `
+<div class="nm-pay-dialog" style="max-width:640px" id="nmSalaryCfgOverlay">
+    <div class="nm-pay-dialog-h">
+      <span>Configuración Salarial — ${escapeHtml(employeeName)} (${escapeHtml(docNumber)})</span>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSalaryCfgClose">&#10005;</button>
+    </div>
+    <div class="nm-pay-dialog-b" style="padding:16px;display:flex;flex-direction:column;gap:16px">
+      <p style="font-size:12px;color:#475569;margin:0">El salario configurado aquí se usa al calcular la nómina de este empleado. El historial se conserva para auditoría.</p>
+
+      <form id="nmSalaryCfgForm" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#334155">Salario Base</label>
+          <input type="number" id="scBaseSalary" min="0" step="1000" placeholder="Ej: 2000000" class="nm-pay-input" style="width:100%;margin-top:4px" required>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#334155">Auxilio Transporte</label>
+          <input type="number" id="scTransport" min="0" step="1000" placeholder="Ej: 200000" class="nm-pay-input" style="width:100%;margin-top:4px" value="0">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#334155">Tipo de Salario</label>
+          <select id="scSalaryType" class="nm-pay-select" style="width:100%;margin-top:4px">
+            <option value="mensual">Mensual</option>
+            <option value="quincenal">Quincenal</option>
+            <option value="semanal">Semanal</option>
+            <option value="jornal">Jornal</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#334155">Fecha de Vigencia</label>
+          <input type="date" id="scEffectiveDate" class="nm-pay-input" style="width:100%;margin-top:4px" value="${new Date().toISOString().slice(0,10)}" required>
+        </div>
+        <div style="grid-column:1/-1">
+          <label style="font-size:11px;font-weight:700;color:#334155">Notas (opcional)</label>
+          <input type="text" id="scNotes" class="nm-pay-input" style="width:100%;margin-top:4px" placeholder="Ej: Ajuste salarial 2026">
+        </div>
+        <div style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end">
+          <button type="submit" class="nm-pay-btn nm-pay-btn--primary">Guardar Configuración</button>
+        </div>
+      </form>
+
+      <div>
+        <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px">Historial Salarial</div>
+        ${loading
+          ? `<div style="font-size:12px;color:#64748B">Cargando...</div>`
+          : !history.length
+            ? `<div style="font-size:12px;color:#94A3B8">Sin configuraciones previas. El sistema usará la tarifa de la categoría del cargo.</div>`
+            : `<table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead>
+                  <tr style="background:#F8FAFC">
+                    <th style="padding:5px 8px;text-align:left;border-bottom:1px solid #E2E8F0">Vigencia</th>
+                    <th style="padding:5px 8px;text-align:right;border-bottom:1px solid #E2E8F0">Salario Base</th>
+                    <th style="padding:5px 8px;text-align:right;border-bottom:1px solid #E2E8F0">Aux. Transporte</th>
+                    <th style="padding:5px 8px;border-bottom:1px solid #E2E8F0">Tipo</th>
+                    <th style="padding:5px 8px;border-bottom:1px solid #E2E8F0">Notas</th>
+                    <th style="padding:5px 8px;border-bottom:1px solid #E2E8F0"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${history.map((h) => `
+                  <tr>
+                    <td style="padding:5px 8px;border-bottom:1px solid #F1F5F9">${escapeHtml(String(h.effective_date || "").slice(0,10))}</td>
+                    <td style="padding:5px 8px;text-align:right;border-bottom:1px solid #F1F5F9;font-weight:600">$${fmtCOP2(h.base_salary)}</td>
+                    <td style="padding:5px 8px;text-align:right;border-bottom:1px solid #F1F5F9">$${fmtCOP2(h.transport_allowance)}</td>
+                    <td style="padding:5px 8px;border-bottom:1px solid #F1F5F9">${escapeHtml(h.salary_type || "mensual")}</td>
+                    <td style="padding:5px 8px;border-bottom:1px solid #F1F5F9;color:#64748B">${escapeHtml(h.notes || "")}</td>
+                    <td style="padding:5px 8px;border-bottom:1px solid #F1F5F9">
+                      <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--danger" data-delete-salary-cfg="${h.id}" title="Eliminar esta entrada">&#128465;</button>
+                    </td>
+                  </tr>`).join("")}
+                </tbody>
+              </table>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function wireSalaryConfigModal() {
+  const closeSalaryModal = () => {
+    const m = document.getElementById("nmPayModal");
+    if (m) { m.innerHTML = ""; m.setAttribute("hidden", ""); }
+  };
+  document.getElementById("nmSalaryCfgClose")?.addEventListener("click", closeSalaryModal);
+  // Cerrar al hacer click en el fondo del modal (nm-pay-modal)
+  document.getElementById("nmPayModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "nmPayModal") closeSalaryModal();
+  }, { once: true });
+  document.getElementById("nmSalaryCfgForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const baseSalary    = Number(document.getElementById("scBaseSalary").value);
+    const transport     = Number(document.getElementById("scTransport").value || 0);
+    const salaryType    = document.getElementById("scSalaryType").value;
+    const effectiveDate = document.getElementById("scEffectiveDate").value;
+    const notes         = document.getElementById("scNotes").value.trim();
+    if (!baseSalary || baseSalary <= 0) { showError("El salario base debe ser mayor a 0"); return; }
+    try {
+      await apiFetch(`/payroll/employees/${salaryCfgState.employeeId}/salary-config`, {
+        method: "POST",
+        body: JSON.stringify({ base_salary: baseSalary, transport_allowance: transport, salary_type: salaryType, effective_date: effectiveDate, notes }),
+      });
+      showSuccess("Configuración salarial guardada");
+      await openSalaryConfigModal(salaryCfgState.employeeId, salaryCfgState.employeeName, salaryCfgState.docNumber);
+    } catch (err) {
+      showError(err.message || "Error al guardar");
+    }
+  });
+  document.querySelectorAll("[data-delete-salary-cfg]").forEach((btn) => btn.addEventListener("click", async () => {
+    const cfgId = Number(btn.dataset.deleteSalaryCfg);
+    if (!confirm("¿Eliminar esta configuración salarial?")) return;
+    try {
+      await apiFetch(`/payroll/employee-salary-config/${cfgId}`, { method: "DELETE" });
+      showSuccess("Configuración eliminada");
+      await openSalaryConfigModal(salaryCfgState.employeeId, salaryCfgState.employeeName, salaryCfgState.docNumber);
+    } catch (err) {
+      showError(err.message || "Error al eliminar");
+    }
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MODAL: REGISTRAR NOVEDAD
 // ─────────────────────────────────────────────────────────────────────────────
 function openNoveltyModal(itemId) {
-  // DATE_TYPES: single exact date, days auto-calculated by backend
-  const DATE_TYPES          = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
-  // RANGE_TYPES: start + end, calendar days auto-counted
-  const RANGE_TYPES         = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
-  // BUSINESS_RANGE_TYPES: start + end, only business days (Mon–Fri) counted
+  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const RANGE_TYPES          = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
   const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
+  const MAX_BULK = 20;
 
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
-<div class="nm-pay-dialog">
+<div class="nm-pay-dialog" style="max-width:520px">
   <div class="nm-pay-dialog-h">
     <b>Registrar novedad</b>
     <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
@@ -1629,136 +2108,318 @@ function openNoveltyModal(itemId) {
     <div class="nm-pay-field">
       <label>Tipo de novedad</label>
       <select class="nm-pay-select" id="novType">
-        ${NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA").map((t) => `<option value="${t.code}">${t.name}</option>`).join("")}
+        ${NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA")
+          .map((t) => `<option value="${t.code}">${t.name}</option>`).join("")}
       </select>
     </div>
     <div id="novImpactInfo"></div>
-
-    <!-- Sección 1: fecha exacta — solo FECHA_INGRESO / FECHA_RETIRO -->
-    <div id="novDateSection" hidden>
-      <div class="nm-pay-field">
-        <label id="novDateLabel">Fecha exacta <span style="color:#EF4444">*</span></label>
-        <input class="nm-pay-input" id="novDate" type="date">
-        <small id="novDateHelp" style="color:#94A3B8"></small>
-      </div>
+    <div class="nm-pay-field" id="novQtyRow" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label style="margin:0;white-space:nowrap;font-size:12px;font-weight:700;color:#475569">Cantidad de registros</label>
+      <input class="nm-pay-input" id="novQty" type="number" min="1" max="${MAX_BULK}" value="1" style="width:70px">
+      <small style="color:#94A3B8">máx. ${MAX_BULK}</small>
     </div>
-
-    <!-- Sección 2: rango de fechas — incapacidades, calamidad, luto -->
-    <div id="novRangeSection" hidden>
-      <div class="nm-pay-form-grid">
-        <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart" type="date"></div>
-        <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd" type="date"></div>
-        <div class="nm-pay-field">
-          <label id="novDaysLabel">Días <small style="color:#94A3B8;font-weight:400">(auto)</small></label>
-          <input class="nm-pay-input" id="novDays" type="number" min="1" value="1">
-        </div>
-      </div>
+    <div id="novDatesSection"></div>
+    <div class="nm-pay-field">
+      <label>Observaciones</label>
+      <textarea class="nm-pay-textarea" id="novDesc" rows="2"></textarea>
     </div>
-
-    <!-- Sección 3: fecha de presentación — todos los demás tipos -->
-    <div id="novSingleSection" hidden>
-      <div class="nm-pay-field">
-        <label>Fecha de presentación <span style="color:#EF4444">*</span></label>
-        <input class="nm-pay-input" id="novSingle" type="date">
-        <small style="color:#94A3B8">Se registra como 1 día de novedad.</small>
-      </div>
+    <div id="novActions">
+      <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar novedad</button>
     </div>
-
-    <div class="nm-pay-field"><label>Observaciones</label><textarea class="nm-pay-textarea" id="novDesc"></textarea></div>
-    <button class="nm-pay-btn nm-pay-btn--primary" id="novSave">Guardar novedad</button>
   </div>
 </div>`;
   modal.hidden = false;
   wireModalClose();
-  wireDateAutocalc("novStart", "novEnd", "novDays");
 
-  const showSection = (code) => {
-    const isDate    = DATE_TYPES.has(code);
-    const isRange   = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
-    const isBiz     = BUSINESS_RANGE_TYPES.has(code);
-    const isSingle  = !isDate && !isRange;
-    document.getElementById("novDateSection").hidden   = !isDate;
-    document.getElementById("novRangeSection").hidden  = !isRange;
-    document.getElementById("novSingleSection").hidden = !isSingle;
-    // Mode flag for wireDateAutocalc: "biz" = business days, "" = calendar days
-    const daysEl = document.getElementById("novDays");
-    if (daysEl) {
-      daysEl.dataset.mode   = isBiz ? "biz" : "";
-      daysEl._manualOverride = false; // reset so auto-calc works after type switch
+  // ── Leer estado actual ────────────────────────────────────────────────────
+  const getCode = () => document.getElementById("novType")?.value || "";
+  const getQty  = () => {
+    const v = parseInt(document.getElementById("novQty")?.value || "1", 10);
+    return Math.max(1, Math.min(MAX_BULK, isNaN(v) ? 1 : v));
+  };
+
+  // ── Render de campos de fecha según tipo y cantidad ───────────────────────
+  function renderDates(code, qty) {
+    const section  = document.getElementById("novDatesSection");
+    if (!section) return;
+    const isRange  = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+    const isBiz    = BUSINESS_RANGE_TYPES.has(code);
+    const n        = DATE_TYPES.has(code) ? 1 : qty;
+
+    if (DATE_TYPES.has(code)) {
+      const isIng = code === "FECHA_INGRESO";
+      section.innerHTML = `
+<div class="nm-pay-field">
+  <label>${isIng ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
+  <input class="nm-pay-input" id="novDate_0" type="date">
+  <small style="color:#94A3B8">${isIng
+    ? "La nómina se liquidará desde este día hasta el fin del período."
+    : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
+</div>
+${code === "FECHA_RETIRO" ? `
+<div class="nm-pay-field">
+  <label>Motivo del retiro <span style="color:#EF4444">*</span></label>
+  <select class="nm-pay-select" id="novRetirementReason">
+    <option value="">— Seleccione motivo —</option>
+    <option value="disminucion_cupos">Disminución de cupos</option>
+    <option value="renuncia">Renuncia</option>
+    <option value="terminacion_contrato">Terminación de contrato</option>
+  </select>
+  <small style="color:#94A3B8">Determina si el puesto requiere reemplazo y cómo se calculan los Días SS.</small>
+</div>` : ""}`;
+      return;
     }
-    const daysLabel = document.getElementById("novDaysLabel");
-    if (daysLabel) {
-      daysLabel.innerHTML = isBiz
+
+    if (isRange) {
+      const daysLbl = isBiz
         ? `Días hábiles <small style="color:#94A3B8;font-weight:400">(lun–vie, auto)</small>`
         : `Días <small style="color:#94A3B8;font-weight:400">(auto)</small>`;
-    }
-    const dateLabel = document.getElementById("novDateLabel");
-    const dateHelp  = document.getElementById("novDateHelp");
-    if (isDate && dateLabel && dateHelp) {
-      if (code === "FECHA_INGRESO") {
-        dateLabel.innerHTML  = `Fecha real de ingreso <span style="color:#EF4444">*</span>`;
-        dateHelp.textContent = "La nómina se liquidará desde este día hasta el fin del período.";
-      } else {
-        dateLabel.innerHTML  = `Fecha real de retiro <span style="color:#EF4444">*</span>`;
-        dateHelp.textContent = "La nómina se liquidará desde el inicio del período hasta este día.";
+      let html = "";
+      for (let i = 0; i < n; i++) {
+        html += `
+<div class="${n > 1 ? "nm-bulk-block" : ""}">
+  ${n > 1 ? `<div class="nm-bulk-block-label">Registro ${i + 1}</div>` : ""}
+  <div class="nm-pay-form-grid">
+    <div class="nm-pay-field"><label>Fecha inicio <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novStart_${i}" type="date"></div>
+    <div class="nm-pay-field"><label>Fecha fin <span style="color:#EF4444">*</span></label><input class="nm-pay-input" id="novEnd_${i}" type="date"></div>
+    <div class="nm-pay-field"><label>${daysLbl}</label><input class="nm-pay-input" id="novDays_${i}" type="number" min="1" value="1"></div>
+  </div>
+</div>`;
       }
+      section.innerHTML = html;
+      for (let i = 0; i < n; i++) {
+        const dEl = document.getElementById(`novDays_${i}`);
+        if (dEl) dEl.dataset.mode = isBiz ? "biz" : "";
+        wireDateAutocalc(`novStart_${i}`, `novEnd_${i}`, `novDays_${i}`);
+      }
+      return;
     }
-  };
 
-  const updateImpact = () => {
-    const code = document.getElementById("novType")?.value;
-    const meta = noveltyByCode(code);
-    const el   = document.getElementById("novImpactInfo");
-    if (el && meta) el.innerHTML = noveltyImpactNoticeHtml(meta);
-    if (code) showSection(code);
-  };
-  document.getElementById("novType")?.addEventListener("change", updateImpact);
-  updateImpact();
-
-  let _savingNovelty = false;
-  document.getElementById("novSave")?.addEventListener("click", async () => {
-    if (_savingNovelty) return;
-    _savingNovelty = true;
-    const btn = document.getElementById("novSave");
-    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
-    try {
-      const code    = document.getElementById("novType").value;
-      const obsText = document.getElementById("novDesc").value;
-      let body;
-
-      if (DATE_TYPES.has(code)) {
-        const noveltyDate = document.getElementById("novDate").value;
-        if (!noveltyDate) {
-          showError(`Ingrese la fecha exacta de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`);
-          return;
+    // Aviso de cruce de período para tipos de rango multi-período
+    if (isRange && n > 0) {
+      const MULTI_TYPES = new Set([
+        "INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL",
+        "PERMISOS_NO_REMUNERADOS","SUSPENSION",
+        "LICENCIA_MATERNIDAD_PATERNIDAD","CALAMIDAD_FAMILIAR",
+      ]);
+      if (MULTI_TYPES.has(code) && activePeriod?.period_end) {
+        // Adjuntar un listener que muestra el aviso si end_date cruza el período
+        const pEnd = String(activePeriod.period_end).slice(0, 10);
+        for (let i = 0; i < n; i++) {
+          const endId = `novEnd_${i}`;
+          setTimeout(() => {
+            document.getElementById(endId)?.addEventListener("change", () => {
+              const endVal = document.getElementById(endId)?.value;
+              const warnId = `novCrossWarn_${i}`;
+              let warnEl = document.getElementById(warnId);
+              if (endVal && endVal > pEnd) {
+                const startVal = document.getElementById(`novStart_${i}`)?.value;
+                const daysInPeriod = startVal
+                  ? Math.max(0, Math.round((new Date(pEnd) - new Date(startVal)) / 86400000) + 1)
+                  : "?";
+                const daysNext = Math.max(0, Math.round((new Date(endVal) - new Date(pEnd)) / 86400000));
+                if (!warnEl) {
+                  warnEl = document.createElement("div");
+                  warnEl.id = warnId;
+                  warnEl.style.cssText = "background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;padding:7px 10px;font-size:12px;color:#92400E;margin-top:4px";
+                  document.getElementById(endId)?.parentElement?.appendChild(warnEl);
+                }
+                warnEl.innerHTML = `↔ <b>Multi-período:</b> ${daysInPeriod} d en este período · ${daysNext} d en el siguiente. El sistema los distribuirá automáticamente al calcular.`;
+              } else if (warnEl) {
+                warnEl.remove();
+              }
+            });
+          }, 0);
         }
-        body = { novelty_type: code, novelty_date: noveltyDate, observations: obsText };
-
-      } else if (RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code)) {
-        const startDate = document.getElementById("novStart").value;
-        const endDate   = document.getElementById("novEnd").value;
-        if (!startDate) { showError("Indique la fecha de inicio."); return; }
-        const days = Number(document.getElementById("novDays").value);
-        if (!days || days < 1) { showError("Los días deben ser mayor a 0."); return; }
-        body = { novelty_type: code, start_date: startDate, end_date: endDate || startDate, days, observations: obsText };
-
-      } else {
-        const singleDate = document.getElementById("novSingle").value;
-        if (!singleDate) { showError("Indique la fecha de presentación de la novedad."); return; }
-        body = { novelty_type: code, start_date: singleDate, end_date: singleDate, days: 1, observations: obsText };
       }
+    }
 
-      await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(body) });
+    // Tipos de fecha única (citas, permisos, citaciones…)
+    if (n === 1) {
+      section.innerHTML = `
+<div class="nm-pay-field">
+  <label>Fecha de presentación <span style="color:#EF4444">*</span></label>
+  <input class="nm-pay-input" id="novSingle_0" type="date">
+  <small style="color:#94A3B8">Se registra como 1 día de novedad.</small>
+</div>`;
+    } else {
+      let rows = "";
+      for (let i = 0; i < n; i++) {
+        rows += `<div class="nm-bulk-single-row">
+  <span class="nm-bulk-single-label">Fecha ${i + 1}</span>
+  <input class="nm-pay-input" id="novSingle_${i}" type="date">
+</div>`;
+      }
+      section.innerHTML = `<div class="nm-bulk-singles">${rows}</div>`;
+    }
+  }
+
+  // ── Actualización completa del modal (tipo/cantidad cambiaron) ────────────
+  function update() {
+    const code   = getCode();
+    const isDate = DATE_TYPES.has(code);
+    const qty    = getQty();
+    const n      = isDate ? 1 : qty;
+
+    // Visibilidad del campo cantidad
+    const qtyRow = document.getElementById("novQtyRow");
+    if (qtyRow) qtyRow.hidden = isDate;
+
+    // Impacto
+    const meta  = noveltyByCode(code);
+    const impEl = document.getElementById("novImpactInfo");
+    if (impEl) impEl.innerHTML = meta ? noveltyImpactNoticeHtml(meta) : "";
+
+    // Campos de fecha
+    renderDates(code, qty);
+
+    // Restaurar botón principal (por si venimos de pantalla de confirmación)
+    const actEl = document.getElementById("novActions");
+    if (actEl) {
+      actEl.innerHTML = `<button class="nm-pay-btn nm-pay-btn--primary" id="novSave">${n > 1 ? `Continuar → ${n} registros` : "Guardar novedad"}</button>`;
+    }
+
+    wireSave();
+  }
+
+  // ── Recolectar y validar todos los cuerpos ────────────────────────────────
+  function collectBodies() {
+    const code    = getCode();
+    const qty     = DATE_TYPES.has(code) ? 1 : getQty();
+    const obsText = document.getElementById("novDesc")?.value || "";
+    const bodies  = [];
+    const seen    = new Set();
+
+    if (DATE_TYPES.has(code)) {
+      const d = document.getElementById("novDate_0")?.value;
+      if (!d) throw new Error(`Ingrese la fecha de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`);
+      const body = { novelty_type: code, novelty_date: d, observations: obsText };
+      if (code === "FECHA_RETIRO") {
+        const r = document.getElementById("novRetirementReason")?.value || "";
+        if (!r) throw new Error("Seleccione el motivo del retiro.");
+        body.retirement_reason = r;
+      }
+      return [body];
+    }
+
+    const isRange = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+    for (let i = 0; i < qty; i++) {
+      const lbl = qty > 1 ? `Registro ${i + 1}: ` : "";
+      if (isRange) {
+        const s = document.getElementById(`novStart_${i}`)?.value;
+        const e = document.getElementById(`novEnd_${i}`)?.value;
+        const d = Number(document.getElementById(`novDays_${i}`)?.value);
+        if (!s) throw new Error(`${lbl}Indique la fecha de inicio.`);
+        if (!d || d < 1) throw new Error(`${lbl}Los días deben ser mayor a 0.`);
+        if (e && e < s) throw new Error(`${lbl}La fecha fin no puede ser anterior a la fecha inicio.`);
+        const key = `${s}|${e || s}`;
+        if (seen.has(key)) throw new Error(`Fechas duplicadas en el registro ${i + 1}.`);
+        seen.add(key);
+        bodies.push({ novelty_type: code, start_date: s, end_date: e || s, days: d, observations: obsText });
+      } else {
+        const d = document.getElementById(`novSingle_${i}`)?.value;
+        if (!d) throw new Error(`${lbl}Indique la fecha de presentación.`);
+        if (seen.has(d)) throw new Error(`Fecha ${d} ya ingresada en otro registro.`);
+        seen.add(d);
+        bodies.push({ novelty_type: code, start_date: d, end_date: d, days: 1, observations: obsText });
+      }
+    }
+    return bodies;
+  }
+
+  // ── Pantalla de confirmación ───────────────────────────────────────────────
+  function showConfirm(bodies) {
+    const code    = getCode();
+    const nm      = noveltyByCode(code);
+    const novName = nm?.name || code;
+    const isRange = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+
+    const items = bodies.map((b) => {
+      if (isRange) {
+        const s = fmtDateDMY(b.start_date), e = fmtDateDMY(b.end_date);
+        return `<li>${escapeHtml(novName)} — ${s === e ? s : `${s} al ${e}`} · ${b.days} día${b.days !== 1 ? "s" : ""}</li>`;
+      }
+      return `<li>${escapeHtml(novName)} — ${fmtDateDMY(b.start_date)}</li>`;
+    }).join("");
+
+    document.getElementById("novDatesSection").innerHTML = `
+<div class="nm-bulk-summary">
+  <div class="nm-bulk-summary-title">&#10003; Resumen de creación</div>
+  <ul class="nm-bulk-summary-list">${items}</ul>
+  <div class="nm-bulk-summary-total">Total a crear: <b>${bodies.length}</b> novedad${bodies.length !== 1 ? "es" : ""}</div>
+</div>`;
+
+    document.getElementById("novActions").innerHTML = `
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+  <button class="nm-pay-btn nm-pay-btn--sm" id="novBack">← Volver</button>
+  <button class="nm-pay-btn nm-pay-btn--primary" id="novConfirm">&#10003; Confirmar — crear ${bodies.length} novedad${bodies.length !== 1 ? "es" : ""}</button>
+</div>`;
+
+    document.getElementById("novBack")?.addEventListener("click", update);
+
+    let _busy = false;
+    document.getElementById("novConfirm")?.addEventListener("click", async () => {
+      if (_busy) return;
+      _busy = true;
+      const btn = document.getElementById("novConfirm");
+      if (btn) { btn.disabled = true; btn.textContent = `Creando ${bodies.length}…`; }
+      let ok = 0;
+      const errs = [];
+      for (const b of bodies) {
+        try {
+          await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(b) });
+          ok++;
+        } catch (e) {
+          errs.push(e.message);
+        }
+      }
       closeModal();
       await reloadWorkArea();
-      showSuccess("Novedad registrada");
-    } catch (err) {
-      showError(err.message);
-    } finally {
-      _savingNovelty = false;
-      if (btn) { btn.disabled = false; btn.textContent = "Guardar novedad"; }
+      if (!errs.length) {
+        showSuccess(`${ok} novedad${ok !== 1 ? "es" : ""} registrada${ok !== 1 ? "s" : ""}`);
+      } else {
+        showSuccess(`${ok} creada${ok !== 1 ? "s" : ""}. Error en ${errs.length}: ${errs[0]}`);
+      }
+    });
+  }
+
+  // ── Botón principal (guardar o continuar) ─────────────────────────────────
+  function wireSave() {
+    const btn = document.getElementById("novSave");
+    if (!btn) return;
+    btn.onclick = async () => {
+      let bodies;
+      try { bodies = collectBodies(); } catch (e) { showError(e.message); return; }
+
+      if (bodies.length === 1) {
+        btn.disabled = true; btn.textContent = "Guardando…";
+        try {
+          await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(bodies[0]) });
+          closeModal();
+          await reloadWorkArea();
+          showSuccess("Novedad registrada");
+        } catch (e) {
+          showError(e.message);
+          btn.disabled = false;
+          btn.textContent = "Guardar novedad";
+        }
+      } else {
+        showConfirm(bodies);
+      }
+    };
+  }
+
+  document.getElementById("novType")?.addEventListener("change", update);
+  document.getElementById("novQty")?.addEventListener("input", () => {
+    const el = document.getElementById("novQty");
+    if (el) {
+      const v = parseInt(el.value, 10);
+      if (isNaN(v) || v < 1) el.value = 1;
+      else if (v > MAX_BULK) el.value = MAX_BULK;
     }
+    update();
   });
+  update();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2042,8 +2703,9 @@ function openEditNoveltyModal(noveltyId) {
   const code0                = novelty.novelty_type;
   const isDate0              = DATE_TYPES.has(code0);
   const isRange0             = RANGE_TYPES.has(code0) || BUSINESS_RANGE_TYPES.has(code0);
-  const startVal    = String(novelty.start_date || "").slice(0, 10);
-  const endVal      = String(novelty.end_date   || "").slice(0, 10);
+  // Para novedades multi-período mostrar las fechas originales, no las recortadas
+  const startVal = String(novelty.original_start_date || novelty.start_date || "").slice(0, 10);
+  const endVal   = String(novelty.original_end_date   || novelty.end_date   || "").slice(0, 10);
 
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
@@ -2061,12 +2723,40 @@ function openEditNoveltyModal(noveltyId) {
     </div>
     <div id="novImpactInfo"></div>
 
+    ${novelty.is_continuation ? `
+    <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:6px;padding:8px 12px;font-size:12px;color:#3730A3">
+      <b>↩ Continuación automática</b> — Esta novedad fue generada por el sistema a partir de
+      una novedad de <b>${escapeHtml(novelty.novelty_name || novelty.novelty_type || "")}</b>
+      registrada en el período anterior (${fmtDateDMY(novelty.original_start_date)} al ${fmtDateDMY(novelty.original_end_date)}).
+      Para modificar las fechas, edite la novedad original en el período donde se creó.
+    </div>` : novelty.original_end_date ? `
+    <div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400E">
+      <b>↔ Novedad multi-período</b> — Abarca del ${fmtDateDMY(novelty.original_start_date || novelty.start_date)}
+      al ${fmtDateDMY(novelty.original_end_date)}.
+      Los días del período siguiente se cargarán automáticamente al calcular esa nómina.
+      Puede editar la fecha fin aquí; el sistema recalculará la distribución.
+    </div>` : ""}
+
     <!-- Sección 1: fecha exacta — solo FECHA_INGRESO / FECHA_RETIRO -->
     <div id="novDateSection" ${isDate0 ? "" : "hidden"}>
       <div class="nm-pay-field">
         <label id="novDateLabel">${code0 === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
         <input class="nm-pay-input" id="novDate" type="date" value="${escapeHtml(startVal)}">
         <small id="novDateHelp" style="color:#94A3B8">${code0 === "FECHA_INGRESO" ? "La nómina se liquidará desde este día hasta el fin del período." : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
+      </div>
+    </div>
+
+    <!-- Sección motivo retiro — solo FECHA_RETIRO -->
+    <div id="novRetirementSection" ${code0 === "FECHA_RETIRO" ? "" : "hidden"}>
+      <div class="nm-pay-field">
+        <label>Motivo del retiro <span style="color:#EF4444">*</span></label>
+        <select class="nm-pay-select" id="novRetirementReason">
+          <option value="">— Seleccione motivo —</option>
+          <option value="disminucion_cupos" ${novelty.retirement_reason === "disminucion_cupos" ? "selected" : ""}>Disminución de cupos</option>
+          <option value="renuncia" ${novelty.retirement_reason === "renuncia" ? "selected" : ""}>Renuncia</option>
+          <option value="terminacion_contrato" ${novelty.retirement_reason === "terminacion_contrato" ? "selected" : ""}>Terminación de contrato</option>
+        </select>
+        <small style="color:#94A3B8">Determina si el puesto requiere reemplazo y cómo se calculan los Días SS.</small>
       </div>
     </div>
 
@@ -2104,9 +2794,10 @@ function openEditNoveltyModal(noveltyId) {
     const isRange  = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
     const isBiz    = BUSINESS_RANGE_TYPES.has(code);
     const isSingle = !isDate && !isRange;
-    document.getElementById("novDateSection").hidden   = !isDate;
-    document.getElementById("novRangeSection").hidden  = !isRange;
-    document.getElementById("novSingleSection").hidden = !isSingle;
+    document.getElementById("novDateSection").hidden       = !isDate;
+    document.getElementById("novRangeSection").hidden      = !isRange;
+    document.getElementById("novSingleSection").hidden     = !isSingle;
+    document.getElementById("novRetirementSection").hidden = (code !== "FECHA_RETIRO");
     const daysEl = document.getElementById("novDays");
     if (daysEl) {
       daysEl.dataset.mode    = isBiz ? "biz" : "";
@@ -2153,6 +2844,11 @@ function openEditNoveltyModal(noveltyId) {
         const noveltyDate = document.getElementById("novDate").value;
         if (!noveltyDate) { showError(`Ingrese la fecha exacta de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`); return; }
         body = { novelty_type: code, novelty_date: noveltyDate, description: obsText };
+        if (code === "FECHA_RETIRO") {
+          const retirementReason = document.getElementById("novRetirementReason")?.value || "";
+          if (!retirementReason) { showError("Seleccione el motivo del retiro."); return; }
+          body.retirement_reason = retirementReason;
+        }
 
       } else if (RANGE_TYPES.has(code)) {
         const startDate = document.getElementById("novStart").value;
@@ -2258,6 +2954,26 @@ function openCoverModal(noveltyId, itemId) {
 </div>`;
   modal.hidden = false;
   wireModalClose();
+
+  // Cuando la nómina está cerrada: solo coberturas externas
+  const closedGroup = isGroupClosed(activeGroupDetail?.group);
+  if (closedGroup) {
+    const typeEl = document.getElementById("coverType");
+    if (typeEl) {
+      typeEl.value = "EXTERNA";
+      const internaOpt = typeEl.querySelector('option[value="INTERNA"]');
+      if (internaOpt) {
+        internaOpt.disabled = true;
+        internaOpt.text = "Personal interno (no disponible — nómina cerrada)";
+      }
+    }
+    document.getElementById("coverSectionInterna").hidden = true;
+    document.getElementById("coverSectionExterna").hidden = false;
+    const noticeEl = document.createElement("div");
+    noticeEl.style.cssText = "background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400E;margin-bottom:4px";
+    noticeEl.innerHTML = "&#9888; <b>Nómina cerrada.</b> Solo se permiten coberturas de personal externo. La liquidación queda protegida.";
+    document.querySelector("#nmPayModal .nm-pay-dialog-b")?.prepend(noticeEl);
+  }
 
   // Alternar secciones al cambiar tipo
   document.getElementById("coverType")?.addEventListener("change", (e) => {
@@ -2456,13 +3172,12 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
       if (n.end_date && n.end_date > groups[key].end_date)
         groups[key].end_date = n.end_date;
     });
-    const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
     const rows = Object.values(groups).map((g) => {
       const badgeCls = g.affects_salary
         ? "nov-badge--sal"
         : g.affects_transport ? "nov-badge--tra" : "nov-badge--other";
       const dateRange = (g.start_date || g.end_date)
-        ? `${fmtDate(g.start_date)} — ${fmtDate(g.end_date)}`
+        ? fmtDateRange(g.start_date, g.end_date)
         : "";
       return `<div class="nov-report-row">
         <div>
@@ -2637,13 +3352,12 @@ async function openPayslipModal(itemId) {
         if (n.end_date && n.end_date > groups[key].end_date)
           groups[key].end_date = n.end_date;
       });
-      const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
       const novRows = Object.values(groups).map((g) => {
         const badgeColor = g.affects_salary
           ? "background:#FEE2E2;color:#B91C1C"
           : g.affects_transport ? "background:#FEF3C7;color:#B45309" : "background:#F1F5F9;color:#475569";
         const dateRange = (g.start_date || g.end_date)
-          ? `<div style="font-size:11px;color:#64748B;margin-top:1px">${fmtDate(g.start_date)} — ${fmtDate(g.end_date)}</div>`
+          ? `<div style="font-size:11px;color:#64748B;margin-top:1px">${fmtDateRange(g.start_date, g.end_date)}</div>`
           : "";
         return `<div class="nm-slip-row" style="align-items:center">
           <div>
@@ -3122,10 +3836,9 @@ async function openSupportsModal() {
 </div>`;
     modal.hidden = false;
     wireModalClose();
-    document.getElementById("nmGoSupTab")?.addEventListener("click", async () => {
+    document.getElementById("nmGoSupTab")?.addEventListener("click", () => {
       closeModal();
-      activePrimaryTab = "soportes";
-      if (!supportsData.length) await loadSupports();
+      activeDetailTab = "soportes";
       render();
     });
   } catch (err) { showError(err.message); }
@@ -3199,25 +3912,22 @@ function renderSupportsSection(supports, isClosed, covers) {
     }
   }
 
-  // ── 2. Personal externo desde coberturas del grupo ────────────────────────
-  const extWorkerMap = new Map();
-  for (const c of (covers || [])) {
-    if (c.cover_type === "EXTERNA" && c.external_worker_id) {
-      if (!extWorkerMap.has(c.external_worker_id)) {
-        extWorkerMap.set(c.external_worker_id, {
-          id:   c.external_worker_id,
-          name: c.external_worker_name || c.external_worker_doc || "—",
-          doc:  c.external_worker_doc  || "",
-        });
-      }
-    }
-  }
+  console.log("[support upload]", {
+    municipality:    activeGroupDetail?.group?.municipality_name || activeGroupDetail?.group?.municipality_id,
+    groupId:         activeGroupDetail?.group?.id,
+    payrollStatus:   activeGroupDetail?.group?.status,
+    totalSupportRows: (supports || []).length,
+    noveltyGroups:   byNovelty.size,
+    rowSources:      [...new Set((supports || []).map((s) => s.row_source || "unknown"))],
+    withRealSupport: (supports || []).filter((s) => s.support_id || s.id).length,
+    withoutSupport:  (supports || []).filter((s) => !s.support_id && !s.id).length,
+  });
 
-  const novEntries   = [...byNovelty.values()];
+  // Excluir DIAS_NO_CLASE: no requiere soporte y no debe aparecer en soportes
+  const novEntries   = [...byNovelty.values()].filter((e) => e.novelty_type !== "DIAS_NO_CLASE");
   const hasNovelties = novEntries.length > 0;
-  const hasExt       = extWorkerMap.size > 0;
 
-  if (!hasNovelties && !hasExt) {
+  if (!hasNovelties) {
     return `<div class="nm-pay-empty" style="padding:20px">
       Sin novedades con soportes requeridos en este grupo.<br>
       <small style="color:#94A3B8">Los soportes se crean automáticamente cuando una novedad requiere documentación.</small>
@@ -3254,20 +3964,37 @@ function renderSupportsSection(supports, isClosed, covers) {
     const status  = record ? (record.status || record.support_status || "pendiente") : "pendiente";
     const hasFile = Boolean(record?.file_url && record.file_url !== "");
     const label   = SUPPORT_TYPE_LABELS[docType] || docType;
+
+    console.log("[support upload]", {
+      municipality:  activeGroupDetail?.group?.municipality_name || activeGroupDetail?.group?.municipality_id,
+      noveltyId:     novelty_id,
+      supportId:     supId,
+      supportType:   docType,
+      payrollStatus: activeGroupDetail?.group?.status,
+      hasFile,
+      hasRecord:     Boolean(record),
+      visibleUpload: !hasFile,
+    });
+
+    // El botón de carga se muestra siempre que no haya archivo:
+    //   - Si supId existe: actualiza el registro existente.
+    //   - Si supId es null: crea un nuevo registro al subir (el handler usa novelty_id).
+    // Nunca mostrar solo "Pendiente" cuando hay un novelty_id válido — eso bloquea el proceso.
+    const uploadBtn = `<label class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" style="cursor:pointer;display:inline-flex;align-items:center;gap:3px" title="${supId ? "Reemplazar archivo" : "Adjuntar soporte"}">
+         &#8593; Cargar
+         <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none"
+           data-upload-support="${supId || ""}" data-novelty-id="${novelty_id}" data-doc-type="${escapeHtml(docType)}">
+       </label>`;
+
     return `
 <div class="nm-sup-inline-doc">
   <span class="nm-sup-inline-doc-label">${escapeHtml(label)}</span>
   <span>${supportStatusBadge(status)}</span>
   ${hasFile
-    ? `<button class="nm-pay-btn nm-pay-btn--sm" data-view-support="${supId}" title="Ver archivo">&#128206; Ver</button>
-       <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(record.file_url)}" download="${escapeHtml(record.file_name || "soporte")}" target="_blank">&#8615;</a>`
-    : supId && !isClosed
-      ? `<label class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--warning" style="cursor:pointer;display:inline-flex;align-items:center;gap:3px">
-           &#8593; Cargar
-           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none"
-             data-upload-support="${supId}" data-novelty-id="${novelty_id}">
-         </label>`
-      : `<span style="font-size:11px;color:#94A3B8">${supId ? "Sin archivo" : "Pendiente"}</span>`}
+    ? `<a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(record.file_url)}" target="_blank" rel="noopener noreferrer" title="Ver archivo">&#128206; Ver</a>
+       <a class="nm-pay-btn nm-pay-btn--sm" href="${escapeHtml(record.file_url)}" download="${escapeHtml(record.file_name || "soporte")}" target="_blank">&#8615;</a>
+       ${uploadBtn}`
+    : uploadBtn}
 </div>`;
   }
 
@@ -3308,30 +4035,6 @@ function renderSupportsSection(supports, isClosed, covers) {
 </div>`;
   }).join("");
 
-  // ── 6. Sección de personal externo ───────────────────────────────────────
-  const EXT_REQUIRED = ["Cuenta de Cobro", "Cédula de Ciudadanía", "Certificación Bancaria"];
-  const extHtml = hasExt ? `
-<div style="border-top:2px solid #FEF3C7;padding-top:10px;margin-top:10px">
-  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#92400E;padding:0 8px 8px">
-    &#9888; Personal Externo — Documentos Requeridos
-  </div>
-  ${[...extWorkerMap.values()].map((w) => `
-<div class="nm-sup-inline-group" style="border-color:#FDE68A">
-  <div class="nm-sup-inline-nov-hd" style="background:#FFFBEB">
-    <span class="nm-sup-inline-nov-type" style="color:#92400E">Personal Externo</span>
-    <span class="nm-sup-inline-nov-emp">${escapeHtml(w.name)}</span>
-    <span class="nm-sup-inline-nov-doc">CC ${escapeHtml(w.doc)}</span>
-  </div>
-  <div class="nm-sup-inline-docs">
-    ${EXT_REQUIRED.map((lbl) => `
-<div class="nm-sup-inline-doc">
-  <span class="nm-sup-inline-doc-label">${escapeHtml(lbl)}</span>
-  <span class="nm-sup-badge nm-sup-badge--pendiente">Pendiente</span>
-  <span style="font-size:11px;color:#94A3B8">Gestionar en Turnos → Cta. Cobro</span>
-</div>`).join("")}
-  </div>
-</div>`).join("")}
-</div>` : "";
 
   return `
 <div class="nm-sup-inline">
@@ -3349,7 +4052,6 @@ function renderSupportsSection(supports, isClosed, covers) {
   </div>
   <div class="nm-sup-inline-list">
     ${noveltyCardsHtml}
-    ${extHtml}
   </div>
 </div>`;
 }
@@ -3458,7 +4160,7 @@ function renderSupportsTable(data) {
   <td style="white-space:nowrap;font-size:11px">${escapeHtml(nmName)}</td>
   <td style="font-size:11px">${escapeHtml(s.municipality_name || "—")}</td>
   <td style="font-size:11px"><small>${escapeHtml(s.institution_name || "—")}</small></td>
-  <td style="font-size:11px;white-space:nowrap">${escapeHtml(String(s.novelty_date || "—").slice(0, 10))}</td>
+  <td style="font-size:11px;white-space:nowrap">${fmtDateDMY(s.novelty_date)}</td>
   <td style="font-size:11px">${escapeHtml(SUPPORT_TYPE_LABELS[s.support_type] || s.support_type || "—")}</td>
   <td>
     ${hasFile
@@ -3837,7 +4539,7 @@ export async function loadPayrollModule() {
   activeGroupId      = null;
   activeGroupDetail  = null;
   activeGroupTurns   = null;
-  turnosFilter       = { type: "TODOS", search: "" };
+  turnosFilter       = { search: "", hasCuentaCobro: "" };
   municipalitySearch = "";
   activePrimaryTab   = "nomina";
   supportsData       = [];

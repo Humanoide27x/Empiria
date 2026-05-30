@@ -2121,13 +2121,22 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     console.warn("[personnel] No fue posible cargar catálogos del formulario:", error.message);
   }
 
-  // Only clear gestor if gestorNames loaded successfully AND is non-empty AND gestor not in list
+  // Limpiar gestor/auxiliar del draft SOLO si el scope cargado corresponde al municipio
+  // del empleado Y el nombre no está en la lista. Evita borrar datos válidos cuando
+  // la lista se cargó para un municipio distinto o está incompleta.
   const gestorNamesLoaded = (_cachedPayload?.gestorNames || []).length > 0;
-  if (gestorNamesLoaded && state.personnelDraft?.gestorZona && !(_cachedPayload.gestorNames).includes(state.personnelDraft.gestorZona)) {
+  const draftMuniId = String(getDraftMunicipalityId(state.personnelDraft) || "").trim();
+  const gestorScopeMatchesDraft = !draftMuniId ||
+    String(_cachedPayload?.gestorScopeKey || "").includes(draftMuniId);
+  if (gestorNamesLoaded && gestorScopeMatchesDraft &&
+      state.personnelDraft?.gestorZona &&
+      !(_cachedPayload.gestorNames).includes(state.personnelDraft.gestorZona)) {
     state.personnelDraft.gestorZona = "";
   }
   const auxiliarNamesLoaded = (_cachedPayload?.auxiliarGestorNames || []).length > 0;
-  if (auxiliarNamesLoaded && state.personnelDraft?.auxiliarGestorZona && !(_cachedPayload.auxiliarGestorNames).includes(state.personnelDraft.auxiliarGestorZona)) {
+  if (auxiliarNamesLoaded && gestorScopeMatchesDraft &&
+      state.personnelDraft?.auxiliarGestorZona &&
+      !(_cachedPayload.auxiliarGestorNames).includes(state.personnelDraft.auxiliarGestorZona)) {
     state.personnelDraft.auxiliarGestorZona = "";
   }
 
@@ -2954,17 +2963,27 @@ export async function renderPersonnelTableModule() {
   if (!state.personnelDetailCache) state.personnelDetailCache = new Map();
   const getFullEmployee = async (id) => {
     const key = String(id || "");
-    const local = rows.find((r) => String(r.id) === key);
     if (!key) return null;
-    if (state.personnelDetailCache.has(key)) return state.personnelDetailCache.get(key);
-    if (local && local._listOnly !== true) {
-      state.personnelDetailCache.set(key, local);
-      return local;
+    // Usar caché si ya existe el detalle completo
+    if (state.personnelDetailCache.has(key)) {
+      const cached = state.personnelDetailCache.get(key);
+      console.log("[employee load]", { employeeId: key, source: "cache", employeeData: cached });
+      return cached;
     }
-    const payload = await apiFetch(`/personnel/${encodeURIComponent(key)}`);
-    const full = payload?.data || local || null;
-    if (full) state.personnelDetailCache.set(key, full);
-    return full;
+    // Siempre obtener el detalle completo desde la API.
+    // Las filas del listado omiten campos clave (modality, institution, site, etc.)
+    // por lo que usarlas directamente deja el formulario con campos vacíos.
+    const listFallback = rows.find((r) => String(r.id) === key) || null;
+    try {
+      const payload = await apiFetch(`/personnel/${encodeURIComponent(key)}`);
+      const full = payload?.data || listFallback;
+      console.log("[employee load]", { employeeId: key, source: "api", employeeData: full });
+      if (full) state.personnelDetailCache.set(key, full);
+      return full;
+    } catch (err) {
+      console.warn("[employee load] fallo API, usando fila del listado:", err.message);
+      return listFallback;
+    }
   };
 
   // ── Filtrar ───────────────────────────────────────────────────────────────
@@ -3691,11 +3710,18 @@ export async function handlePersonnelFormSubmit(event) {
   const isEdit = state.personnelViewMode === "edit" && state.personnelEditingId;
   if (isEdit) payload.id = state.personnelEditingId;
 
-  console.log("[personnel save] modality payload", {
-    educationalModality: payload.educationalModality,
-    institution:         payload.institution,
-    site:                payload.site,
-    id:                  payload.id,
+  console.log("[employee save]", {
+    employeeId:      state.personnelEditingId,
+    payloadReceived: {
+      educationalModality: payload.educationalModality,
+      institution:         payload.institution,
+      site:                payload.site,
+      municipalityId:      payload.municipalityId,
+      workTimeType:        payload.workTimeType,
+      gestorZona:          payload.gestorZona,
+      contractType:        payload.contractType,
+    },
+    payloadSaved: payload,
   });
 
   try {
@@ -3705,6 +3731,26 @@ export async function handlePersonnelFormSubmit(event) {
     });
 
     if (isEdit) {
+      // Invalidar caché del empleado para que la próxima apertura de "Editar"
+      // siempre obtenga los datos actualizados desde la API.
+      if (state.personnelDetailCache) {
+        state.personnelDetailCache.delete(String(state.personnelEditingId));
+      }
+      // Re-fetch inmediato para actualizar el draft con los datos confirmados por el servidor
+      try {
+        const freshPayload = await apiFetch(`/personnel/${encodeURIComponent(state.personnelEditingId)}`);
+        const freshData = freshPayload?.data || null;
+        console.log("[employee load]", { employeeId: state.personnelEditingId, source: "post-save", employeeData: freshData });
+        if (freshData) {
+          if (state.personnelDetailCache) {
+            state.personnelDetailCache.set(String(state.personnelEditingId), freshData);
+          }
+          state.personnelDraft = hydratePersonnelDraft(freshData);
+        }
+      } catch (refreshErr) {
+        // No bloquear el flujo si falla la recarga — el draft actual ya tiene los valores
+        console.warn("[employee load] No se pudo recargar tras guardar:", refreshErr.message);
+      }
       showSuccess("Los datos del empleado han sido actualizados.", "Empleado actualizado");
       if (!state.personnelSavedTabs) state.personnelSavedTabs = new Set();
       state.personnelSavedTabs.add(state.personnelCreateTab);

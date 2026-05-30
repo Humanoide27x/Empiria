@@ -309,6 +309,10 @@ function mapEmployee(row) {
     status: row.status || "",
     estado: row.status || "",
 
+    retirement_date: row.retirement_date || null,
+    retirementDate:  row.retirement_date || null,
+    fecha_retiro:    row.retirement_date || null,
+
     sisben: Boolean(row.sisben),
     sisbenCategory: row.sisben_category || "",
     sisben_categoria: row.sisben_category || "",
