@@ -253,6 +253,17 @@ function mapEmployee(row) {
 
     startDate: row.start_date || "",
     start_date: row.start_date || "",
+    fecha_inicio_laboral: row.labor_start_date || row.start_date || row.coverage_start_date || "",
+    laborStartDate: row.labor_start_date || "",
+    labor_start_date: row.labor_start_date || "",
+    fecha_finalizacion_laboral: row.labor_end_date || "",
+    fecha_retiro: row.labor_end_date || "",
+    laborEndDate: row.labor_end_date || "",
+    labor_end_date: row.labor_end_date || "",
+    motivo_finalizacion: row.termination_reason || "",
+    terminationReason: row.termination_reason || "",
+    estado_laboral: row.employment_status || row.status || "",
+    employmentStatus: row.employment_status || row.status || "",
 
     workdayType: row.workday_type || "",
     workday_type: row.workday_type || "",
@@ -383,6 +394,7 @@ const _BASE_COLS = `
     e.real_position, e.cargo,
     e.eps, e.pension_fund, e.compensation_box, e.arl, e.arl_vinculation_date,
     e.coverage_start_date, e.start_date,
+    e.labor_start_date, e.labor_end_date, e.termination_reason, e.employment_status,
     e.workday_type, e.sex, e.biological_sex,
     e.gestor_zona, e.municipios_a_cargo,
     e.tenant_id, e.company_id, e.contract_id,
@@ -431,6 +443,9 @@ const _LIST_COLS = `
     e.modality,
     e.gestor_zona,
     e.coverage_start_date,
+    e.labor_start_date,
+    e.labor_end_date,
+    e.employment_status,
     m.name AS municipality_name,
     c.name AS contract_name,
     i.name AS institution_name,
@@ -491,6 +506,9 @@ function mapEmployeeList(row) {
     modality: row.modality || "",
     gestorZona: row.gestor_zona || "",
     coverageStartDate: row.coverage_start_date || "",
+    laborStartDate: row.labor_start_date || "",
+    laborEndDate: row.labor_end_date || "",
+    employmentStatus: row.employment_status || row.status || "",
     institutionName: row.institution_name || "",
     institution: row.institution_name || "",
     institucion_educativa: row.institution_name || "",
@@ -805,13 +823,14 @@ async function createEmployee(data) {
       eps, pension_fund, compensation_box, arl,
       arl_vinculation_date, coverage_start_date,
       status, workday_type, gestor_zona, municipios_a_cargo,
-      shirt_size, pants_size, shoe_size, contract_type
+      shirt_size, pants_size, shoe_size, contract_type,
+      labor_start_date, labor_end_date, termination_reason, employment_status
     ) VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
       $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
       $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,
-      $44,$45,$46,$47
+      $44,$45,$46,$47,$48,$49,$50,$51
     ) RETURNING *`,
     [
       toNumberOrNull(data.tenantId || data.tenant_id) || 1,
@@ -861,6 +880,10 @@ async function createEmployee(data) {
       data.pantsSize    || "",
       data.shoeSize     || "",
       data.contractType || data.contract_type || "",
+      safeDate(data.fecha_inicio_laboral || data.laborStartDate || data.labor_start_date || data.startDate || data.start_date || data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date),
+      safeDate(data.fecha_finalizacion_laboral || data.fecha_retiro || data.laborEndDate || data.labor_end_date || data.terminationDate),
+      data.motivo_finalizacion || data.terminationReason || data.termination_reason || "",
+      data.estado_laboral || data.employmentStatus || data.employment_status || data.status || data.estado || "ACTIVO",
     ]
   );
 
@@ -1010,6 +1033,10 @@ async function updateEmployee(id, data) {
       account_number      = $67,
       auxiliar_gestor_zona = $68,
       contract_type       = $69,
+      labor_start_date    = $70,
+      labor_end_date      = $71,
+      termination_reason  = $72,
+      employment_status   = $73,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *`,
@@ -1086,6 +1113,10 @@ async function updateEmployee(id, data) {
       data.accountNumber      || "",
       data.auxiliarGestorZona || "",
       data.contractType       || data.contract_type || "",
+      safeDate(data.fecha_inicio_laboral || data.laborStartDate || data.labor_start_date || data.startDate || data.start_date),
+      safeDate(data.fecha_finalizacion_laboral || data.fecha_retiro || data.laborEndDate || data.labor_end_date || data.terminationDate),
+      data.motivo_finalizacion || data.terminationReason || data.termination_reason || "",
+      data.estado_laboral || data.employmentStatus || data.employment_status || data.status || data.estado || "ACTIVO",
     ]
   );
 

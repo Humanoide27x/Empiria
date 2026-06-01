@@ -12,6 +12,7 @@
 
 const path = require("path");
 const fs   = require("fs");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const pool = require("../src/db/pool");
 
 const MIGRATIONS_DIR = path.join(__dirname, "../src/db/migrations");
@@ -108,8 +109,6 @@ module.exports = { runMigrations };
 
 // Ejecución directa: node scripts/run-migrations.js
 if (require.main === module) {
-  require("dotenv").config({ path: path.join(__dirname, "../.env") });
-
   runMigrations()
     .then(() => {
       console.log("[migrations] Proceso finalizado.");

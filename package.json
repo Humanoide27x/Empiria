@@ -1,7 +1,7 @@
 {
   "name": "empiria-backend",
   "version": "1.0.0",
-  "description": "EMPIRIA — SaaS de Gestión de Talento Humano PAE",
+  "description": "EMPIRIA - SaaS de Gestion de Talento Humano PAE",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
@@ -9,7 +9,7 @@
     "db:migrate": "node scripts/run-migrations.js",
     "db:backup": "node scripts/backup-db.js",
     "db:migrate-json": "node scripts/migrate-json-to-pg.js",
-    "test": "node -e \"console.log('Sin pruebas automáticas todavía')\""
+    "test": "node --test test/*.test.js"
   },
   "keywords": [],
   "author": "",

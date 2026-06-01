@@ -3,6 +3,15 @@
 const pool = require("../../db/pool");
 const { getPayrollConfig } = require("../../data/payroll_config");
 const { calculatePayrollDeductionBase } = require("../../utils/payroll-deductions");
+const {
+  dateOnly,
+  getEmployeeLaborStartDate,
+  getEmployeeLaborEndDate,
+  employeeAppliesToPayrollPeriod,
+  calculatePayrollWorkedDays,
+  laborDateNoveltiesForPeriod,
+  payrollInclusionStatus,
+} = require("../../utils/payroll-period-eligibility");
 
 const OPERARIO_POSITION = "OPERARIO MANIPULADOR DE ALIMENTOS";
 
@@ -236,6 +245,112 @@ function workTimeKind(value) {
 function statusIsActive(value) {
   const v = norm(value);
   return !["RETIRADO", "RETIRADA", "INACTIVO", "INACTIVA"].includes(v);
+}
+
+async function upsertLaborDateNovelty(db, item, novelty, userId = null) {
+  if (!item?.id || !novelty?.novelty_type || !novelty.start_date) return null;
+  const observations = novelty.novelty_type === "FECHA_RETIRO"
+    ? "Novedad de retiro sincronizada desde Personal"
+    : "Novedad de ingreso sincronizada desde Personal";
+
+  const existingWhere = novelty.novelty_type === "FECHA_RETIRO"
+    ? `payroll_period_id = $1 AND employee_id = $2 AND novelty_type = 'FECHA_RETIRO'`
+    : `payroll_item_id = $1 AND employee_id = $2 AND novelty_type = $8`;
+  const { rows: existing } = await db.query(
+    `UPDATE payroll_novelties
+        SET payroll_item_id = $3,
+            start_date = $4::date,
+            end_date = $5::date,
+            days = $6,
+            observations = $7,
+            description = $7,
+            extra_data = COALESCE(extra_data, '{}'::jsonb) || $9::jsonb,
+            updated_at = NOW()
+      WHERE ${existingWhere}
+      RETURNING *`,
+    [
+      novelty.novelty_type === "FECHA_RETIRO" ? item.period_id : item.id,
+      item.employee_id,
+      item.id,
+      novelty.start_date,
+      novelty.end_date,
+      novelty.days,
+      observations,
+      novelty.novelty_type,
+      JSON.stringify({ source: novelty.source || "PERSONAL", synced_at: new Date().toISOString() }),
+    ]
+  );
+  if (existing[0]) return existing[0];
+
+  const { rows } = await db.query(
+    `INSERT INTO payroll_novelties (
+       payroll_item_id, payroll_period_id, employee_id, employee_name, document_number,
+       company_id, contract_id, municipality_id, institution_id, site_id,
+       operational_position, novelty_type, start_date, end_date, days,
+       value, observations, description, support_required, support_status, status,
+       extra_data, created_by_user_id
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+             0,$16,$16,false,'aprobado','PENDIENTE',$17,$18)
+     RETURNING *`,
+    [
+      item.id, item.period_id, item.employee_id, item.employee_name, item.document_number,
+      item.company_id, item.contract_id, item.municipality_id, item.institution_id, item.site_id,
+      item.operational_position, novelty.novelty_type, novelty.start_date, novelty.end_date, novelty.days,
+      observations,
+      JSON.stringify({ source: novelty.source || "PERSONAL", synced_at: new Date().toISOString() }),
+      id(userId),
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function syncRetirementToEmployee(employeeId, retirementDate, userId = null, db = pool) {
+  const cleanDate = dateOnly(retirementDate);
+  if (!employeeId || !cleanDate) return null;
+
+  const { rows: empRows } = await db.query(
+    `SELECT id, labor_start_date, start_date, coverage_start_date, labor_end_date, status
+       FROM employees
+      WHERE id = $1
+      LIMIT 1`,
+    [employeeId]
+  );
+  const employee = empRows[0];
+  if (!employee) return null;
+
+  const start = getEmployeeLaborStartDate(employee);
+  if (start && cleanDate < start) {
+    const err = new Error("La fecha de retiro no puede ser anterior a la fecha de ingreso.");
+    err.httpStatus = 400;
+    throw err;
+  }
+
+  const { rows } = await db.query(
+    `UPDATE employees
+        SET labor_end_date = $2::date,
+            employment_status = 'RETIRADO',
+            status = CASE
+              WHEN UPPER(BTRIM(COALESCE(status, ''))) IN ('ACTIVO','PREINGRESO','REGISTRO INCOMPLETO') THEN 'RETIRADO'
+              ELSE status
+            END,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, labor_end_date, status`,
+    [employeeId, cleanDate]
+  );
+
+  try {
+    await db.query(
+      `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, payload)
+       VALUES ('payroll', 'employee', $1, 'SYNC_RETIREMENT_FROM_PAYROLL', $2, $3)`,
+      [String(employeeId), id(userId), JSON.stringify({ retirement_date: cleanDate })]
+    );
+  } catch (_) {
+    // auditoria best-effort
+  }
+
+  return rows[0] || null;
 }
 
 function pendingNoveltySupportSql(noveltyAlias = "pn") {
@@ -838,7 +953,7 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EMPLEADOS ACTIVOS PARA EL PERÍODO
+// EMPLEADOS APLICABLES AL PERÍODO
 // ─────────────────────────────────────────────────────────────────────────────
 function rowEmployee(row) {
   return {
@@ -863,7 +978,12 @@ async function activeEmployeesForPeriod(periodId) {
             e.company_id, e.contract_id, e.municipality_id, m.name AS municipality_name,
             e.institution_id, i.name AS institution_name, e.site_id, s.name AS site_name,
             e.modality, e.workday_type AS work_time_type,
-            e.real_position AS operational_position, e.status
+            e.real_position AS operational_position, e.status,
+            COALESCE(e.labor_start_date, e.start_date, e.coverage_start_date) AS labor_start_date,
+            e.labor_end_date,
+            e.termination_reason,
+            pp.period_start,
+            pp.period_end
        FROM payroll_periods pp
        JOIN employees e ON e.contract_id = pp.contract_id
        LEFT JOIN municipalities m ON m.id = e.municipality_id
@@ -872,11 +992,10 @@ async function activeEmployeesForPeriod(periodId) {
       WHERE pp.id = $1
         AND NULLIF(BTRIM(e.real_position), '') IS NOT NULL
         AND e.municipality_id IS NOT NULL
-        AND UPPER(BTRIM(COALESCE(e.status, 'ACTIVO'))) NOT IN ('RETIRADO','RETIRADA','INACTIVO','INACTIVA')
       ORDER BY UPPER(e.real_position), m.name NULLS LAST, e.full_name`,
     [periodId]
   );
-  return rows.filter((r) => statusIsActive(r.status));
+  return rows.filter((r) => employeeAppliesToPayrollPeriod(r, r.period_start, r.period_end));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1181,18 +1300,29 @@ async function calculatePayrollGroup(groupId) {
       // DEBUG: por empleado
       console.log(`[PAYROLL CATEGORY] ${emp.employee_name} → ${categoryCode}`, salConfig);
 
+      const laborNovelties = laborDateNoveltiesForPeriod(emp, group.period_start, group.period_end);
+      const fechaIngresoAplicada = getEmployeeLaborStartDate(emp);
+      const fechaRetiroAplicada = getEmployeeLaborEndDate(emp);
+      const diasLaboradosCalculados = calculatePayrollWorkedDays(emp, group.period_start, group.period_end);
+      const inclusionStatus = payrollInclusionStatus(emp, group.period_start, group.period_end);
+
       // Novedades del empleado
       const empNovelties = novelties.filter(
         (x) => String(x.employee_id) === String(emp.employee_id)
       );
+      const laborNoveltyTypes = new Set(laborNovelties.map((x) => x.novelty_type));
+      const effectiveNovelties = [
+        ...empNovelties.filter((x) => !laborNoveltyTypes.has(x.novelty_type)),
+        ...laborNovelties,
+      ];
 
       // Cambio operativo: usa cálculo proporcional si existe la novedad
-      const cambioNov = empNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
+      const cambioNov = effectiveNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
       const amounts = cambioNov
-        ? calculateAmountsWithCambio(emp, salConfig, empNovelties, covers, cambioNov, salaryCategories)
-        : calculateEmployeeAmounts(emp, salConfig, empNovelties, covers);
+        ? calculateAmountsWithCambio(emp, salConfig, effectiveNovelties, covers, cambioNov, salaryCategories)
+        : calculateEmployeeAmounts(emp, salConfig, effectiveNovelties, covers);
 
-      await client.query(
+      const { rows: itemRows } = await client.query(
         `INSERT INTO payroll_items (
            group_id, period_id, employee_id, employee_name, document_number,
            company_id, contract_id, municipality_id, municipality_name,
@@ -1201,9 +1331,11 @@ async function calculatePayrollGroup(groupId) {
            salary_category, worked_days,
            base_salary, transport_allowance, other_earnings,
            total_devengado, total_deducciones, neto_pagar,
-           calculation, updated_at
+           calculation, fecha_ingreso_aplicada, fecha_retiro_aplicada,
+           dias_laborados_calculados, source_fecha_retiro, payroll_inclusion_status,
+           updated_at
          )
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,NOW())
          ON CONFLICT (group_id, employee_id) DO UPDATE SET
            employee_name      = EXCLUDED.employee_name,
            document_number    = EXCLUDED.document_number,
@@ -1223,8 +1355,14 @@ async function calculatePayrollGroup(groupId) {
            total_deducciones  = EXCLUDED.total_deducciones,
            neto_pagar         = EXCLUDED.neto_pagar,
            calculation        = EXCLUDED.calculation,
+           fecha_ingreso_aplicada = EXCLUDED.fecha_ingreso_aplicada,
+           fecha_retiro_aplicada  = EXCLUDED.fecha_retiro_aplicada,
+           dias_laborados_calculados = EXCLUDED.dias_laborados_calculados,
+           source_fecha_retiro = EXCLUDED.source_fecha_retiro,
+           payroll_inclusion_status = EXCLUDED.payroll_inclusion_status,
            updated_at         = NOW()
-         WHERE payroll_items.reviewed IS NOT TRUE`,
+         WHERE payroll_items.reviewed IS NOT TRUE
+         RETURNING *`,
         [
           group.id, group.period_id, emp.employee_id, emp.employee_name, emp.document_number,
           emp.company_id, emp.contract_id, emp.municipality_id, emp.municipality_name,
@@ -1234,8 +1372,16 @@ async function calculatePayrollGroup(groupId) {
           amounts.base_salary, amounts.transport_allowance, amounts.other_earnings,
           amounts.total_devengado, amounts.total_deducciones, amounts.neto_pagar,
           JSON.stringify(amounts.calculation),
+          fechaIngresoAplicada, fechaRetiroAplicada, diasLaboradosCalculados,
+          fechaRetiroAplicada ? "PERSONAL" : null, inclusionStatus,
         ]
       );
+      const persistedItem = itemRows[0];
+      if (persistedItem) {
+        for (const novelty of laborNovelties) {
+          await upsertLaborDateNovelty(client, persistedItem, novelty, null);
+        }
+      }
     }
 
     await client.query(
@@ -1667,6 +1813,42 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   const supportRequired  = Boolean(payload.support_required ?? payload.supportRequired ?? noveltyTypeMeta.requires_support ?? false);
 
   // Validar duplicado exacto: mismo empleado, período, tipo y fechas
+  if (typeRaw === "FECHA_RETIRO") {
+    const { rows: existingRetiro } = await pool.query(
+      `UPDATE payroll_novelties
+          SET payroll_item_id = $2,
+              start_date = $3::date,
+              end_date = $4::date,
+              days = $5,
+              observations = $6,
+              description = $7,
+              extra_data = COALESCE(extra_data, '{}'::jsonb) || $8::jsonb,
+              updated_at = NOW()
+        WHERE payroll_period_id = $1
+          AND employee_id = $9
+          AND novelty_type = 'FECHA_RETIRO'
+        RETURNING *`,
+      [
+        item.period_id,
+        item.id,
+        startDate,
+        endDate,
+        days,
+        text(payload.observations || payload.description),
+        text(payload.description || payload.observations),
+        JSON.stringify({ source: "NOMINA", synced_at: new Date().toISOString() }),
+        item.employee_id,
+      ]
+    );
+    if (existingRetiro[0]) {
+      await syncRetirementToEmployee(item.employee_id, startDate, userId);
+      await recalculatePayrollItem(item.id);
+      await markNeedsRecalculation(item.group_id);
+      return existingRetiro[0];
+    }
+  }
+
+  // Validar duplicado exacto: mismo empleado, período, tipo y fechas
   const { rows: dupCheck } = await pool.query(
     `SELECT id FROM payroll_novelties
       WHERE payroll_item_id = $1
@@ -1702,6 +1884,10 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
       id(userId),
     ]
   );
+
+  if (typeRaw === "FECHA_RETIRO") {
+    await syncRetirementToEmployee(item.employee_id, startDate, userId);
+  }
 
   if (supportRequired) {
     const requiredDocs = SUPPORT_REQUIREMENTS[typeRaw];
@@ -2003,6 +2189,10 @@ async function patchNovelty(noveltyId, payload = {}, userId) {
       RETURNING *`,
     values
   );
+
+  if (rows[0]?.novelty_type === "FECHA_RETIRO" && rows[0]?.start_date) {
+    await syncRetirementToEmployee(rows[0].employee_id, rows[0].start_date, userId);
+  }
 
   // Recalcular el item para reflejar el nuevo impacto
   if (novelty.payroll_item_id) {

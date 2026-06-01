@@ -908,11 +908,14 @@ function renderItemsTable(items) {
       const isReviewed = Boolean(item.reviewed);
       const locked = groupLocked || isReviewed;
       const hasExtCover = extCoverItemIds.has(item.id);
+      const retiredInPeriod = item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada;
       return `
       <tr class="${isReviewed ? "item-reviewed-row" : ""}">
         <td>
           <b>${escapeHtml(item.employee_name)}</b><br>
           <small style="color:#64748B">${escapeHtml(item.document_number || "")}</small>
+          ${retiredInPeriod ? `<br><small style="color:#B45309;font-weight:700">Retirado en este periodo${item.fecha_retiro_aplicada ? ` · ${escapeHtml(String(item.fecha_retiro_aplicada).slice(0, 10))}` : ""}</small>` : ""}
+          ${item.worked_days ? `<br><small style="color:#475569">Días laborados: ${Number(item.worked_days || 0)}</small>` : ""}
         </td>
         <td>
           <small>${escapeHtml(item.institution_name || "-")}</small><br>
