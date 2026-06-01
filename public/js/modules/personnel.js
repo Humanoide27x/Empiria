@@ -2901,7 +2901,7 @@ function hydratePersonnelDraft(found) {
 export async function renderPersonnelTableModule() {
   await ensureOfficialMunicipalitiesLoaded().catch(() => {});
   if (!state.personnelFilters) {
-    state.personnelFilters = { search: "", status: "", role: "", hvStatus: "", municipalityId: "",
+    state.personnelFilters = { search: "", status: "ACTIVO", role: "", hvStatus: "", municipalityId: "",
       companyId: "", contractId: "", gestorZona: "", institution: "", site: "", modality: "", sort: "" };
   }
   if (!state.personnelPagination) {
@@ -3041,6 +3041,8 @@ export async function renderPersonnelTableModule() {
     : filteredRows.find((item) => String(item.id) === String(state.personnelSelectedId)) || null;
 
   // ── Filas de tabla ────────────────────────────────────────────────────────
+  const cuForTable = state.currentUser;
+  const isAdminTable = (cuForTable?.role || "").toLowerCase() === "administrador";
   const tableRows = filteredRows.length
     ? filteredRows.map((item) => {
         const hv        = getPersonnelHvStatusFull(item, allDocuments);
@@ -3048,7 +3050,9 @@ export async function renderPersonnelTableModule() {
         const isOffer   = item.presentedInOffer === true || item.presentedInOffer === "true" ||
                           item.presented_in_offer === true || item.presented_in_offer === "true";
         const roleClass = isOffer ? "role-offer" : "role-extra";
-        const rowClass  = hv.label === "No apto documental" ? "personnel-row-blocked" : "";
+        const itemStatus = String(item.status || item.estado || "ACTIVO").toUpperCase().trim();
+        const isInactive = itemStatus === "INACTIVO" || itemStatus === "RETIRADO";
+        const rowClass  = (hv.label === "No apto documental" ? "personnel-row-blocked " : "") + (isInactive ? "personnel-row-inactive" : "");
 
         return `
           <tr class="${rowClass} ${String(state.personnelSelectedId) === String(item.id) ? "selected" : ""}" data-select-personnel-id="${escapeAttr(item.id)}">
@@ -3058,6 +3062,7 @@ export async function renderPersonnelTableModule() {
                 <div class="personnel-avatar" style="${getPersonnelAvatarStyle(item)}">${escapeHtml(getPersonnelInitials(item))}</div>
                 <div class="personnel-employee-copy">
                   <strong class="personnel-name-link" data-open-cv-id="${escapeAttr(item.id)}">${escapeHtml(getPersonnelFullName(item))}</strong>
+                  ${isInactive ? `<span class="badge-inactivo">INACTIVO</span>` : ""}
                 </div>
               </div>
             </td>
@@ -3089,6 +3094,12 @@ export async function renderPersonnelTableModule() {
                   data-documents-personnel-id="${escapeAttr(item.id)}">
                   <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 </button>
+                ${isAdminTable ? `
+                <button type="button" class="personnel-icon-btn btn-icon-delete" title="Eliminar empleado"
+                  data-delete-personnel-id="${escapeAttr(item.id)}"
+                  data-delete-personnel-name="${escapeAttr(getPersonnelFullName(item))}">
+                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                </button>` : ""}
               </div>
             </td>
           </tr>
@@ -3138,7 +3149,7 @@ export async function renderPersonnelTableModule() {
 
 
     document.getElementById("clearPersonnelFilters")?.addEventListener("click", async () => {
-      state.personnelFilters = { search:"", status:"", role:"", hvStatus:"", municipalityId:"",
+      state.personnelFilters = { search:"", status:"ACTIVO", role:"", hvStatus:"", municipalityId:"",
         companyId:"", contractId:"", gestorZona:"", institution:"", site:"", modality:"", sort:"" };
       state.personnelPagination = { page: 1, pageSize: state.personnelPagination?.pageSize || 25, total: 0, totalPages: 0 };
       state.personnelSelectedId = null;
@@ -3234,6 +3245,13 @@ export async function renderPersonnelTableModule() {
         state.personnelSelectedId     = found.id || null;
         state.personnelDocumentsEmployee = found;
         await openModule("gestion_personal");
+      });
+    });
+
+    document.querySelectorAll("[data-delete-personnel-id]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openDeleteEmployeeModal(btn.dataset.deletePersonnelId, btn.dataset.deletePersonnelName);
       });
     });
 
@@ -3427,8 +3445,10 @@ export async function renderPersonnelTableModule() {
         </div>
         <div class="pnl-filters-row">
           <select id="personnelFilterStatus">
-            <option value="">Estado laboral</option>
+            <option value="">Todos</option>
             ${ESTADOS_PERSONAL.map((v) => opt(v, f.status)).join("")}
+            <option value="INACTIVO" ${f.status === "INACTIVO" ? "selected" : ""}>INACTIVO</option>
+            <option value="RETIRADO" ${f.status === "RETIRADO" ? "selected" : ""}>RETIRADO</option>
           </select>
           <select id="personnelFilterRole">
             <option value="">Cargo</option>
@@ -5325,5 +5345,111 @@ function openImportPersonnelModal() {
       }
     };
     reader.readAsDataURL(file);
+  });
+}
+
+// ── Modal de eliminación segura de empleado ───────────────────────────────────
+function openDeleteEmployeeModal(employeeId, employeeName) {
+  const existing = document.getElementById("delEmpModal");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "delEmpModal";
+  overlay.innerHTML = `
+<style>
+#delEmpModal{position:fixed;inset:0;background:rgba(15,23,42,.48);display:flex;align-items:center;justify-content:center;z-index:2000;padding:16px}
+.del-emp-dialog{background:#fff;border-radius:14px;width:100%;max-width:460px;box-shadow:0 20px 60px rgba(0,0,0,.22);overflow:hidden}
+.del-emp-header{display:flex;align-items:center;gap:12px;padding:20px 20px 0}
+.del-emp-icon{width:40px;height:40px;border-radius:10px;background:#FEF2F2;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.del-emp-icon svg{width:20px;height:20px;stroke:#DC2626;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.del-emp-title{font-size:15px;font-weight:700;color:#0F172A}
+.del-emp-body{padding:18px 20px 20px;display:flex;flex-direction:column;gap:14px}
+.del-emp-warning{background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#92400E;line-height:1.6}
+.del-emp-field label{display:block;font-size:11.5px;font-weight:700;color:#374151;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+.del-emp-pw{width:100%;padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:13px;color:#0F172A;outline:none;transition:border-color .15s;box-sizing:border-box}
+.del-emp-pw:focus{border-color:#DC2626}
+.del-emp-error{font-size:12px;color:#DC2626;min-height:16px;margin-top:-8px}
+.del-emp-footer{display:flex;gap:10px;justify-content:flex-end;padding-top:4px}
+.del-emp-btn{border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.del-emp-btn-cancel{background:#F1F5F9;color:#475569}.del-emp-btn-cancel:hover{background:#E2E8F0}
+.del-emp-btn-confirm{background:#DC2626;color:#fff}.del-emp-btn-confirm:hover{background:#B91C1C}.del-emp-btn-confirm:disabled{opacity:.55;cursor:not-allowed}
+</style>
+<div class="del-emp-dialog">
+  <div class="del-emp-header">
+    <div class="del-emp-icon">
+      <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </div>
+    <div>
+      <div class="del-emp-title">Eliminar empleado</div>
+      <div style="font-size:12px;color:#64748B;margin-top:2px">${escapeHtml(employeeName || "")}</div>
+    </div>
+  </div>
+  <div class="del-emp-body">
+    <div class="del-emp-warning">
+      Está a punto de eliminar este empleado.<br>
+      Esta acción puede afectar información histórica relacionada con nómina, novedades, remisiones, cobertura y documentación.<br><br>
+      <b>Si el empleado tiene historial</b>, será inactivado (baja lógica) y su información se conservará.<br>
+      <b>Si no tiene registros</b>, será eliminado definitivamente.
+    </div>
+    <div class="del-emp-field">
+      <label>Contraseña de administrador</label>
+      <input type="password" class="del-emp-pw" id="delEmpPassword" placeholder="Ingrese su contraseña" autocomplete="current-password">
+    </div>
+    <div class="del-emp-error" id="delEmpError"></div>
+    <div class="del-emp-footer">
+      <button class="del-emp-btn del-emp-btn-cancel" id="delEmpCancel">Cancelar</button>
+      <button class="del-emp-btn del-emp-btn-confirm" id="delEmpConfirm">Continuar</button>
+    </div>
+  </div>
+</div>`;
+
+  document.body.appendChild(overlay);
+
+  const pwInput   = document.getElementById("delEmpPassword");
+  const errorEl   = document.getElementById("delEmpError");
+  const confirmBtn= document.getElementById("delEmpConfirm");
+  const cancelBtn = document.getElementById("delEmpCancel");
+
+  const closeModal = () => overlay.remove();
+
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  cancelBtn.addEventListener("click", closeModal);
+  pwInput.focus();
+
+  confirmBtn.addEventListener("click", async () => {
+    errorEl.textContent = "";
+    const password = pwInput.value.trim();
+    if (!password) { errorEl.textContent = "La contraseña es obligatoria."; pwInput.focus(); return; }
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Procesando…";
+
+    try {
+      const res = await apiFetch(`/personnel/${employeeId}`, {
+        method: "DELETE",
+        body: JSON.stringify({ password }),
+      });
+      closeModal();
+      if (res.action === "INACTIVACION") {
+        showSuccess("Empleado inactivado correctamente. Su historial permanecerá disponible para consulta.");
+      } else {
+        showSuccess("Empleado eliminado correctamente.");
+      }
+      // Refrescar tabla
+      state.personnelSelectedId = null;
+      await openModule("gestion_personal");
+    } catch (err) {
+      const msg = err.message || "Error al procesar la solicitud.";
+      errorEl.textContent = msg.includes("401") || msg.toLowerCase().includes("incorrecta")
+        ? "Contraseña incorrecta."
+        : msg;
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Continuar";
+      pwInput.focus();
+    }
+  });
+
+  pwInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") confirmBtn.click();
   });
 }

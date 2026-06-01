@@ -42,7 +42,16 @@ function readCollection(fileName, fallbackData = []) {
 
 function writeCollection(fileName, data) {
   const filePath = ensureFile(fileName, data);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  // Escritura atómica: escribir a .tmp y luego renombrar para evitar JSON corrupto
+  // en caso de fallo durante la escritura (crash, kill, disco lleno)
+  const tmpPath = filePath + ".tmp." + process.pid;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), { flush: true });
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+    throw err;
+  }
   return data;
 }
 

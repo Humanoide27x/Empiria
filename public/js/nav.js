@@ -35,6 +35,7 @@ export function renderModuleNav(modules = []) {
     "gestion_dotacion",
     "repositorio_hojas_vida",
     "administracion_configuraciones",
+    "portal_colaborador",
   ];
 
   const visibleModules = Array.isArray(modules)
@@ -68,6 +69,7 @@ export function renderModuleNav(modules = []) {
       seguridad_salud_trabajo: "SST",
       registro_novedades: "Novedades",
       repositorio_hojas_vida: "Repositorio HV",
+      portal_colaborador: "Colaboradores",
     };
     const navLabel = navLabelOverrides[moduleKey] || meta.label;
     const isActive = state.activeModule === moduleKey;
@@ -81,6 +83,7 @@ export function renderModuleNav(modules = []) {
       "cobertura_calculadora",
       "administracion_configuraciones",
       "gestion_dotacion",
+      "portal_colaborador",
     ]);
     const submodules = noSubmoduleKeys.has(moduleKey) ? [] : (view?.submodules || []);
 
@@ -123,6 +126,7 @@ export function renderModuleNav(modules = []) {
         "cobertura_calculadora",
         "administracion_configuraciones",
         "gestion_dotacion",
+        "portal_colaborador",
       ]);
       const hasSubmodules = !noSubKeys.has(moduleKey) && Boolean(moduleViews[moduleKey]?.submodules?.length);
       const isSameExpanded = state.expandedModule === moduleKey;
@@ -311,6 +315,11 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   if (moduleKey === "gestion_dotacion") {
     const { loadDotacionModule } = await import(_iv('./modules/dotacion.js'));
     return await loadDotacionModule(moduleConfig);
+  }
+
+  if (moduleKey === "portal_colaborador") {
+    const { loadPortalModule } = await import(_iv('./modules/portal.js'));
+    return await loadPortalModule();
   }
 
   if (!submoduleKey) {

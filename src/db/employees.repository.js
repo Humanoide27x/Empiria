@@ -1434,6 +1434,86 @@ async function importEmployeesFromExcel({ fileBase64, fileName, defaults = {} })
   };
 }
 
+// ─── Eliminación segura de empleados ─────────────────────────────────────────
+
+async function checkEmployeeHistory(employeeId) {
+  const { rows: empRows } = await pool.query(
+    `SELECT id, legacy_json_id, full_name, document_number FROM employees WHERE id = $1`,
+    [employeeId]
+  );
+  if (!empRows.length) return { exists: false };
+  const { id, legacy_json_id, full_name, document_number } = empRows[0];
+  const legacyId = legacy_json_id || id;
+
+  const checks = await Promise.all([
+    pool.query(`SELECT 1 FROM employee_contracts           WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employee_documents           WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employee_contract_assignments WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employee_experiences         WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employment_certificates      WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM dotacion_asignaciones        WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employee_drafts              WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM employee_requests            WHERE employee_id = $1 LIMIT 1`, [id]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM payroll_items     WHERE employee_id = $1 LIMIT 1`, [legacyId]).catch(() => ({ rows: [] })),
+    pool.query(`SELECT 1 FROM payroll_novelties WHERE employee_id = $1 LIMIT 1`, [legacyId]).catch(() => ({ rows: [] })),
+  ]);
+
+  return {
+    exists: true,
+    hasHistory: checks.some((r) => r.rows.length > 0),
+    id,
+    legacy_json_id: legacyId,
+    full_name,
+    document_number,
+  };
+}
+
+async function deactivateEmployee(employeeId) {
+  const { rows } = await pool.query(
+    `UPDATE employees
+     SET status         = 'INACTIVO',
+         retirement_date = COALESCE(retirement_date, CURRENT_DATE),
+         updated_at      = NOW()
+     WHERE id = $1
+     RETURNING id, full_name, document_number, status, retirement_date`,
+    [employeeId]
+  );
+  return rows[0] || null;
+}
+
+async function hardDeleteEmployee(employeeId) {
+  const { rows } = await pool.query(
+    `DELETE FROM employees WHERE id = $1 RETURNING id, full_name, document_number`,
+    [employeeId]
+  );
+  return rows[0] || null;
+}
+
+async function logEmployeeDeletion(payload) {
+  try {
+    await pool.query(
+      `INSERT INTO employee_deletion_audit
+         (employee_id, employee_name, document_number, action_type,
+          performed_by_id, performed_by_name, ip, user_agent, company_id, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        payload.employee_id   || null,
+        payload.employee_name || null,
+        payload.document_number || null,
+        payload.action_type,
+        payload.performed_by_id   || null,
+        payload.performed_by_name || null,
+        payload.ip         || null,
+        payload.user_agent || null,
+        payload.company_id || null,
+        payload.notes      || null,
+      ]
+    );
+  } catch (err) {
+    console.error("[employee-audit] no se pudo guardar:", err.message);
+  }
+}
+
 module.exports = {
   getEmployees,
   getEmployeeById,
@@ -1444,4 +1524,8 @@ module.exports = {
   updateEmployeePhoto,
   importEmployeesFromExcel,
   mapEmployee,
+  checkEmployeeHistory,
+  deactivateEmployee,
+  hardDeleteEmployee,
+  logEmployeeDeletion,
 };

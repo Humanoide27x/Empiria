@@ -10,7 +10,13 @@
 
 "use strict";
 
+// ── CRÍTICO: cargar .env ANTES de requerir pool.js
+// pool.js llama buildConfig() en tiempo de módulo; si dotenv no ha corrido,
+// process.env.DB_PASSWORD es undefined → pg recibe password="" (falsy) →
+// pg lo descarta internamente → SASL recibe undefined → error de tipo.
 const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
+
 const fs   = require("fs");
 const pool = require("../src/db/pool");
 
@@ -108,8 +114,7 @@ module.exports = { runMigrations };
 
 // Ejecución directa: node scripts/run-migrations.js
 if (require.main === module) {
-  require("dotenv").config({ path: path.join(__dirname, "../.env") });
-
+  // dotenv ya fue cargado al inicio del módulo — no repetir aquí.
   runMigrations()
     .then(() => {
       console.log("[migrations] Proceso finalizado.");

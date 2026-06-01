@@ -21,6 +21,7 @@ const NOVELTY_TYPES = [
   { code: "FECHA_INGRESO",                 name: "Fecha de Ingreso",                  affects_salary: true,  affects_transport: false, affects_additional: false, requires_turn_cover: false },
   { code: "FECHA_RETIRO",                  name: "Fecha de Retiro",                   affects_salary: true,  affects_transport: false, affects_additional: false, requires_turn_cover: false },
   { code: "CAMBIO_OPERATIVO_COBERTURA",    name: "Cambio Operativo de Cobertura",     affects_salary: true,  affects_transport: true,  affects_additional: false, requires_turn_cover: false },
+  { code: "CORRECCION_SEGURIDAD_SOCIAL",   name: "Corrección Seguridad Social",       affects_salary: false, affects_transport: false, affects_additional: false, requires_turn_cover: false },
 ];
 
 // Documentos de soporte requeridos por tipo de novedad (espejo del backend)
@@ -79,7 +80,9 @@ let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employ
 let viewerSupportId  = null;
 
 // ── Filtro de novedades (pestaña Novedades del grupo) ────────────────────────
-let noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" };
+let noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
+let noveltiesViewMode  = "table"; // "table" | "grouped"
+let selectedItemIds    = new Set(); // IDs de ítems de nómina seleccionados para acción masiva
 
 // ── Filtros de tabla de empleados (nómina) ────────────────────────────────────
 let itemsFilter = {
@@ -133,6 +136,21 @@ function fmtDateRange(start, end) {
   if (!s) return fmtDateDMY(end);
   if (!e || s === e) return fmtDateDMY(start);
   return `${fmtDateDMY(start)} al ${fmtDateDMY(end)}`;
+}
+function expandNovDates(nov) {
+  const raw = nov.novelty_date || nov.start_date;
+  if (!raw) return [];
+  const start = String(raw).slice(0, 10);
+  const endRaw = nov.end_date ? String(nov.end_date).slice(0, 10) : start;
+  if (start === endRaw) return [start];
+  const dates = [];
+  const cur = new Date(start + "T12:00:00");
+  const end = new Date(endRaw + "T12:00:00");
+  while (cur <= end && dates.length < 366) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
 }
 function normalized(value) {
   return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
@@ -376,6 +394,43 @@ function shell() {
 .nm-prompt-field label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px}
 .nm-prompt-input{width:100%;border:1px solid #CBD5E1;border-radius:5px;padding:7px 9px;font-size:13px;color:#0F172A}
 
+/* ── Selección masiva de ítems de nómina ─────────────────────────── */
+.nm-sel-col{width:36px;text-align:center;padding:4px 4px !important}
+.nm-item-sel-cb{width:16px;height:16px;accent-color:#0F766E;cursor:pointer;vertical-align:middle}
+.nm-item-selected-row td{background:#EFF6FF !important}
+.nm-item-selected-row.item-reviewed-row td{background:#EFF6FF !important;opacity:1}
+.nm-bulk-bar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:7px;margin:6px 0 4px;flex-wrap:wrap}
+.nm-bulk-bar-count{font-size:13px;font-weight:700;color:#1D4ED8;flex:1;min-width:max-content}
+.nm-bulk-bar-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* ── Modal multi-selección de novedades ──────────────────────────── */
+.nm-nov-multi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:8px;max-height:220px;overflow-y:auto}
+.nm-nov-multi-label{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:13px;color:#334155;transition:background .12s}
+.nm-nov-multi-label:hover{background:#EFF6FF}
+.nm-nov-multi-label input[type=checkbox]{width:15px;height:15px;accent-color:#0F766E;flex-shrink:0}
+.nm-nov-multi-section{border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px;margin-top:8px;background:#fff}
+.nm-nov-multi-section-hdr{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;flex-wrap:wrap}
+.nm-nov-multi-section-body{}
+/* ── Vista agrupada por colaborador ──────────────────────────────── */
+.nm-nov-grouped-wrap{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.nm-nov-grp-card{border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;background:#fff}
+.nm-nov-grp-card-hdr{display:flex;justify-content:space-between;align-items:center;padding:9px 13px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;gap:8px}
+.nm-nov-grp-emp-name{font-weight:700;font-size:13px;color:#0F172A}
+.nm-nov-grp-count{font-size:12px;font-weight:600;color:#475569;background:#E2E8F0;border-radius:99px;padding:1px 8px}
+.nm-nov-grp-pending{font-size:11px;font-weight:700;color:#B45309;background:#FEF3C7;border-radius:99px;padding:1px 7px}
+.nm-nov-grp-ok{font-size:11px;font-weight:700;color:#15803D;background:#DCFCE7;border-radius:99px;padding:1px 7px}
+.nm-nov-grp-rows{display:flex;flex-direction:column}
+.nm-nov-grp-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 13px;border-bottom:1px solid #F1F5F9;font-size:13px}
+.nm-nov-grp-row:last-child{border-bottom:none}
+.nm-nov-grp-row.reviewed-row{opacity:.65}
+.nm-nov-grp-row-type{min-width:0}
+.nm-nov-grp-row-meta{display:flex;align-items:center;gap:10px;white-space:nowrap;font-size:12px;color:#475569}
+.nm-nov-grp-days{font-weight:700;background:#F1F5F9;border-radius:4px;padding:1px 6px}
+.nm-nov-grp-row-actions{display:flex;align-items:center;gap:4px}
+.nm-nov-grp-chip{font-size:10px;font-weight:700;border-radius:3px;padding:1px 5px;vertical-align:middle;display:inline-block;margin-left:3px}
+.nm-nov-grp-chip--cont{background:#EEF2FF;color:#4338CA}
+.nm-nov-grp-chip--multi{background:#FEF3C7;color:#92400E}
+/* Botón agrupar activo */
+.nm-fbar-active{background:#E0F2FE;border-color:#BAE6FD;color:#0369A1}
 /* ── Registro masivo de novedades ────────────────────────────────── */
 .nm-bulk-block{border:1px solid #E2E8F0;border-radius:6px;padding:10px 12px;margin-bottom:8px;background:#F8FAFC}
 .nm-bulk-block-label{font-size:11px;font-weight:700;color:#0F766E;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
@@ -852,6 +907,8 @@ function renderGroupDetail() {
   <div class="nm-pay-actions">
     ${editable ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCalculate">${isReopened ? "Recalcular" : "Calcular"}</button>` : ""}
     <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayExport">Exportar</button>
+    <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayTemplateDownload" title="Descargar plantilla Excel para registrar novedades día a día">&#11015; Plantilla</button>
+    <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayTemplateImport"   title="Importar plantilla de novedades diarias completada">&#8679; Importar</button>
     <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayHistory" title="Historial de cambios">Historial</button>
     ${canClose ? `<button class="nm-pay-btn nm-pay-btn--warning nm-pay-btn--sm" id="nmPayClose">${isReopened ? "Cerrar nuevamente" : "Cerrar y enviar nómina"}</button>` : ""}
     ${isClosed && canReopen ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayReopen">Reabrir nómina</button>` : ""}
@@ -877,7 +934,7 @@ ${recalcBanner}
     </button>
   </div>
   ${activeDetailTab === "nomina"
-    ? `${renderNominaItemsFilterBar(items.length)}${items.length
+    ? `${renderNominaItemsFilterBar(items.length)}${renderBulkActionBar(items)}${items.length
         ? renderItemsTable(items)
         : `<div class="nm-pay-empty" style="margin:10px">${isFilterActive() ? "Ningún empleado coincide con los filtros aplicados." : "Pulsa \"Calcular\" para cargar los empleados activos."}</div>`}`
     : activeDetailTab === "novedades"
@@ -972,6 +1029,41 @@ function salaryCategoryBadge(code) {
   return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;color:#fff;background:${bg};letter-spacing:.4px">${escapeHtml(code)}</span>`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BARRA DE ACCIONES MASIVAS
+// ─────────────────────────────────────────────────────────────────────────────
+function renderBulkActionBar(items = []) {
+  const count        = selectedItemIds.size;
+  const groupLocked  = !isGroupEditable(activeGroupDetail?.group);
+  // Contar cuántos de los seleccionados no están aún revisados
+  const selectableItems = items.filter((i) => !i.reviewed);
+  const pendingSelected = items.filter((i) => selectedItemIds.has(i.id) && !i.reviewed).length;
+  const reviewedSelected= items.filter((i) => selectedItemIds.has(i.id) &&  i.reviewed).length;
+
+  if (!count || groupLocked) return "";
+
+  return `
+<div class="nm-bulk-bar" id="nmBulkBar">
+  <span class="nm-bulk-bar-count">
+    &#9745; <b>${count}</b> colaborador${count !== 1 ? "es" : ""} seleccionado${count !== 1 ? "s" : ""}
+    ${pendingSelected > 0 ? `<small style="color:#64748B"> · ${pendingSelected} pendiente${pendingSelected !== 1 ? "s" : ""}</small>` : ""}
+  </span>
+  <div class="nm-bulk-bar-actions">
+    ${pendingSelected > 0
+      ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmBulkReview">
+           &#10003; Marcar ${pendingSelected} como revisado${pendingSelected !== 1 ? "s" : ""}
+         </button>`
+      : ""}
+    ${reviewedSelected > 0
+      ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmBulkUnreview" style="color:#B91C1C;border-color:#FECACA">
+           &#8617; Desmarcar ${reviewedSelected} revisión
+         </button>`
+      : ""}
+    <button class="nm-pay-btn nm-pay-btn--sm" id="nmBulkClear">&#10005; Limpiar selección</button>
+  </div>
+</div>`;
+}
+
 function renderItemsTable(items) {
   const groupLocked    = !isGroupEditable(activeGroupDetail?.group);
   const consolidated   = isConsolidatedView();
@@ -987,11 +1079,24 @@ function renderItemsTable(items) {
     terminacion_contrato: { label: "Terminación contrato", cls: "nm-ss-reason--terminacion" },
   };
 
+  // Seleccionables = todos los items (pendientes para marcar, revisados para desmarcar)
+  const allIds     = items.map((i) => i.id);
+  const allCount   = allIds.length;
+  const allSelected  = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
+  const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
+
   return `
 <div class="nm-pay-table-wrap">
 <table class="nm-pay-table">
   <thead>
     <tr>
+      ${!groupLocked && allCount > 0 ? `
+      <th class="nm-sel-col" title="Seleccionar / Deseleccionar todos">
+        <input type="checkbox" id="nmSelAll"
+               ${allSelected ? "checked" : ""}
+               ${someSelected ? `style="opacity:.7"` : ""}
+               title="Seleccionar todos">
+      </th>` : `<th class="nm-sel-col"></th>`}
       <th>Empleado</th><th>Sede · Modalidad · Categoría</th>
       <th class="num">Devengado</th><th class="num">Deducciones</th><th class="num">Neto</th>
       <th class="num">Días lab.</th><th class="num">Días SS</th>
@@ -1002,6 +1107,7 @@ function renderItemsTable(items) {
     ${items.map((item) => {
       const isReviewed = Boolean(item.reviewed);
       const locked = groupLocked || isReviewed;
+      const isSelected = selectedItemIds.has(item.id);
       const hasExtCover = extCoverItemIds.has(item.id);
       const ssDays = item.ss_days != null ? item.ss_days : 30;
       const motivoMeta = item.retirement_reason ? MOTIVO_LABEL[item.retirement_reason] : null;
@@ -1024,7 +1130,14 @@ function renderItemsTable(items) {
         ? `<div class="nm-ss-alert" title="Retiro requiere reemplazo, pero no se encontró ingreso asociado para la misma sede.">⚠ Sin reemplazo</div>`
         : "";
       return `
-      <tr class="${isReviewed ? "item-reviewed-row" : ""}">
+      <tr class="${isReviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}">
+        <td class="nm-sel-col">
+          ${!groupLocked
+            ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}"
+                      ${isSelected ? "checked" : ""}
+                      title="${isReviewed ? "Seleccionar para desmarcar revisión" : "Seleccionar para marcar como revisado"}">`
+            : ""}
+        </td>
         <td>
           <b>${escapeHtml(item.employee_name)}</b><br>
           <small style="color:#64748B">${escapeHtml(item.document_number || "")}</small>
@@ -1107,10 +1220,93 @@ function applyNoveltiesFilter(novelties) {
   return rows;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VISTA AGRUPADA POR COLABORADOR
+// ─────────────────────────────────────────────────────────────────────────────
+function renderNoveltiesGrouped(novelties) {
+  if (!novelties.length) return `<div class="nm-pay-empty" style="margin:10px">Sin novedades registradas en este municipio.</div>`;
+
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+
+  // Agrupar por employee_id, conservando el orden de aparición (ya vienen
+  // ordenadas del backend — aquí solo agrupamos visualmente)
+  const byEmp = new Map();
+  for (const nov of novelties) {
+    const key = String(nov.employee_id || nov.employee_name || "?");
+    if (!byEmp.has(key)) {
+      byEmp.set(key, { name: nov.employee_name || "—", doc: nov.document_number || "", rows: [] });
+    }
+    byEmp.get(key).rows.push(nov);
+  }
+
+  const groups = [...byEmp.values()];
+
+  return groups.map((g) => {
+    const total = g.rows.length;
+    const pending  = g.rows.filter((n) => !n.reviewed).length;
+
+    const novRows = g.rows.map((nov) => {
+      const meta         = noveltyByCode(nov.novelty_type);
+      const isReviewed   = Boolean(nov.reviewed);
+      const isItemLocked = Boolean(nov.item_reviewed);
+      const isLocked     = groupLocked || isReviewed || isItemLocked;
+      const isCoverLocked= isReviewed || isItemLocked;
+      const impactAmt    = Number(nov.affected_amount ?? nov.computed_impact ?? nov.value ?? 0);
+      const impactLabel  = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
+      const dateStr      = nov.original_end_date
+        ? fmtDateRange(nov.original_start_date || nov.start_date, nov.original_end_date)
+        : fmtDateRange(nov.start_date, nov.end_date) || fmtDateDMY(nov.novelty_date);
+
+      return `
+<div class="nm-nov-grp-row ${isReviewed ? "reviewed-row" : ""}">
+  <div class="nm-nov-grp-row-type">
+    <b>${escapeHtml(nov.novelty_name || nov.novelty_type || "")}</b>
+    ${nov.is_continuation ? `<span class="nm-nov-grp-chip nm-nov-grp-chip--cont">↩ Cont.</span>` : ""}
+    ${nov.original_end_date && !nov.is_continuation ? `<span class="nm-nov-grp-chip nm-nov-grp-chip--multi">↔ Multi</span>` : ""}
+    <br><small style="color:#64748B">${escapeHtml(nov.description || nov.observations || "")}</small>
+  </div>
+  <div class="nm-nov-grp-row-meta">
+    <span>${dateStr || "—"}</span>
+    <span class="nm-nov-grp-days">${Number(nov.period_days ?? nov.days ?? 0)}d</span>
+    ${impactAmt ? `<span style="color:#991B1B;font-weight:600">-${fmtCOP(impactAmt)}<small style="color:#94A3B8;font-weight:400"> ${impactLabel}</small></span>` : ""}
+  </div>
+  <div class="nm-nov-grp-row-actions">
+    ${!isLocked ? `
+      <button class="nm-pay-btn nm-pay-btn--sm" title="Editar" data-edit-novelty="${nov.id}">&#9998;</button>
+      ${!isCoverLocked && meta?.requires_turn_cover
+        ? `<button class="nm-pay-btn nm-pay-btn--sm" title="Registrar cobertura" data-cover-novelty="${nov.id}" data-cover-item="${nov.payroll_item_id}">&#9200;</button>`
+        : ""}
+      <button class="nm-pay-btn nm-pay-btn--sm" style="color:#B91C1C" title="Eliminar" data-del-novelty="${nov.id}">&#128465;</button>` : ""}
+    <label class="nm-item-review-label" title="${isReviewed ? "Revisada" : "Marcar como revisada"}">
+      <input type="checkbox" class="nm-item-novelty-review-cb" data-novelty-reviewed="${nov.id}" ${isReviewed ? "checked" : ""} ${isLocked && !isReviewed ? "disabled" : ""}>
+      ${isReviewed ? `<span class="nm-item-reviewed-badge">&#10003;</span>` : `<span style="font-size:10px;color:#94A3B8">Pdte.</span>`}
+    </label>
+  </div>
+</div>`;
+    }).join("");
+
+    return `
+<div class="nm-nov-grp-card">
+  <div class="nm-nov-grp-card-hdr">
+    <div>
+      <span class="nm-nov-grp-emp-name">${escapeHtml(g.name)}</span>
+      <small style="color:#94A3B8"> · ${escapeHtml(g.doc)}</small>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="nm-nov-grp-count">${total} novedad${total !== 1 ? "es" : ""}</span>
+      ${pending > 0 ? `<span class="nm-nov-grp-pending">${pending} pendiente${pending !== 1 ? "s" : ""}</span>` : `<span class="nm-nov-grp-ok">&#10003; al día</span>`}
+    </div>
+  </div>
+  <div class="nm-nov-grp-rows">${novRows}</div>
+</div>`;
+  }).join("");
+}
+
 function renderNoveltiesWithFilter(allNovelties) {
-  const filtered = applyNoveltiesFilter(allNovelties);
+  const filtered  = applyNoveltiesFilter(allNovelties);
   const hasFilter = noveltiesFilter.type || noveltiesFilter.reviewed || noveltiesFilter.withSupport || noveltiesFilter.search;
-  const selClass = (v) => v ? "nm-pay-select nm-pay-input--sm nm-fbar-active" : "nm-pay-select nm-pay-input--sm";
+  const selClass  = (v) => v ? "nm-pay-select nm-pay-input--sm nm-fbar-active" : "nm-pay-select nm-pay-input--sm";
+  const isGrouped = noveltiesViewMode === "grouped";
 
   const filterBar = `
 <div class="nm-nov-fbar">
@@ -1134,14 +1330,23 @@ function renderNoveltiesWithFilter(allNovelties) {
   <input class="nm-pay-input nm-pay-input--sm" id="novFltSearch" placeholder="Buscar empleado…"
          value="${escapeHtml(noveltiesFilter.search)}" style="min-width:150px">
   ${hasFilter ? `<button class="nm-pay-btn nm-pay-btn--sm" id="novFltClear" style="color:#B91C1C;border-color:#FECACA">✕ Limpiar</button>` : ""}
-  <span style="font-size:11px;color:#94A3B8;margin-left:4px">${filtered.length}/${allNovelties.length}</span>
+  <span style="font-size:11px;color:#94A3B8;margin-left:auto">${filtered.length}/${allNovelties.length}</span>
+  <button class="nm-pay-btn nm-pay-btn--sm${isGrouped ? " nm-fbar-active" : ""}" id="novToggleGroup"
+          title="${isGrouped ? "Ver como tabla" : "Agrupar por colaborador"}">
+    ${isGrouped ? "&#9776; Tabla" : "&#128101; Agrupar"}
+  </button>
 </div>`;
 
-  const tableHtml = filtered.length
-    ? `<div class="nm-pay-table-wrap">${renderNoveltiesTable(filtered)}</div>`
-    : `<div class="nm-pay-empty" style="margin:10px">${hasFilter ? "Ninguna novedad coincide con los filtros." : "Sin novedades registradas en este municipio."}</div>`;
+  let contentHtml;
+  if (!filtered.length) {
+    contentHtml = `<div class="nm-pay-empty" style="margin:10px">${hasFilter ? "Ninguna novedad coincide con los filtros." : "Sin novedades registradas en este municipio."}</div>`;
+  } else if (isGrouped) {
+    contentHtml = `<div class="nm-nov-grouped-wrap">${renderNoveltiesGrouped(filtered)}</div>`;
+  } else {
+    contentHtml = `<div class="nm-pay-table-wrap">${renderNoveltiesTable(filtered)}</div>`;
+  }
 
-  return filterBar + tableHtml;
+  return filterBar + contentHtml;
 }
 
 function renderNoveltiesTable(novelties) {
@@ -1437,6 +1642,144 @@ function renderTurnosSection(turns, isClosed) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA MENSUAL DE NOVEDADES
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function downloadNoveltiesTemplate() {
+  if (!activePeriod) { showError("Seleccione un período primero."); return; }
+  const btn = document.getElementById("nmPayTemplateDownload");
+  const origLabel = btn?.textContent || "⬇ Plantilla";
+  if (btn) { btn.disabled = true; btn.textContent = "Generando…"; }
+  try {
+    const token = state.token || localStorage.getItem("empiria_token") || "";
+    const res = await fetch(`/payroll/periods/${activePeriod.id}/novelties-template`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || "Error al generar la plantilla");
+      return;
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const safeLbl = (activePeriod.label || String(activePeriod.id)).replace(/[^a-zA-Z0-9_\-]/g, "_");
+    a.download = `plantilla-novedades-${safeLbl}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showSuccess("Plantilla descargada correctamente.");
+  } catch (err) {
+    showError(err.message || "Error al descargar la plantilla");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+function openImportNoveltiesModal() {
+  if (!activePeriod) { showError("Seleccione un período primero."); return; }
+
+  const input = document.createElement("input");
+  input.type   = "file";
+  input.accept = ".xlsx,.xls";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const modal = document.getElementById("nmPayModal");
+    if (!modal) return;
+    modal.innerHTML = `
+<div style="padding:20px;min-width:380px;max-width:560px">
+  <div style="font-size:15px;font-weight:700;color:#0F172A;margin-bottom:14px">
+    Importar novedades — ${escapeHtml(activePeriod.label || "")}
+  </div>
+  <div id="importNovStatus" style="font-size:13px;color:#64748B;padding:24px;text-align:center">
+    <div style="font-size:28px;margin-bottom:10px">⏳</div>
+    Procesando <b>${escapeHtml(file.name)}</b>…
+  </div>
+</div>`;
+    modal.hidden = false;
+    wireModalClose();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const token = state.token || localStorage.getItem("empiria_token") || "";
+
+    try {
+      const res = await fetch(`/payroll/periods/${activePeriod.id}/import-novelties-template`, {
+        method:  "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body:    formData,
+      });
+      const json = await res.json().catch(() => ({ ok: false, message: "Error de servidor" }));
+      const d    = json.data || {};
+      const statusEl = document.getElementById("importNovStatus");
+      if (!statusEl) return;
+
+      if (json.ok && d.ok) {
+        statusEl.innerHTML = `
+          <div style="font-size:28px;margin-bottom:10px">✅</div>
+          <div style="font-size:14px;font-weight:700;color:#059669">Importación exitosa</div>
+          <div style="margin-top:10px;font-size:13px;color:#475569">
+            <b>${d.created}</b> novedad${d.created !== 1 ? "es" : ""} creada${d.created !== 1 ? "s" : ""}
+            de <b>${d.total}</b> procesada${d.total !== 1 ? "s" : ""}.
+          </div>
+          ${d.message ? `<div style="margin-top:8px;font-size:12px;color:#64748B">${escapeHtml(d.message)}</div>` : ""}
+          <div style="margin-top:16px;text-align:right">
+            <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" data-close-modal>Aceptar</button>
+          </div>`;
+        wireModalClose();
+        await reloadDetailOnly();
+      } else {
+        const errors  = d.errors  || [];
+        const created = d.created || 0;
+        const total   = d.total   || 0;
+        const errHtml = errors.length
+          ? `<div style="margin-top:10px;max-height:260px;overflow-y:auto;border:1px solid #FCA5A5;border-radius:6px;background:#FFF5F5">
+               ${errors.map((e) => `<div style="padding:6px 10px;border-bottom:1px solid #FEE2E2;font-size:12px;color:#B91C1C">
+                 ${escapeHtml(e.message || JSON.stringify(e))}
+               </div>`).join("")}
+             </div>`
+          : "";
+        statusEl.innerHTML = `
+          <div style="font-size:28px;margin-bottom:10px">⚠️</div>
+          <div style="font-size:14px;font-weight:700;color:#DC2626">
+            ${errors.length ? "Errores de validación — no se importó nada" : "Errores al crear novedades"}
+          </div>
+          <div style="margin-top:8px;font-size:13px;color:#475569">
+            ${errors.length
+              ? `Se encontraron <b>${errors.length}</b> error${errors.length !== 1 ? "es" : ""}. Corrija el archivo e intente nuevamente.`
+              : `Se crearon <b>${created}</b> de <b>${total}</b> novedades. Algunos registros fallaron.`}
+          </div>
+          ${errHtml}
+          <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+            <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
+            <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="importNovRetry">Intentar con otro archivo</button>
+          </div>`;
+        wireModalClose();
+        document.getElementById("importNovRetry")?.addEventListener("click", () => {
+          closeModal();
+          openImportNoveltiesModal();
+        });
+        if (created > 0) await reloadDetailOnly();
+      }
+    } catch (err) {
+      const statusEl = document.getElementById("importNovStatus");
+      if (statusEl) {
+        statusEl.innerHTML = `
+          <div style="font-size:28px;margin-bottom:10px">❌</div>
+          <div style="font-size:14px;font-weight:700;color:#DC2626">Error de conexión</div>
+          <div style="margin-top:8px;font-size:13px;color:#475569">${escapeHtml(err.message)}</div>
+          <div style="margin-top:16px;text-align:right">
+            <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+          </div>`;
+        wireModalClose();
+      }
+    }
+  };
+  input.click();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────────────────────────────────────
 function wireStaticEvents() {
@@ -1464,6 +1807,7 @@ function wireStaticEvents() {
     municipalitySearch = "";
     noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
     activeDetailTab    = "nomina";
+    selectedItemIds.clear();
     resetItemsFilter();
     // Auto-seleccionar grupo consolidado: si la posición tiene un solo grupo sin municipio
     const pos = groupsState.positions.find((p) => p.position === activePosition);
@@ -1484,14 +1828,17 @@ function wireStaticEvents() {
     activeGroupId      = Number(btn.dataset.groupId);
     activeDetailTab    = "nomina";
     noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
+    selectedItemIds.clear();
     resetItemsFilter();
     await reloadDetailOnly();
   }));
-  document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
-  document.getElementById("nmPayExport")?.addEventListener("click",   openExportModal);
-  document.getElementById("nmPayClose")?.addEventListener("click",    closeAndSendGroup);
-  document.getElementById("nmPayReopen")?.addEventListener("click",   openReopenModal);
-  document.getElementById("nmPayHistory")?.addEventListener("click",  openHistoryModal);
+  document.getElementById("nmPayCalculate")?.addEventListener("click",        calculateGroup);
+  document.getElementById("nmPayExport")?.addEventListener("click",            openExportModal);
+  document.getElementById("nmPayTemplateDownload")?.addEventListener("click", downloadNoveltiesTemplate);
+  document.getElementById("nmPayTemplateImport")?.addEventListener("click",   openImportNoveltiesModal);
+  document.getElementById("nmPayClose")?.addEventListener("click",            closeAndSendGroup);
+  document.getElementById("nmPayReopen")?.addEventListener("click",           openReopenModal);
+  document.getElementById("nmPayHistory")?.addEventListener("click",          openHistoryModal);
   document.querySelectorAll("[data-new-novelty]").forEach((btn) => btn.addEventListener("click", () => openNoveltyModal(Number(btn.dataset.newNovelty))));
   document.querySelectorAll("[data-cambio-operativo]").forEach((btn) => btn.addEventListener("click", () => openCambioOperativoModal(Number(btn.dataset.cambioOperativo))));
   document.querySelectorAll("[data-payslip]").forEach((btn)        => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
@@ -1516,6 +1863,43 @@ function wireStaticEvents() {
   }));
   document.querySelectorAll("[data-reviewed]").forEach((input)     => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
   document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
+
+  // ── Selección masiva de ítems de nómina ───────────────────────────────────
+  document.querySelectorAll(".nm-item-sel-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = Number(cb.dataset.selItem);
+      if (cb.checked) selectedItemIds.add(id);
+      else            selectedItemIds.delete(id);
+      // Re-renderizar solo la barra y el encabezado del checkbox "seleccionar todos"
+      // en lugar de un render() completo para evitar perder el foco
+      const bar = document.getElementById("nmBulkBar");
+      if (bar) {
+        const items = activeGroupDetail?.items || [];
+        bar.outerHTML = renderBulkActionBar(items);
+        wireStaticBulkEvents();
+      }
+      const selAll = document.getElementById("nmSelAll");
+      if (selAll) {
+        const allItemIds = (activeGroupDetail?.items || []).map((i) => i.id);
+        const allSel     = allItemIds.length > 0 && allItemIds.every((sid) => selectedItemIds.has(sid));
+        const someSel    = !allSel && allItemIds.some((sid) => selectedItemIds.has(sid));
+        selAll.checked       = allSel;
+        selAll.indeterminate = someSel;
+      }
+    });
+  });
+
+  document.getElementById("nmSelAll")?.addEventListener("change", (e) => {
+    const items = activeGroupDetail?.items || [];
+    // Selecciona / deselecciona TODOS: pendientes y revisados
+    items.forEach((i) => {
+      if (e.target.checked) selectedItemIds.add(i.id);
+      else                  selectedItemIds.delete(i.id);
+    });
+    render();
+  });
+
+  wireStaticBulkEvents();
   document.querySelectorAll("[data-delete-novelty]").forEach((btn)  => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
   document.getElementById("turnoFltCuentaCobro")?.addEventListener("change", (e) => { turnosFilter.hasCuentaCobro = e.target.value; render(); });
   document.getElementById("turnoSearch")?.addEventListener("input",  (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
@@ -1526,6 +1910,7 @@ function wireStaticEvents() {
   document.getElementById("novFltSupport")?.addEventListener("change", (e) => { noveltiesFilter.withSupport = e.target.value; render(); });
   document.getElementById("novFltSearch")?.addEventListener("input",   (e) => { noveltiesFilter.search = e.target.value || ""; render(); document.getElementById("novFltSearch")?.focus(); });
   document.getElementById("novFltClear")?.addEventListener("click",    () => { noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" }; render(); });
+  document.getElementById("novToggleGroup")?.addEventListener("click", () => { noveltiesViewMode = noveltiesViewMode === "grouped" ? "table" : "grouped"; render(); });
 
   // ── Filtros de tabla de ítems de nómina ───────────────────────────────────
   const applyFilter = async (key, val) => { itemsFilter[key] = val; await reloadDetailOnly(); };
@@ -1686,25 +2071,34 @@ function openExportModal() {
     activeGroupId ? [String(activeGroupId)] : posMunis.map((m) => String(m.id))
   );
 
-  // ── Función que actualiza los contadores en tiempo real ──────────────────
+  // ── Función que actualiza contadores Y visuales en tiempo real ──────────
   function updateExpCounters() {
-    const checked = [...document.querySelectorAll(".exp-mun-cb:checked")];
-    const ids = new Set(checked.map((cb) => cb.value));
+    const checked   = [...document.querySelectorAll(".exp-mun-cb:checked")];
+    const ids       = new Set(checked.map((cb) => cb.value));
     const selMunis  = posMunis.filter((m) => ids.has(String(m.id)));
-    const empCount  = selMunis.reduce((s, m) => s + Number(m.employees     || 0), 0);
-    const novCount  = selMunis.reduce((s, m) => s + Number(m.novelties     || 0), 0);
-    document.getElementById("expCntMun")?.textContent && (document.getElementById("expCntMun").textContent = selMunis.length);
-    document.getElementById("expCntEmp")?.textContent && (document.getElementById("expCntEmp").textContent = empCount);
-    document.getElementById("expCntNov")?.textContent && (document.getElementById("expCntNov").textContent = novCount);
-    if (document.getElementById("expCntMun")) document.getElementById("expCntMun").textContent = selMunis.length;
+    const empCount  = selMunis.reduce((s, m) => s + Number(m.employees || 0), 0);
+    const novCount  = selMunis.reduce((s, m) => s + Number(m.novelties || 0), 0);
+    const munCount  = selMunis.length;
+
+    if (document.getElementById("expCntMun")) document.getElementById("expCntMun").textContent = munCount;
     if (document.getElementById("expCntEmp")) document.getElementById("expCntEmp").textContent = empCount;
     if (document.getElementById("expCntNov")) document.getElementById("expCntNov").textContent = novCount;
+
     const btn = document.getElementById("expDoBtn");
-    if (btn) btn.disabled = (checked.length === 0);
-    // Actualizar aspecto visual de las tarjetas
+    if (btn) {
+      btn.disabled = (munCount === 0);
+      btn.textContent = munCount > 0
+        ? `⬇ Exportar ${munCount} municipio${munCount !== 1 ? "s" : ""} (${empCount} colaboradores)`
+        : "⬇ Exportar";
+    }
+
+    // BUG FIX #2: actualizar TAMBIÉN el innerHTML del indicador check y la clase CSS
     document.querySelectorAll(".exp-mun-card").forEach((card) => {
-      const cb = card.querySelector(".exp-mun-cb");
-      card.classList.toggle("exp-mun-card--selected", cb?.checked ?? false);
+      const cb  = card.querySelector(".exp-mun-cb");
+      const chk = card.querySelector(".exp-mun-card-check");
+      const isChecked = cb?.checked ?? false;
+      card.classList.toggle("exp-mun-card--selected", isChecked);
+      if (chk) chk.innerHTML = isChecked ? "&#10003;" : "";  // ← antes faltaba esta línea
     });
   }
 
@@ -1802,20 +2196,12 @@ function openExportModal() {
       </div>
     </div>
 
-    <!-- Modo de exportación -->
-    <div class="exp-mode-box">
-      <div class="exp-section-label">Modo de exportación</div>
-      <label class="exp-mode-opt">
-        <input type="radio" name="expMode" value="selected" checked>
-        Municipios seleccionados
-      </label>
-      <div class="exp-mode-opt-sub">Variables, Nómina, Novedades, Turnos, Resumen comparativo</div>
-      <label class="exp-mode-opt" style="margin-top:8px">
-        <input type="radio" name="expMode" value="full">
-        Nómina completa del período
-      </label>
-      <div class="exp-mode-opt-sub">Todos los cargos · ${escapeHtml(periodLabel)}</div>
-    </div>` : `
+    <!-- Nota informativa -->
+    <div style="font-size:11.5px;color:#64748B;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:7px;padding:9px 12px;line-height:1.55">
+      &#128196; Incluye: Variables · Nómina · Novedades · Turnos · Resumen comparativo
+      ${selectedItemIds.size > 0 && activeGroupId
+        ? `<br><span style="color:#0D9488;font-weight:600">&#9745; ${selectedItemIds.size} colaborador${selectedItemIds.size !== 1 ? "es" : ""} seleccionado${selectedItemIds.size !== 1 ? "s" : ""} — se exportará el municipio completo que los contiene.</span>`
+        : ""}</div>` : `
     <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:22px;font-size:13px;color:#64748B;text-align:center;line-height:1.7">
       No hay municipios disponibles para este cargo.<br>
       <span style="color:#94A3B8;font-size:12px">Calcula la nómina primero para ver los municipios disponibles.</span>
@@ -1824,8 +2210,13 @@ function openExportModal() {
     <!-- Botones finales -->
     <div class="exp-footer">
       <span id="expStatus" style="font-size:12px;color:#64748B;flex:1;min-width:60px"></span>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="expFullBtn" title="Exportar todos los cargos del período">&#127760; Todo el período</button>
       <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
-      <button class="nm-pay-btn nm-pay-btn--primary" id="expDoBtn" ${!defaultSelected.size ? "disabled" : ""} style="padding:7px 18px;font-size:13px">&#8595; Exportar Excel</button>
+      <button class="nm-pay-btn nm-pay-btn--primary" id="expDoBtn"
+              ${!defaultSelected.size ? "disabled" : ""}
+              style="padding:7px 18px;font-size:13px">
+        &#8595; Exportar ${defaultSelected.size} municipio${defaultSelected.size !== 1 ? "s" : ""} (${posMunis.filter(m=>defaultSelected.has(String(m.id))).reduce((s,m)=>s+Number(m.employees||0),0)} colaboradores)
+      </button>
     </div>
   </div>
 </div>`;
@@ -1842,26 +2233,30 @@ function openExportModal() {
     updateExpCounters();
   });
 
-  // ── Click en tarjeta: toggle checkbox + actualizar visual ────────────────
+  // ── BUG FIX #1: clic en tarjeta — e.preventDefault() evita el doble toggle ─
+  // La tarjeta ES un <label>. Sin preventDefault, el clic:
+  //   1. Dispara el listener → cb.checked = !cb.checked
+  //   2. El comportamiento nativo del <label> también hace cb.checked = !cb.checked
+  // Resultado = doble toggle = sin cambio. La solución: cancelar el comportamiento
+  // nativo y dejar que solo lo haga el listener.
   document.querySelectorAll(".exp-mun-card").forEach((card) => {
-    card.addEventListener("click", () => {
-      const cb   = card.querySelector(".exp-mun-cb");
-      const chk  = card.querySelector(".exp-mun-card-check");
+    card.addEventListener("click", (e) => {
+      e.preventDefault(); // ← esto corrige el doble-toggle
+      const cb  = card.querySelector(".exp-mun-cb");
+      const chk = card.querySelector(".exp-mun-card-check");
       if (cb) cb.checked = !cb.checked;
       if (chk) chk.innerHTML = cb?.checked ? "&#10003;" : "";
       updateExpCounters();
     });
   });
-  // Evitar doble toggle por label nativo del checkbox
-  document.querySelectorAll(".exp-mun-cb").forEach((cb) => {
-    cb.addEventListener("click", (e) => e.stopPropagation());
-  });
 
   // ── Función de descarga ──────────────────────────────────────────────────
   async function doExport(endpoint, filename) {
     const btn    = document.getElementById("expDoBtn");
+    const full   = document.getElementById("expFullBtn");
     const status = document.getElementById("expStatus");
-    if (btn) btn.disabled = true;
+    if (btn)  btn.disabled  = true;
+    if (full) full.disabled = true;
     if (status) status.textContent = "Generando archivo…";
     try {
       const token = state.token || localStorage.getItem("empiria_token") || "";
@@ -1872,39 +2267,72 @@ function openExportModal() {
       }
       const blob   = await res.blob();
       const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      const a      = document.createElement("a");
       a.href = objUrl; a.download = filename; a.click();
       URL.revokeObjectURL(objUrl);
       closeModal();
-      showSuccess("Exportación completada");
+      showSuccess("Exportación completada — " + filename);
     } catch (err) {
       showError(err.message || "Error al exportar");
     } finally {
-      updateExpCounters();
       if (status) status.textContent = "";
+      updateExpCounters(); // re-habilita botones si se mantiene el modal abierto
     }
   }
 
-  // ── Exportar ─────────────────────────────────────────────────────────────
-  document.getElementById("expDoBtn")?.addEventListener("click", () => {
-    const mode       = document.querySelector("[name='expMode']:checked")?.value || "selected";
+  // ── Confirmación previa a exportar municipios seleccionados ──────────────
+  function confirmAndExport() {
     const checkedIds = [...document.querySelectorAll(".exp-mun-cb:checked")].map((cb) => cb.value);
+    if (!checkedIds.length) { showError("Selecciona al menos un municipio antes de exportar."); return; }
 
-    if (mode === "full") {
-      doExport(`/payroll/periods/${activePeriod.id}/full-export`, `nomina-completa-${safeLbl}.xlsx`);
-      return;
-    }
-    if (!checkedIds.length) { showError("Selecciona al menos un municipio."); return; }
+    const selMunis  = posMunis.filter((m) => checkedIds.includes(String(m.id)));
+    const munCount  = selMunis.length;
+    const empCount  = selMunis.reduce((s, m) => s + Number(m.employees || 0), 0);
+    const munNames  = selMunis.map((m) => m.municipality_name);
+    const munList   = munNames.slice(0, 5).map((n) => `• ${n}`).join("<br>");
+    const extra     = munNames.length > 5 ? `<br>• …y ${munNames.length - 5} más` : "";
 
-    if (checkedIds.length === 1) {
-      const munName = posMunis.find((m) => String(m.id) === checkedIds[0])?.municipality_name || "municipio";
-      const safeMun = munName.replace(/[^a-z0-9]/gi, "-");
-      doExport(`/payroll/groups/${checkedIds[0]}/export`, `nomina-${safeLbl}-${safeMun}.xlsx`);
-    } else {
-      const munNames = checkedIds.map((id) => posMunis.find((m) => String(m.id) === id)?.municipality_name || "").filter(Boolean);
-      const safeMuns = munNames.slice(0, 2).join("-").replace(/[^a-z0-9]/gi, "-");
-      doExport(`/payroll/groups/multi-export?groupIds=${checkedIds.join(",")}`, `nomina-${safeLbl}-${safeMuns}.xlsx`);
-    }
+    showConfirmModal(
+      "Confirmar exportación",
+      `Va a exportar la nómina de <b>${munCount} municipio${munCount !== 1 ? "s" : ""}</b>
+       y <b>${empCount} colaborador${empCount !== 1 ? "es" : ""}</b>.<br><br>
+       ${munList}${extra}<br><br>¿Desea continuar?`,
+      () => {
+        // Generar nombre de archivo con los primeros municipios
+        const safeMuns = munNames.slice(0, 2).join("-").replace(/[^a-z0-9]/gi, "-");
+        if (checkedIds.length === 1) {
+          doExport(
+            `/payroll/groups/${checkedIds[0]}/export`,
+            `nomina-${safeLbl}-${safeMuns}.xlsx`
+          );
+        } else {
+          doExport(
+            `/payroll/groups/multi-export?groupIds=${checkedIds.join(",")}`,
+            `nomina-${safeLbl}-${safeMuns}.xlsx`
+          );
+        }
+      },
+      { confirmLabel: `⬇ Exportar ${munCount} municipio${munCount !== 1 ? "s" : ""}` }
+    );
+  }
+
+  // ── Exportar municipios seleccionados ─────────────────────────────────────
+  document.getElementById("expDoBtn")?.addEventListener("click", confirmAndExport);
+
+  // ── Exportar todo el período ──────────────────────────────────────────────
+  document.getElementById("expFullBtn")?.addEventListener("click", () => {
+    showConfirmModal(
+      "Exportar período completo",
+      `Va a exportar <b>todos los cargos y municipios</b> del período <b>${escapeHtml(periodLabel)}</b>.<br><br>
+       Esto puede tardar unos segundos si el período es grande. ¿Desea continuar?`,
+      () => {
+        doExport(
+          `/payroll/periods/${activePeriod.id}/full-export`,
+          `nomina-completa-${safeLbl}.xlsx`
+        );
+      },
+      { confirmLabel: "⬇ Exportar todo el período" }
+    );
   });
 }
 
@@ -2089,14 +2517,231 @@ function wireSalaryConfigModal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MODAL: REGISTRAR NOVEDAD
+// MODAL: REGISTRAR NOVEDAD (selección múltiple de tipos)
 // ─────────────────────────────────────────────────────────────────────────────
 function openNoveltyModal(itemId) {
-  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO", "CORRECCION_SEGURIDAD_SOCIAL"]);
   const RANGE_TYPES          = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
   const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
-  const MAX_BULK = 20;
+  const MULTI_PERIOD_TYPES   = new Set(["INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","PERMISOS_NO_REMUNERADOS","SUSPENSION","LICENCIA_MATERNIDAD_PATERNIDAD","CALAMIDAD_FAMILIAR"]);
+  const SELECTABLE           = NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA");
 
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:600px;max-height:88vh;overflow-y:auto">
+  <div class="nm-pay-dialog-h" style="position:sticky;top:0;z-index:10;background:#fff">
+    <b>Registrar novedad(es)</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b">
+    <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em">
+      &#9745; Selecciona uno o varios tipos de novedad
+    </div>
+    <div class="nm-nov-multi-grid" id="novMultiGrid">
+      ${SELECTABLE.map((t) => `
+        <label class="nm-nov-multi-label" title="${escapeHtml(t.name)}">
+          <input type="checkbox" class="nm-nov-multi-cb" value="${escapeHtml(t.code)}">
+          <span class="nm-nov-multi-name">${escapeHtml(t.name)}</span>
+        </label>`).join("")}
+    </div>
+    <div id="novMultiFields"></div>
+    <div class="nm-pay-field" style="margin-top:10px">
+      <label>Observaciones <small style="color:#94A3B8;font-weight:400">(aplica a todas)</small></label>
+      <textarea class="nm-pay-textarea" id="novDesc" rows="2"></textarea>
+    </div>
+    <div id="novActions" style="margin-top:8px">
+      <button class="nm-pay-btn nm-pay-btn--primary" id="novSave" disabled>
+        Selecciona al menos un tipo
+      </button>
+    </div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+
+  // ── Render campos de fecha para un tipo ───────────────────────────────────
+  function renderTypeFields(code) {
+    const isDate   = DATE_TYPES.has(code);
+    const isRange  = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+    const isBiz    = BUSINESS_RANGE_TYPES.has(code);
+    const isRetiro = code === "FECHA_RETIRO";
+    const isIng    = code === "FECHA_INGRESO";
+    const isCorrSS = code === "CORRECCION_SEGURIDAD_SOCIAL";
+
+    if (isDate) {
+      const lbl = isIng    ? "Fecha real de ingreso"
+                : isCorrSS ? "Fecha de corrección SS"
+                           : "Fecha real de retiro";
+      const hlp = isIng    ? "La nómina se liquidará desde este día hasta el fin del período."
+                : isCorrSS ? "Reemplaza la fecha de ingreso solo para el cálculo de días SS. No afecta días laborados ni salario."
+                           : "La nómina se liquidará desde el inicio del período hasta este día.";
+      return `
+        <div class="nm-pay-field">
+          <label>${lbl} <span style="color:#EF4444">*</span></label>
+          <input class="nm-pay-input" type="date" id="mnf_date_${code}">
+          <small style="color:#94A3B8">${hlp}</small>
+        </div>
+        ${isRetiro ? `<div class="nm-pay-field">
+          <label>Motivo del retiro <span style="color:#EF4444">*</span></label>
+          <select class="nm-pay-select" id="mnf_reason_${code}">
+            <option value="">— Seleccione motivo —</option>
+            <option value="disminucion_cupos">Disminución de cupos</option>
+            <option value="renuncia">Renuncia</option>
+            <option value="terminacion_contrato">Terminación de contrato</option>
+          </select>
+          <small style="color:#94A3B8">Determina si el puesto requiere reemplazo y cómo se calculan los Días SS.</small>
+        </div>` : ""}`;
+    }
+
+    if (isRange) {
+      const multiNote = MULTI_PERIOD_TYPES.has(code) && activePeriod?.period_end
+        ? `<small style="color:#7C3AED;font-size:10px">&#8596; Multi-período: si la fecha fin supera el período, los días se transfieren al siguiente.</small>`
+        : "";
+      return `
+        <div class="nm-pay-form-grid">
+          <div class="nm-pay-field">
+            <label>Fecha inicio <span style="color:#EF4444">*</span></label>
+            <input class="nm-pay-input" type="date" id="mnf_start_${code}">
+          </div>
+          <div class="nm-pay-field">
+            <label>Fecha fin <span style="color:#EF4444">*</span></label>
+            <input class="nm-pay-input" type="date" id="mnf_end_${code}">
+          </div>
+          <div class="nm-pay-field">
+            <label>${isBiz ? "Días hábiles (auto)" : "Días (auto)"}</label>
+            <input class="nm-pay-input" type="number" min="1" value="1" id="mnf_days_${code}"
+                   data-mode="${isBiz ? "biz" : ""}">
+          </div>
+        </div>${multiNote}`;
+    }
+
+    return `
+      <div class="nm-pay-field">
+        <label>Fecha de presentación <span style="color:#EF4444">*</span></label>
+        <input class="nm-pay-input" type="date" id="mnf_date_${code}">
+        <small style="color:#94A3B8">Se registra como 1 día de novedad.</small>
+      </div>`;
+  }
+
+  // ── Reconstruir secciones al cambiar checkboxes ───────────────────────────
+  function updateFields() {
+    const checked   = [...document.querySelectorAll(".nm-nov-multi-cb:checked")].map((cb) => cb.value);
+    const container = document.getElementById("novMultiFields");
+    if (!container) return;
+
+    container.innerHTML = checked.map((code) => {
+      const nm = noveltyByCode(code);
+      return `
+<div class="nm-nov-multi-section">
+  <div class="nm-nov-multi-section-hdr">
+    <b>${escapeHtml(nm?.name || code)}</b>
+    ${nm ? noveltyImpactNoticeHtml(nm) : ""}
+  </div>
+  <div class="nm-nov-multi-section-body">${renderTypeFields(code)}</div>
+</div>`;
+    }).join("");
+
+    // Wire auto-calc para rangos
+    checked.filter((c) => RANGE_TYPES.has(c) || BUSINESS_RANGE_TYPES.has(c)).forEach((code) => {
+      wireDateAutocalc(`mnf_start_${code}`, `mnf_end_${code}`, `mnf_days_${code}`);
+    });
+
+    const btn = document.getElementById("novSave");
+    if (btn) {
+      btn.disabled = !checked.length;
+      btn.textContent = checked.length > 1
+        ? `Guardar ${checked.length} novedades seleccionadas`
+        : checked.length === 1 ? "Guardar novedad" : "Selecciona al menos un tipo";
+    }
+  }
+
+  // ── Recolectar cuerpos de todas las novedades seleccionadas ───────────────
+  function collectMultiBodies() {
+    const checked  = [...document.querySelectorAll(".nm-nov-multi-cb:checked")].map((cb) => cb.value);
+    const obsText  = document.getElementById("novDesc")?.value || "";
+    const bodies   = [];
+
+    for (const code of checked) {
+      const nm      = noveltyByCode(code);
+      const label   = nm?.name || code;
+      const isDate  = DATE_TYPES.has(code);
+      const isRange = RANGE_TYPES.has(code) || BUSINESS_RANGE_TYPES.has(code);
+
+      if (isDate) {
+        const d = document.getElementById(`mnf_date_${code}`)?.value;
+        if (!d) {
+          const fldLbl = code === "FECHA_INGRESO" ? "ingreso" : code === "CORRECCION_SEGURIDAD_SOCIAL" ? "corrección SS" : "retiro";
+          throw new Error(`[${label}] Ingrese la fecha de ${fldLbl}.`);
+        }
+        const body = { novelty_type: code, novelty_date: d, observations: obsText };
+        if (code === "FECHA_RETIRO") {
+          const r = document.getElementById(`mnf_reason_${code}`)?.value || "";
+          if (!r) throw new Error(`[${label}] Seleccione el motivo del retiro.`);
+          body.retirement_reason = r;
+        }
+        bodies.push(body);
+      } else if (isRange) {
+        const s = document.getElementById(`mnf_start_${code}`)?.value;
+        const e = document.getElementById(`mnf_end_${code}`)?.value;
+        const d = Number(document.getElementById(`mnf_days_${code}`)?.value);
+        if (!s) throw new Error(`[${label}] Indique la fecha de inicio.`);
+        if (!d || d < 1) throw new Error(`[${label}] Los días deben ser mayor a 0.`);
+        if (e && e < s) throw new Error(`[${label}] La fecha fin no puede ser anterior al inicio.`);
+        bodies.push({ novelty_type: code, start_date: s, end_date: e || s, days: d, observations: obsText });
+      } else {
+        const d = document.getElementById(`mnf_date_${code}`)?.value;
+        if (!d) throw new Error(`[${label}] Indique la fecha de presentación.`);
+        bodies.push({ novelty_type: code, start_date: d, end_date: d, days: 1, observations: obsText });
+      }
+    }
+    return bodies;
+  }
+
+  // ── Guardar todas ─────────────────────────────────────────────────────────
+  document.getElementById("novSave")?.addEventListener("click", async () => {
+    let bodies;
+    try { bodies = collectMultiBodies(); } catch (e) { showError(e.message); return; }
+    if (!bodies.length) { showError("Selecciona al menos un tipo de novedad."); return; }
+
+    const btn = document.getElementById("novSave");
+    if (btn) { btn.disabled = true; btn.textContent = `Guardando ${bodies.length}…`; }
+
+    let ok = 0;
+    const errs = [];
+    for (const b of bodies) {
+      try {
+        await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(b) });
+        ok++;
+      } catch (e) {
+        errs.push(e.message);
+      }
+    }
+    closeModal();
+    await reloadWorkArea();
+    if (!errs.length) {
+      showSuccess(`${ok} novedad${ok !== 1 ? "es" : ""} registrada${ok !== 1 ? "s" : ""} correctamente.`);
+    } else {
+      showSuccess(`${ok} creada${ok !== 1 ? "s" : ""}. ${errs.length} con error: ${errs[0]}`);
+    }
+  });
+
+  // ── Wire checkboxes ───────────────────────────────────────────────────────
+  document.querySelectorAll(".nm-nov-multi-cb").forEach((cb) =>
+    cb.addEventListener("change", updateFields)
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ZONA LEGACY: los métodos internos de la versión anterior ya no son
+  // necesarios — el nuevo modal maneja todo con las funciones de arriba.
+  // Se mantiene este bloque vacío para evitar que código externo que llamaba
+  // a update() o wireSave() falle. Si no hay llamadas externas, se puede
+  // eliminar en la próxima limpieza.
+  // ─────────────────────────────────────────────────────────────────────────
+  const MAX_BULK = 20; // eslint-disable-line no-unused-vars — referenciado en CSS legacy
+}
+
+// ─── FUNCIÓN LEGACY INTERNA — ya no usada, se conserva por seguridad ─────────
+function _legacyNoveltyModalOld(itemId) {
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
 <div class="nm-pay-dialog" style="max-width:520px">
@@ -2147,14 +2792,19 @@ function openNoveltyModal(itemId) {
     const n        = DATE_TYPES.has(code) ? 1 : qty;
 
     if (DATE_TYPES.has(code)) {
-      const isIng = code === "FECHA_INGRESO";
+      const isIng    = code === "FECHA_INGRESO";
+      const isCorrSS = code === "CORRECCION_SEGURIDAD_SOCIAL";
+      const dateLabel = isIng    ? "Fecha real de ingreso"
+                      : isCorrSS ? "Fecha de corrección Seguridad Social"
+                                 : "Fecha real de retiro";
+      const dateHelp  = isIng    ? "La nómina se liquidará desde este día hasta el fin del período."
+                      : isCorrSS ? "Reemplaza la fecha de ingreso solo para el cálculo de días SS. No afecta días laborados ni salario."
+                                 : "La nómina se liquidará desde el inicio del período hasta este día.";
       section.innerHTML = `
 <div class="nm-pay-field">
-  <label>${isIng ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
+  <label>${dateLabel} <span style="color:#EF4444">*</span></label>
   <input class="nm-pay-input" id="novDate_0" type="date">
-  <small style="color:#94A3B8">${isIng
-    ? "La nómina se liquidará desde este día hasta el fin del período."
-    : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
+  <small style="color:#94A3B8">${dateHelp}</small>
 </div>
 ${code === "FECHA_RETIRO" ? `
 <div class="nm-pay-field">
@@ -2292,7 +2942,10 @@ ${code === "FECHA_RETIRO" ? `
 
     if (DATE_TYPES.has(code)) {
       const d = document.getElementById("novDate_0")?.value;
-      if (!d) throw new Error(`Ingrese la fecha de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`);
+      const dateLabel = code === "FECHA_INGRESO"              ? "ingreso"
+                      : code === "CORRECCION_SEGURIDAD_SOCIAL" ? "corrección SS"
+                                                               : "retiro";
+      if (!d) throw new Error(`Ingrese la fecha de ${dateLabel}.`);
       const body = { novelty_type: code, novelty_date: d, observations: obsText };
       if (code === "FECHA_RETIRO") {
         const r = document.getElementById("novRetirementReason")?.value || "";
@@ -2697,7 +3350,7 @@ function openEditNoveltyModal(noveltyId) {
   const novelty = activeGroupDetail?.novelties?.find((x) => Number(x.id) === Number(noveltyId));
   if (!novelty) return;
 
-  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO"]);
+  const DATE_TYPES           = new Set(["FECHA_INGRESO", "FECHA_RETIRO", "CORRECCION_SEGURIDAD_SOCIAL"]);
   const RANGE_TYPES          = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
   const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
   const code0                = novelty.novelty_type;
@@ -2737,12 +3390,18 @@ function openEditNoveltyModal(noveltyId) {
       Puede editar la fecha fin aquí; el sistema recalculará la distribución.
     </div>` : ""}
 
-    <!-- Sección 1: fecha exacta — solo FECHA_INGRESO / FECHA_RETIRO -->
+    <!-- Sección 1: fecha exacta — FECHA_INGRESO, FECHA_RETIRO, CORRECCION_SEGURIDAD_SOCIAL -->
     <div id="novDateSection" ${isDate0 ? "" : "hidden"}>
       <div class="nm-pay-field">
-        <label id="novDateLabel">${code0 === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
+        <label id="novDateLabel">${
+          code0 === "FECHA_INGRESO"              ? "Fecha real de ingreso" :
+          code0 === "CORRECCION_SEGURIDAD_SOCIAL" ? "Fecha de corrección Seguridad Social" :
+          "Fecha real de retiro"} <span style="color:#EF4444">*</span></label>
         <input class="nm-pay-input" id="novDate" type="date" value="${escapeHtml(startVal)}">
-        <small id="novDateHelp" style="color:#94A3B8">${code0 === "FECHA_INGRESO" ? "La nómina se liquidará desde este día hasta el fin del período." : "La nómina se liquidará desde el inicio del período hasta este día."}</small>
+        <small id="novDateHelp" style="color:#94A3B8">${
+          code0 === "FECHA_INGRESO"              ? "La nómina se liquidará desde este día hasta el fin del período." :
+          code0 === "CORRECCION_SEGURIDAD_SOCIAL" ? "Reemplaza la fecha de ingreso solo para el cálculo de días SS. No afecta días laborados ni salario." :
+          "La nómina se liquidará desde el inicio del período hasta este día."}</small>
       </div>
     </div>
 
@@ -2812,10 +3471,14 @@ function openEditNoveltyModal(noveltyId) {
     const dateLabel = document.getElementById("novDateLabel");
     const dateHelp  = document.getElementById("novDateHelp");
     if (isDate && dateLabel && dateHelp) {
-      dateLabel.innerHTML  = `${code === "FECHA_INGRESO" ? "Fecha real de ingreso" : "Fecha real de retiro"} <span style="color:#EF4444">*</span>`;
-      dateHelp.textContent = code === "FECHA_INGRESO"
-        ? "La nómina se liquidará desde este día hasta el fin del período."
-        : "La nómina se liquidará desde el inicio del período hasta este día.";
+      const lbl = code === "FECHA_INGRESO"              ? "Fecha real de ingreso"
+                : code === "CORRECCION_SEGURIDAD_SOCIAL" ? "Fecha de corrección Seguridad Social"
+                                                         : "Fecha real de retiro";
+      const hlp = code === "FECHA_INGRESO"              ? "La nómina se liquidará desde este día hasta el fin del período."
+                : code === "CORRECCION_SEGURIDAD_SOCIAL" ? "Reemplaza la fecha de ingreso solo para el cálculo de días SS. No afecta días laborados ni salario."
+                                                         : "La nómina se liquidará desde el inicio del período hasta este día.";
+      dateLabel.innerHTML  = `${lbl} <span style="color:#EF4444">*</span>`;
+      dateHelp.textContent = hlp;
     }
   };
 
@@ -2842,7 +3505,10 @@ function openEditNoveltyModal(noveltyId) {
 
       if (DATE_TYPES.has(code)) {
         const noveltyDate = document.getElementById("novDate").value;
-        if (!noveltyDate) { showError(`Ingrese la fecha exacta de ${code === "FECHA_INGRESO" ? "ingreso" : "retiro"}.`); return; }
+        const dateLbl = code === "FECHA_INGRESO"              ? "ingreso"
+                      : code === "CORRECCION_SEGURIDAD_SOCIAL" ? "corrección SS"
+                                                               : "retiro";
+        if (!noveltyDate) { showError(`Ingrese la fecha exacta de ${dateLbl}.`); return; }
         body = { novelty_type: code, novelty_date: noveltyDate, description: obsText };
         if (code === "FECHA_RETIRO") {
           const retirementReason = document.getElementById("novRetirementReason")?.value || "";
@@ -3149,45 +3815,21 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
   const fmt = fmtCOP;
 
   // ── REPORTE DE NOVEDADES ─────────────────────────────────────────────────
+  // CORRECCION_SEGURIDAD_SOCIAL es un ajuste técnico interno — no se muestra al empleado
+  const INTERNAL_NOVELTY_TYPES = new Set(["CAMBIO_OPERATIVO_COBERTURA", "CORRECCION_SEGURIDAD_SOCIAL"]);
   let novSectionHtml = "";
-  const allNovs = (data.novelties || []).filter((n) => n.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA");
+  const allNovs = (data.novelties || []).filter((n) => !INTERNAL_NOVELTY_TYPES.has(n.novelty_type));
   if (!cambio_operativo && allNovs.length) {
-    // Consolidar por tipo: misma novedad en fechas distintas → una sola línea
-    const groups = {};
+    const byType = {};
     allNovs.forEach((n) => {
       const key = n.novelty_type;
-      if (!groups[key]) {
-        groups[key] = {
-          name:             n.novelty_name || n.novelty_type,
-          days:             0,
-          start_date:       n.start_date,
-          end_date:         n.end_date,
-          affects_salary:   n.affects_salary,
-          affects_transport: n.affects_transport,
-        };
-      }
-      groups[key].days += Number(n.days || 0);
-      if (n.start_date && (!groups[key].start_date || n.start_date < groups[key].start_date))
-        groups[key].start_date = n.start_date;
-      if (n.end_date && n.end_date > groups[key].end_date)
-        groups[key].end_date = n.end_date;
+      if (!byType[key]) byType[key] = { name: n.novelty_name || n.novelty_type, totalDays: 0 };
+      byType[key].totalDays += Number(n.days || 0);
     });
-    const rows = Object.values(groups).map((g) => {
-      const badgeCls = g.affects_salary
-        ? "nov-badge--sal"
-        : g.affects_transport ? "nov-badge--tra" : "nov-badge--other";
-      const dateRange = (g.start_date || g.end_date)
-        ? fmtDateRange(g.start_date, g.end_date)
-        : "";
-      return `<div class="nov-report-row">
-        <div>
-          <div class="nov-report-name">${escapeHtml(g.name)}</div>
-          ${dateRange ? `<div class="nov-report-date">${dateRange}</div>` : ""}
-        </div>
-        <span class="nov-report-badge ${badgeCls}">${g.days}d</span>
-      </div>`;
-    }).join("");
-    novSectionHtml = `<div class="section"><div class="section-h">Reporte de Novedades</div>${rows}</div>`;
+    const rows = Object.values(byType).map((g) =>
+      `<div class="nov-type-block"><div class="nov-type-name">&#8226; ${escapeHtml(g.name)}: ${g.totalDays} día${g.totalDays !== 1 ? "s" : ""}</div></div>`
+    ).join("");
+    novSectionHtml = `<div class="section"><div class="section-h">Novedades aplicadas</div>${rows}</div>`;
   }
 
   // ── Devengados ───────────────────────────────────────────────────────────
@@ -3237,17 +3879,18 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
   .section-net{border:none}
   .section-net .section-h{background:#ECFDF5;color:#0F766E}
   .section-net .row.total{font-size:17px;padding:14px 20px;color:#0F766E}
-  .nov-report-row{display:flex;justify-content:space-between;align-items:center;padding:7px 20px;border-top:1px solid #F1F5F9}
-  .nov-report-name{font-size:13px;color:#1E293B;font-weight:500}
-  .nov-report-date{font-size:11px;color:#64748B;margin-top:2px}
-  .nov-report-badge{font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;white-space:nowrap}
-  .nov-badge--sal{background:#FEE2E2;color:#B91C1C}
-  .nov-badge--tra{background:#FEF3C7;color:#B45309}
-  .nov-badge--other{background:#F1F5F9;color:#475569}
+  .nov-type-block{padding:8px 20px;border-top:1px solid #F1F5F9;page-break-inside:avoid}
+  .nov-type-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#1E293B;margin-bottom:5px}
+  .nov-type-name--sal{color:#B91C1C}
+  .nov-type-name--tra{color:#B45309}
+  .nov-date-list{padding-left:4px}
+  .nov-date-entry{padding:2px 0;page-break-inside:avoid}
+  .nov-date-bullet{font-size:12px;color:#334155}
+  .nov-date-obs{font-size:11px;color:#64748B;padding-left:14px}
   .cambio-label{padding:8px 20px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#7C3AED}
   .row.cambio{border-left:3px solid #DDD6FE;padding-left:17px;margin-left:20px}
   .slip-footer{padding:10px 20px;font-size:11px;color:#94A3B8;text-align:center}
-  @media print{body{padding:0}.slip{border:none;border-radius:0;max-width:100%}}
+  @media print{body{padding:0}.slip{border:none;border-radius:0;max-width:100%;overflow:visible}}
 </style>
 ${printScript}
 </head>
@@ -3330,46 +3973,23 @@ async function openPayslipModal(itemId) {
 </div>`;
 
     // ── REPORTE DE NOVEDADES (modal) ─────────────────────────────────────────
+    // CORRECCION_SEGURIDAD_SOCIAL es un ajuste técnico interno — no se muestra al empleado
+    const INTERNAL_NOVELTY_TYPES = new Set(["CAMBIO_OPERATIVO_COBERTURA", "CORRECCION_SEGURIDAD_SOCIAL"]);
     let novSectionHtml = "";
-    const allNovs = (data.novelties || []).filter((n) => n.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA");
+    const allNovs = (data.novelties || []).filter((n) => !INTERNAL_NOVELTY_TYPES.has(n.novelty_type));
     if (!cambio_operativo && allNovs.length) {
-      const groups = {};
+      const byType = {};
       allNovs.forEach((n) => {
         const key = n.novelty_type;
-        if (!groups[key]) {
-          groups[key] = {
-            name:              n.novelty_name || n.novelty_type,
-            days:              0,
-            start_date:        n.start_date,
-            end_date:          n.end_date,
-            affects_salary:    n.affects_salary,
-            affects_transport: n.affects_transport,
-          };
-        }
-        groups[key].days += Number(n.days || 0);
-        if (n.start_date && (!groups[key].start_date || n.start_date < groups[key].start_date))
-          groups[key].start_date = n.start_date;
-        if (n.end_date && n.end_date > groups[key].end_date)
-          groups[key].end_date = n.end_date;
+        if (!byType[key]) byType[key] = { name: n.novelty_name || n.novelty_type, totalDays: 0 };
+        byType[key].totalDays += Number(n.days || 0);
       });
-      const novRows = Object.values(groups).map((g) => {
-        const badgeColor = g.affects_salary
-          ? "background:#FEE2E2;color:#B91C1C"
-          : g.affects_transport ? "background:#FEF3C7;color:#B45309" : "background:#F1F5F9;color:#475569";
-        const dateRange = (g.start_date || g.end_date)
-          ? `<div style="font-size:11px;color:#64748B;margin-top:1px">${fmtDateRange(g.start_date, g.end_date)}</div>`
-          : "";
-        return `<div class="nm-slip-row" style="align-items:center">
-          <div>
-            <div style="font-size:13px;font-weight:500;color:#1E293B">${escapeHtml(g.name)}</div>
-            ${dateRange}
-          </div>
-          <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;white-space:nowrap;${badgeColor}">${g.days}d</span>
-        </div>`;
-      }).join("");
+      const novRows = Object.values(byType).map((g) =>
+        `<div class="nm-slip-row"><span>&#8226; ${escapeHtml(g.name)}: ${g.totalDays} día${g.totalDays !== 1 ? "s" : ""}</span></div>`
+      ).join("");
       novSectionHtml = `
         <div class="nm-slip-section">
-          <div class="nm-slip-section-h">Reporte de Novedades</div>
+          <div class="nm-slip-section-h">Novedades aplicadas</div>
           ${novRows}
         </div>`;
     }
@@ -3548,6 +4168,133 @@ async function toggleReviewed(noveltyId, reviewed, input) {
       showError(err.message);
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIRE DE BOTONES DE BARRA MASIVA (re-wirable sin render() completo)
+// ─────────────────────────────────────────────────────────────────────────────
+function wireStaticBulkEvents() {
+  document.getElementById("nmBulkReview")?.addEventListener("click", bulkMarkReviewed);
+  document.getElementById("nmBulkUnreview")?.addEventListener("click", bulkUnmarkReviewed);
+  document.getElementById("nmBulkClear")?.addEventListener("click", () => { selectedItemIds.clear(); render(); });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCIONES MASIVAS DE REVISIÓN
+// ─────────────────────────────────────────────────────────────────────────────
+async function bulkMarkReviewed() {
+  const items       = activeGroupDetail?.items || [];
+  const pendingIds  = [...selectedItemIds].filter((id) => {
+    const item = items.find((i) => i.id === id);
+    return item && !item.reviewed;
+  });
+  const count = pendingIds.length;
+  if (!count) { showError("No hay colaboradores pendientes seleccionados."); return; }
+
+  showConfirmModal(
+    "Revisión masiva",
+    `Va a marcar como revisados <b>${count} colaborador${count !== 1 ? "es" : ""}</b>.<br><br>
+     Los registros quedarán <b>bloqueados para edición</b>. Solo podrá ver sus desprendibles.<br><br>
+     ¿Desea continuar?`,
+    async () => {
+      let ok = 0;
+      const errs = [];
+      for (const id of pendingIds) {
+        try {
+          await apiFetch(`/payroll/items/${id}/reviewed`, {
+            method: "PATCH",
+            body: JSON.stringify({ reviewed: true }),
+          });
+          ok++;
+        } catch (e) {
+          errs.push(e.message);
+        }
+      }
+      selectedItemIds.clear();
+      await reloadDetailOnly();
+      if (!errs.length) {
+        showSuccess(`${ok} colaborador${ok !== 1 ? "es" : ""} marcado${ok !== 1 ? "s" : ""} como revisado${ok !== 1 ? "s" : ""}.`);
+      } else {
+        showSuccess(`${ok} revisado${ok !== 1 ? "s" : ""}. ${errs.length} con error: ${errs[0]}`);
+      }
+    },
+    { confirmLabel: `Confirmar — revisar ${count}` }
+  );
+}
+
+async function bulkUnmarkReviewed() {
+  const items       = activeGroupDetail?.items || [];
+  const reviewedIds = [...selectedItemIds].filter((id) => {
+    const item = items.find((i) => i.id === id);
+    return item && item.reviewed;
+  });
+  const count = reviewedIds.length;
+  if (!count) { showError("No hay colaboradores revisados seleccionados."); return; }
+
+  // Modal de confirmación con campo de motivo integrado
+  // (el backend exige motivo al desmarcar revisión)
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog" style="max-width:460px">
+  <div class="nm-pay-dialog-h">
+    <b>Desmarcar revisión masiva</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
+  </div>
+  <div class="nm-pay-dialog-b" style="gap:14px">
+    <div style="padding:12px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:7px;color:#991B1B;font-size:13px;line-height:1.6">
+      Va a desmarcar la revisión de <b>${count} registro${count !== 1 ? "s" : ""}</b>.<br>
+      Los registros quedarán <b>desbloqueados para edición</b>.<br>¿Desea continuar?
+    </div>
+    <div class="nm-pay-field">
+      <label>Motivo del desbloqueo <span style="color:#EF4444">*</span></label>
+      <textarea class="nm-pay-textarea" id="nmBulkUnreviewReason" rows="2"
+                placeholder="Describe el motivo para quitar la revisión…" style="resize:vertical"></textarea>
+      <small style="color:#94A3B8">Requerido. Se registrará en auditoría para todos los registros afectados.</small>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmBulkUnreviewConfirm"
+              style="background:#B91C1C;color:#fff;border-color:#B91C1C">
+        Desmarcar ${count} registro${count !== 1 ? "s" : ""}
+      </button>
+    </div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+
+  document.getElementById("nmBulkUnreviewConfirm")?.addEventListener("click", async () => {
+    const reason = (document.getElementById("nmBulkUnreviewReason")?.value || "").trim();
+    if (!reason) {
+      document.getElementById("nmBulkUnreviewReason")?.focus();
+      showError("El motivo es obligatorio para desbloquear registros de nómina.");
+      return;
+    }
+    const btn = document.getElementById("nmBulkUnreviewConfirm");
+    if (btn) { btn.disabled = true; btn.textContent = `Desbloqueando ${count}…`; }
+
+    let ok = 0;
+    const errs = [];
+    for (const id of reviewedIds) {
+      try {
+        await apiFetch(`/payroll/items/${id}/reviewed`, {
+          method: "PATCH",
+          body: JSON.stringify({ reviewed: false, reason }),
+        });
+        ok++;
+      } catch (e) {
+        errs.push(e.message);
+      }
+    }
+    closeModal();
+    selectedItemIds.clear();
+    await reloadDetailOnly();
+    if (!errs.length) {
+      showSuccess(`${ok} registro${ok !== 1 ? "s" : ""} desbloqueado${ok !== 1 ? "s" : ""} correctamente.`);
+    } else {
+      showSuccess(`${ok} desbloqueado${ok !== 1 ? "s" : ""}. ${errs.length} con error: ${errs[0]}`);
+    }
+  });
 }
 
 async function toggleItemReviewed(itemId, checked, inputEl) {

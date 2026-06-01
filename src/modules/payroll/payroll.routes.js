@@ -44,6 +44,7 @@ const {
   handleVariablesExport,
   handlePeriodFullExport,
   handleEmployeeSalaryConfig,
+  handleNoveltiesTemplate,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
@@ -140,6 +141,10 @@ async function handlePayrollRoutes(req, res, url) {
   // GET /payroll/periods/:id/results
   if (/^\/payroll\/periods\/\d+\/results$/.test(pathname)) {
     await handlePeriodResults(req, res, url); return true;
+  }
+  // GET /payroll/periods/:id/novelties-template  (plantilla mensual de novedades)
+  if (/^\/payroll\/periods\/\d+\/novelties-template$/.test(pathname)) {
+    await handleNoveltiesTemplate(req, res, url); return true;
   }
   // GET /payroll/periods/:id/full-export  (Variables + Nómina + Resumen, todos los municipios)
   if (/^\/payroll\/periods\/\d+\/full-export$/.test(pathname)) {

@@ -24,6 +24,7 @@ const {
 } = require("./payroll.repository");
 
 const operational = require("./payroll.operational.repository");
+const { clearGroupCache } = operational;
 
 // ── Salary categories ────────────────────────────────────────────────────────
 async function handleSalaryCategories(req, res, url) {
@@ -1291,9 +1292,7 @@ function buildGroupXlsx(options) {
 
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
-    const otros = calc.other_recargos_value != null
-      ? n(calc.other_recargos_value)
-      : Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+    const otros = Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
     const motivoRetiro = { disminucion_cupos: "Disminución de cupos", renuncia: "Renuncia", terminacion_contrato: "Terminación de contrato" }[item.retirement_reason] || "";
     const reqReemplazo = item.requires_replacement === true ? "Sí" : item.requires_replacement === false ? "No" : "";
     const reemplazo = item.replacement_employee_name || (item.replacement_found === false ? "No encontrado" : "");
@@ -1312,7 +1311,7 @@ function buildGroupXlsx(options) {
   // Totals
   function otrosItem(i) {
     const c = i.calculation || {};
-    return c.other_recargos_value != null ? n(c.other_recargos_value) : Math.max(0, n(i.other_earnings) - n(c.internal_cover_value));
+    return Math.max(0, n(i.other_earnings) - n(c.internal_cover_value));
   }
   const nomTotal = [
     "TOTAL", "", "", "", "", "", "", "", "",
@@ -1366,6 +1365,17 @@ function buildGroupXlsx(options) {
   const uniqueNovelties = [...new Map(novelties.map((nov) => [nov.id, nov])).values()];
   const novRows2 = uniqueNovelties
     .filter((nov) => nov.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA")
+    // Ordenar: primero por nombre de colaborador (A→Z), luego por fecha de inicio (cronológico).
+    // Mantiene una fila por novedad — solo mejora el orden para facilitar revisión y auditoría.
+    .sort((a, b) => {
+      const nameA = String(a.employee_name || "").toUpperCase();
+      const nameB = String(b.employee_name || "").toUpperCase();
+      if (nameA < nameB) return -1;
+      if (nameA > nameB) return  1;
+      const dateA = String(a.start_date || a.novelty_date || "");
+      const dateB = String(b.start_date || b.novelty_date || "");
+      return dateA < dateB ? -1 : dateA > dateB ? 1 : 0;
+    })
     .map((nov) => {
       const code   = s(nov.novelty_type);
       const calc   = itemCalcMap.get(String(nov.payroll_item_id)) || {};
@@ -1636,20 +1646,50 @@ async function handleMultiGroupExport(req, res, url) {
     ACTIONS.EXPORT,
     async (innerReq, innerRes) => {
       try {
-        // Cargar detalle de cada grupo seleccionado en paralelo
-        const results = await Promise.all(
-          groupIds.map(async (gid) => {
+        console.log("[EXPORT] Grupos seleccionados:", groupIds);
+        console.log("[MEMORY] inicio:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+        // Cargar detalle de cada grupo en secuencia para identificar cuál falla
+        const valid = [];
+        for (const gid of groupIds) {
+          console.log("[EXPORT] Iniciando grupo", gid);
+          try {
             const grp = await operational.getGroup(gid);
-            if (!grp) return null;
+            if (!grp) { console.warn("[EXPORT] Grupo no encontrado:", gid); continue; }
+
+            console.log("[EXPORT] Municipio:", grp.municipality_name, "| período:", grp.period_id);
+            console.log("[MEMORY] antes de cargar grupo", gid, ":", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
             const [data, turnsRes, coverageData] = await Promise.all([
               operational.getPayrollGroupDetail(grp.period_id, gid),
               operational.listGroupTurns(gid).catch(() => ({ turns: [] })),
               operational.getCoverageStatsForGroup(grp.contract_id, grp.municipality_id).catch(() => null),
             ]);
-            return { grp, data, turns: turnsRes.turns || [], coverageData };
-          })
-        );
-        const valid = results.filter(Boolean);
+
+            const payrollRows  = (data.items     || []).length;
+            const noveltyRows  = (data.novelties || []).length;
+            const supportRows  = (data.supports  || []).length;
+            const turnRows     = (turnsRes.turns  || []).length;
+
+            console.log("[EXPORT] Volumen grupo", gid, "(", grp.municipality_name, "):", {
+              payrollRows, noveltyRows, supportRows, turnRows,
+            });
+
+            if (payrollRows  > 5000) console.warn("[EXPORT WARNING] payrollRows > 5000 en grupo", gid, ":", payrollRows);
+            if (noveltyRows  > 5000) console.warn("[EXPORT WARNING] noveltyRows > 5000 en grupo", gid, ":", noveltyRows);
+            if (supportRows  > 5000) console.warn("[EXPORT WARNING] supportRows > 5000 en grupo", gid, ":", supportRows);
+            if (turnRows     > 5000) console.warn("[EXPORT WARNING] turnRows    > 5000 en grupo", gid, ":", turnRows);
+
+            console.log("[MEMORY] después de cargar grupo", gid, ":", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+            valid.push({ grp, data, turns: turnsRes.turns || [], coverageData });
+          } catch (err) {
+            console.error("[EXPORT GRUPO ERROR] groupId =", gid);
+            console.error(err);
+            throw new Error(`Fallo al procesar grupo ${gid}: ${err.message}`);
+          }
+        }
+
         if (!valid.length) {
           sendJson(innerRes, 404, { ok: false, message: "Ningún grupo encontrado" }); return;
         }
@@ -1659,6 +1699,14 @@ async function handleMultiGroupExport(req, res, url) {
         const allNovs     = valid.flatMap((v) => v.data.novelties || []);
         const allCovers   = valid.flatMap((v) => v.data.covers   || []);
         const allTurns    = valid.flatMap((v) => v.turns);
+
+        console.log("[EXPORT] Totales combinados:", {
+          items:    allItems.length,
+          novs:     allNovs.length,
+          covers:   allCovers.length,
+          turns:    allTurns.length,
+        });
+        console.log("[MEMORY] antes de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
 
         const n = (v) => Number(v || 0);
         const combinedTotals = allItems.reduce(
@@ -1735,16 +1783,29 @@ async function handleMultiGroupExport(req, res, url) {
           _municipalities:   munStatsPerGroup,
         };
 
-        const buf = buildGroupXlsx({
-          group:    syntheticGroup,
-          items:    allItems,
-          novelties: allNovs,
-          supports: [],
-          covers:   allCovers,
-          turns:    allTurns,
-          totals:   combinedTotals,
-          coverage: null,
-        });
+        let buf;
+        try {
+          buf = buildGroupXlsx({
+            group:    syntheticGroup,
+            items:    allItems,
+            novelties: allNovs,
+            supports: [],
+            covers:   allCovers,
+            turns:    allTurns,
+            totals:   combinedTotals,
+            coverage: null,
+          });
+        } catch (xlsxErr) {
+          console.error("[EXPORT XLSX ERROR] Fallo al generar el workbook multi-grupo");
+          console.error("[EXPORT XLSX ERROR] Municipios involucrados:", muniNames);
+          console.error("[EXPORT XLSX ERROR] Volumen: items=%d novs=%d covers=%d turns=%d",
+            allItems.length, allNovs.length, allCovers.length, allTurns.length);
+          console.error(xlsxErr);
+          throw new Error(`Error generando Excel (${muniNames.join(", ")}): ${xlsxErr.message}`);
+        }
+
+        console.log("[MEMORY] después de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+        console.log("[EXPORT] Excel generado, tamaño:", Math.round(buf.length / 1024), "KB");
 
         const periodLabel = firstGrp.period_id || "periodo";
         const munSafe = muniNames.slice(0, 3).join("-").replace(/[^a-z0-9\-_]/gi, "-");
@@ -1757,7 +1818,9 @@ async function handleMultiGroupExport(req, res, url) {
         });
         innerRes.end(buf);
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        console.error("[EXPORT MULTI ERROR] Error general en handleMultiGroupExport:", err.message);
+        console.error(err.stack);
+        sendJson(innerRes, 400, { ok: false, message: err.message, stack: process.env.NODE_ENV !== "production" ? err.stack : undefined });
       }
     }
   )(req, res, url);
@@ -1799,6 +1862,7 @@ async function handleGroupClose(req, res, url) {
     async (innerReq, innerRes, _url, user) => {
       try {
         const group = await operational.closePayrollGroup(groupId, user);
+        clearGroupCache();
         sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina cerrada correctamente." });
       } catch (err) {
         sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
@@ -1830,6 +1894,7 @@ async function handleGroupReopen(req, res, url) {
           sendJson(innerRes, 400, { ok: false, message: "Debe indicar el motivo de reapertura." }); return;
         }
         const group = await operational.reopenPayrollGroup(groupId, user, reason, body.observations || "");
+        clearGroupCache();
         sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina reabierta." });
       } catch (err) {
         sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
@@ -1950,10 +2015,12 @@ const VARIABLES_HEADERS = [
   "Incapacidad Médica",
   "Incapacidad por Accidente Laboral",
   "Calamidad Familiar",
+  "Luto",
   "Citaciones (Fiscalía, Procuraduría, Unidad de Víctimas, Colegio, Comisaría, Juzgado, Personería, EPS, ARL, etc.)",
   "Licencia de maternidad/paternidad",
   "Suspensión",
   "Permisos NO remunerados",
+  "Fecha de ingreso",
   "Fecha de retiro",
   "Días Laborados",
 ];
@@ -2017,6 +2084,7 @@ function computeVariablesRows(items, novelties) {
       incapacidad_medica:      sumDays("INCAPACIDAD_MEDICA"),
       incapacidad_accidente:   sumDays("INCAPACIDAD_ACCIDENTE_LABORAL"),
       calamidad_familiar:      sumDays("CALAMIDAD_FAMILIAR"),
+      luto:                    sumDays("LUTO"),
       citaciones_oficiales:    sumDays("CITACIONES_OFICIALES"),
       licencia_maternidad:     sumDays("LICENCIA_MATERNIDAD_PATERNIDAD"),
       suspension:              sumDays("SUSPENSION"),
@@ -2045,10 +2113,12 @@ function makeVariablesWorksheet(rows) {
     nv(row.incapacidad_medica),
     nv(row.incapacidad_accidente),
     nv(row.calamidad_familiar),
+    nv(row.luto),
     nv(row.citaciones_oficiales),
     nv(row.licencia_maternidad),
     nv(row.suspension),
     nv(row.permisos_no_remunerados),
+    fmtFechaCol(row.fecha_ingreso),
     fmtFechaCol(row.fecha_retiro),
     calcDiasLaborados(row),
   ]);
@@ -2062,8 +2132,8 @@ function makeVariablesWorksheet(rows) {
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: VARIABLES_HEADERS.length - 1 } }) };
   ws["!cols"] = [
     { wch: 14 }, { wch: 34 }, { wch: 22 },
-    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
-    { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 10 },
+    { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
   ];
   return ws;
 }
@@ -2127,7 +2197,7 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
   const nomMonCols = [10,11,12,13,14,15,16,17,19,20,21];
   function otrosItem(item) {
     const c = item.calculation || {};
-    return c.other_recargos_value != null ? nn(c.other_recargos_value) : Math.max(0, nn(item.other_earnings) - nn(c.internal_cover_value));
+    return Math.max(0, nn(item.other_earnings) - nn(c.internal_cover_value));
   }
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
@@ -2247,8 +2317,43 @@ async function handlePeriodFullExport(req, res, url) {
     ACTIONS.EXPORT,
     async (innerReq, innerRes) => {
       try {
+        console.log("[EXPORT] Exportación completa del período:", periodId);
+        console.log("[MEMORY] inicio:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
         const { items, novelties, totals, periodLabel } = await operational.getPeriodItemsForExport(periodId);
-        const buf      = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+
+        const payrollRows = (items     || []).length;
+        const noveltyRows = (novelties || []).length;
+        console.log("[EXPORT] Volumen período", periodId, "(", periodLabel, "):", {
+          payrollRows, noveltyRows,
+        });
+        if (payrollRows > 5000) console.warn("[EXPORT WARNING] payrollRows > 5000:", payrollRows);
+        if (noveltyRows > 5000) console.warn("[EXPORT WARNING] noveltyRows > 5000:", noveltyRows);
+
+        // Desglose por municipio para detectar cuál tiene datos anómalos
+        const muniBreakdown = {};
+        for (const item of (items || [])) {
+          const mName = item.municipality_name || "sin municipio";
+          if (!muniBreakdown[mName]) muniBreakdown[mName] = { items: 0 };
+          muniBreakdown[mName].items++;
+        }
+        console.log("[EXPORT] Items por municipio:", muniBreakdown);
+        console.log("[MEMORY] antes de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+        let buf;
+        try {
+          buf = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+        } catch (xlsxErr) {
+          console.error("[EXPORT XLSX ERROR] Fallo al generar workbook período completo", periodId);
+          console.error("[EXPORT XLSX ERROR] Volumen: items=%d novs=%d", payrollRows, noveltyRows);
+          console.error("[EXPORT XLSX ERROR] Municipios:", Object.keys(muniBreakdown));
+          console.error(xlsxErr);
+          throw new Error(`Error generando Excel período ${periodId}: ${xlsxErr.message}`);
+        }
+
+        console.log("[MEMORY] después de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+        console.log("[EXPORT] Excel generado, tamaño:", Math.round(buf.length / 1024), "KB");
+
         const safeLbl  = (periodLabel || String(periodId)).replace(/[^a-z0-9\-_]/gi, "-");
         const filename = `nomina-completa-${safeLbl}.xlsx`;
         innerRes.writeHead(200, {
@@ -2258,7 +2363,9 @@ async function handlePeriodFullExport(req, res, url) {
         });
         innerRes.end(buf);
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        console.error("[EXPORT PERIODO ERROR] periodId =", periodId, "| mensaje:", err.message);
+        console.error(err.stack);
+        sendJson(innerRes, 400, { ok: false, message: err.message, stack: process.env.NODE_ENV !== "production" ? err.stack : undefined });
       }
     }
   )(req, res, url);
@@ -2297,6 +2404,61 @@ async function handleVariablesExport(req, res, url) {
       }
     }
   )(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA MENSUAL DE NOVEDADES — descarga
+// GET /payroll/periods/:id/novelties-template
+// ─────────────────────────────────────────────────────────────────────────────
+const novTemplate = require("./payroll.novelties-template");
+
+async function handleNoveltiesTemplate(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes, innerUrl) => {
+      const parts    = url.pathname.split("/").filter(Boolean);
+      const periodId = Number(parts[2]);
+      if (!Number.isFinite(periodId) || periodId <= 0) {
+        sendJson(innerRes, 400, { ok: false, message: "periodId inválido" }); return;
+      }
+      try {
+        const buf = await novTemplate.generateNoveltiesTemplate(periodId);
+        innerRes.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        innerRes.setHeader("Content-Disposition", `attachment; filename="plantilla-novedades-periodo-${periodId}.xlsx"`);
+        innerRes.end(buf);
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA MENSUAL DE NOVEDADES — importación
+// POST /payroll/periods/:id/import-novelties-template  (Express + multer en app.js)
+// El handler recibe el buffer ya parseado por multer en req.file.buffer
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleImportNoveltiesTemplate(req, res) {
+  const auth = require("../../modules/auth/auth.helpers").requireAuth(req, res);
+  if (!auth) return;
+
+  const parts    = req.url ? req.url.split("/").filter(Boolean) : [];
+  const periodId = Number(parts[2]);
+  if (!Number.isFinite(periodId) || periodId <= 0) {
+    res.status(400).json({ ok: false, message: "periodId inválido" }); return;
+  }
+  if (!req.file || !req.file.buffer) {
+    res.status(400).json({ ok: false, message: "Archivo Excel requerido" }); return;
+  }
+
+  try {
+    const result = await novTemplate.importNoveltiesTemplate(periodId, req.file.buffer, auth.user.id);
+    res.status(result.ok ? 200 : 422).json({ ok: result.ok, data: result });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
 }
 
 module.exports = {
@@ -2351,4 +2513,7 @@ module.exports = {
   handlePeriodFullExport,
   // Configuración salarial individual (Gestores, Auxiliares, Equipo Mínimo)
   handleEmployeeSalaryConfig,
+  // Plantilla mensual de novedades por días (056)
+  handleNoveltiesTemplate,
+  handleImportNoveltiesTemplate,
 };

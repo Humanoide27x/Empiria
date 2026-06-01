@@ -25,6 +25,7 @@ export async function loadCoverageModule() {
 
   let historyPayload;
   let earlyRowsPayload = { data: [] };
+  let exclusionsPayload = { total: 0, data: [] };
 
   try {
     const parallelFetches = [
@@ -32,9 +33,10 @@ export async function loadCoverageModule() {
       knownUploadId
         ? apiFetch(`/coverage/upload/${knownUploadId}`).catch(() => ({ data: [] }))
         : Promise.resolve({ data: [] }),
+      apiFetch("/coverage/exclusions").catch(() => ({ total: 0, data: [] })),
     ];
 
-    [historyPayload, earlyRowsPayload] = await Promise.all(parallelFetches);
+    [historyPayload, earlyRowsPayload, exclusionsPayload] = await Promise.all(parallelFetches);
   } catch (error) {
     return `
       <article class="info-card">
@@ -453,6 +455,24 @@ export async function loadCoverageModule() {
             <strong>${formatNumber(totalContractedMt)}</strong>
           </div>
         </section>
+
+        ${(() => {
+          const excl = Array.isArray(exclusionsPayload?.data) ? exclusionsPayload.data : [];
+          if (!excl.length) return '';
+          const names = excl.slice(0, 3).map(e => escapeHtml(e.fullName)).join(', ');
+          const extra = excl.length > 3 ? ` y ${excl.length - 3} más` : '';
+          return `
+          <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:13px;color:#92400e;display:flex;gap:10px;align-items:flex-start">
+            <span style="font-size:18px;flex-shrink:0">⚠️</span>
+            <div>
+              <strong>${excl.length} empleado${excl.length > 1 ? 's' : ''} no contabilizado${excl.length > 1 ? 's' : ''} en cobertura por falta de sede asignada:</strong>
+              ${names}${extra}.
+              <br>
+              <span style="color:#78350f">Corrija desde <strong>Personal → Editar empleado → Sede educativa</strong>. Sin sede asignada el empleado no puede cruzarse con el Excel de cobertura.</span>
+            </div>
+          </div>
+          `;
+        })()}
 
         <!-- Tabla de cobertura -->
         <section class="coverage-pro-detail coverage-pro-detail-full" style="margin-top:14px">

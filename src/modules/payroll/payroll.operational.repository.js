@@ -4,6 +4,20 @@ const pool = require("../../db/pool");
 const { getPayrollConfig } = require("../../data/payroll_config");
 const { calculatePayrollDeductionBase } = require("../../utils/payroll-deductions");
 
+// ── Caché de grupos de nómina (TTL 120s) ─────────────────────────────────────
+const _groupCache = new Map();
+const GROUP_CACHE_TTL = 120_000;
+
+function _groupCacheGet(id) {
+  const e = _groupCache.get(id);
+  if (!e) return null;
+  if (Date.now() - e.ts > GROUP_CACHE_TTL) { _groupCache.delete(id); return null; }
+  return e.data;
+}
+function _groupCacheSet(id, data) { _groupCache.set(id, { ts: Date.now(), data }); }
+function _groupCacheInvalidate(id) { _groupCache.delete(id); }
+function clearGroupCache() { _groupCache.clear(); }
+
 const OPERARIO_POSITION = "OPERARIO MANIPULADOR DE ALIMENTOS";
 
 // ── Normalización de texto para comparaciones de reemplazo ───────────────────
@@ -56,8 +70,9 @@ function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
 
   return filteredItems.map((item) => {
     const itemNovs  = novsByItem.get(Number(item.id)) || [];
-    const retiroNov = itemNovs.find((nv) => nv.novelty_type === "FECHA_RETIRO");
-    const ingresoNov = itemNovs.find((nv) => nv.novelty_type === "FECHA_INGRESO");
+    const retiroNov   = itemNovs.find((nv) => nv.novelty_type === "FECHA_RETIRO");
+    const ingresoNov  = itemNovs.find((nv) => nv.novelty_type === "FECHA_INGRESO");
+    const corrSsNov   = itemNovs.find((nv) => nv.novelty_type === "CORRECCION_SEGURIDAD_SOCIAL");
 
     let ssDays               = PERIOD;
     let retirementReason     = null;
@@ -99,11 +114,20 @@ function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
       ssDays = Math.max(1, PERIOD - ingresoDay + 1);
     }
 
-    if (retiroNov || ingresoNov) {
+    // CORRECCION_SEGURIDAD_SOCIAL: reemplaza la fecha de ingreso para el cálculo SS
+    // sin afectar días laborados, salario ni ninguna otra deducción.
+    // Solo aplica cuando NO hay FECHA_RETIRO (el retiro es siempre la fecha dominante en SS).
+    if (corrSsNov && !retiroNov) {
+      const corrStr  = String(corrSsNov.start_date || "").slice(0, 10);
+      const corrDay  = corrStr ? new Date(corrStr + "T00:00:00Z").getUTCDate() : 1;
+      ssDays = Math.max(1, PERIOD - corrDay + 1);
+    }
+
+    if (retiroNov || ingresoNov || corrSsNov) {
       console.log("[payroll social security days]", {
         employeeId:            item.employee_id,
         employeeName:          item.employee_name,
-        noveltyType:           retiroNov ? "FECHA_RETIRO" : "FECHA_INGRESO",
+        noveltyType:           retiroNov ? "FECHA_RETIRO" : ingresoNov ? "FECHA_INGRESO" : "CORRECCION_SEGURIDAD_SOCIAL",
         retirementDate:        retiroNov ? (retiroNov.end_date || retiroNov.start_date) : null,
         retirementReason,
         requiresReplacement,
@@ -111,6 +135,7 @@ function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
         replacementEmployeeName: replacementEmpName,
         replacementEntryDate:  retiroNov && replacementFound
           ? (findReplacementForRetiro(item, allGroupItems, novsByItem)?.nov?.start_date || null) : null,
+        corrSsDate:            corrSsNov ? corrSsNov.start_date : null,
         workedDays:            item.worked_days,
         socialSecurityDays:    ssDays,
       });
@@ -155,6 +180,7 @@ const OFFICIAL_NOVELTY_CODES = Object.freeze([
   "FECHA_RETIRO",
   "CITA_MEDICA_FAMILIAR",
   "CAMBIO_OPERATIVO_COBERTURA",
+  "CORRECCION_SEGURIDAD_SOCIAL",
 ]);
 
 // Novedades que reducen salario devengado (pro-rata días no pagados)
@@ -218,6 +244,7 @@ const SUPPORT_REQUIREMENTS = Object.freeze({
   SUSPENSION:                     [],
   FECHA_INGRESO:                  [],
   FECHA_RETIRO:                   [],
+  CORRECCION_SEGURIDAD_SOCIAL:    [],
 });
 
 const SUPPORT_TYPE_LABELS = Object.freeze({
@@ -396,6 +423,9 @@ const _NOVELTY_LABEL_MAP = {
   "FECHA DE RETIRO":                    "FECHA_RETIRO",
   "CAMBIO OPERATIVO COBERTURA":         "CAMBIO_OPERATIVO_COBERTURA",
   "CAMBIO OPERATIVO DE COBERTURA":      "CAMBIO_OPERATIVO_COBERTURA",
+  "CORRECCION SEGURIDAD SOCIAL":        "CORRECCION_SEGURIDAD_SOCIAL",
+  "CORRECCION DE SEGURIDAD SOCIAL":     "CORRECCION_SEGURIDAD_SOCIAL",
+  "CORRECCION SS":                      "CORRECCION_SEGURIDAD_SOCIAL",
 };
 
 function normalizeNoveltyType(raw) {
@@ -1278,8 +1308,12 @@ async function ensurePayrollGroups(periodId) {
 }
 
 async function getGroup(groupId) {
+  const cached = _groupCacheGet(groupId);
+  if (cached) return cached;
   const { rows } = await pool.query(`SELECT * FROM payroll_groups WHERE id = $1`, [groupId]);
-  return rows[0] || null;
+  const result = rows[0] || null;
+  if (result) _groupCacheSet(groupId, result);
+  return result;
 }
 
 async function listPayrollGroups(periodId) {
@@ -1431,6 +1465,7 @@ async function markNeedsRecalculation(groupId) {
     `UPDATE payroll_groups SET needs_recalculation = true, updated_at = NOW() WHERE id = $1`,
     [groupId]
   );
+  _groupCacheInvalidate(groupId);
 }
 
 async function getGroupIdForItem(itemId) {
@@ -1581,41 +1616,39 @@ async function calculatePayrollGroup(groupId) {
   // Configuración salarial desde DB (o fallback JSON)
   const salaryCategories = await getSalaryCategories(group.contract_id);
 
-  // Novedades del período:
-  //   Grupos OPERARIO → filtrar por municipality_id exacto.
-  //   Grupos consolidados → filtrar por employee_id de los empleados del grupo.
-  let novelties;
-  if (group.municipality_id !== null) {
-    const { rows } = await pool.query(
-      `SELECT * FROM payroll_novelties
-        WHERE payroll_period_id = $1 AND municipality_id = $2`,
-      [group.period_id, group.municipality_id]
-    );
-    novelties = rows;
-  } else if (groupEmployees.length > 0) {
-    const empIds = groupEmployees.map((e) => e.employee_id);
-    const { rows } = await pool.query(
-      `SELECT * FROM payroll_novelties
-        WHERE payroll_period_id = $1 AND employee_id = ANY($2::integer[])`,
-      [group.period_id, empIds]
-    );
-    novelties = rows;
-  } else {
-    novelties = [];
-  }
+  // Novedades, coberturas y fechas del período en paralelo
+  const noveltyPromise = group.municipality_id !== null
+    ? pool.query(
+        `SELECT * FROM payroll_novelties
+          WHERE payroll_period_id = $1 AND municipality_id = $2`,
+        [group.period_id, group.municipality_id]
+      )
+    : groupEmployees.length > 0
+      ? pool.query(
+          `SELECT * FROM payroll_novelties
+            WHERE payroll_period_id = $1 AND employee_id = ANY($2::integer[])`,
+          [group.period_id, groupEmployees.map((e) => e.employee_id)]
+        )
+      : Promise.resolve({ rows: [] });
 
-  // Solo coberturas INTERNAS — las externas no afectan ningún payroll_item
-  const { rows: covers } = await pool.query(
-    `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
-    [group.period_id]
-  );
+  const [novResult, coversResult, pResult] = await Promise.all([
+    noveltyPromise,
+    // Solo coberturas INTERNAS — las externas no afectan ningún payroll_item
+    pool.query(
+      `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
+      [group.period_id]
+    ),
+    // Fechas del período para recorte multi-período y salarios individuales
+    pool.query(
+      `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`,
+      [group.period_id]
+    ),
+  ]);
 
-  // Obtener fechas del período (necesarias para el recorte multi-período y salarios individuales)
-  const { rows: pRows } = await pool.query(
-    `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`, [group.period_id]
-  );
-  const periodStart = pRows[0] ? String(pRows[0].period_start).slice(0, 10) : null;
-  const periodEnd   = pRows[0] ? String(pRows[0].period_end).slice(0, 10)   : null;
+  let novelties    = novResult.rows;
+  const covers     = coversResult.rows;
+  const periodStart = pResult.rows[0] ? String(pResult.rows[0].period_start).slice(0, 10) : null;
+  const periodEnd   = pResult.rows[0] ? String(pResult.rows[0].period_end).slice(0, 10)   : null;
 
   // Recortar novedades al período actual.
   // Si una novedad cubre 25/05→03/06, en Mayo solo se contabilizan los días hasta el 30/05.
@@ -1767,6 +1800,7 @@ async function calculatePayrollGroup(groupId) {
     client.release();
   }
 
+  _groupCacheInvalidate(groupId);
   return getPayrollGroupDetail(group.period_id, group.id);
 }
 
@@ -2206,8 +2240,73 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   let endDate   = text(payload.end_date || payload.endDate) || null;
   let days = n(payload.days);
 
-  // INGRESO / RETIRO: requieren fecha exacta dentro del período y calculan días automáticamente
-  if (typeRaw === "FECHA_INGRESO" || typeRaw === "FECHA_RETIRO") {
+  // CORRECCION_SEGURIDAD_SOCIAL: fecha que reemplaza la de ingreso solo para el cálculo SS.
+  // No afecta días laborados, salario ni transporte.
+  if (typeRaw === "CORRECCION_SEGURIDAD_SOCIAL") {
+    if (!startDate) {
+      const err = new Error("La corrección SS requiere la fecha de corrección (fecha_correccion_ss).");
+      err.httpStatus = 400;
+      throw err;
+    }
+
+    // Validar que la fecha esté dentro del período
+    const { rows: periodRowsCorr } = await pool.query(
+      `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`,
+      [item.period_id]
+    );
+    const periodCorr = periodRowsCorr[0];
+    if (periodCorr) {
+      const corrStr  = String(startDate).slice(0, 10);
+      const perStart = String(periodCorr.period_start).slice(0, 10);
+      const perEnd   = String(periodCorr.period_end).slice(0, 10);
+      if (corrStr < perStart || corrStr > perEnd) {
+        const err = new Error(
+          `La fecha de corrección SS (${corrStr}) debe estar dentro del período (${perStart} — ${perEnd}).`
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
+    }
+
+    // Validar que no sea posterior a la FECHA_INGRESO registrada para este item
+    const { rows: ingresoRowsCorr } = await pool.query(
+      `SELECT start_date FROM payroll_novelties
+       WHERE payroll_item_id = $1 AND novelty_type = 'FECHA_INGRESO'
+       ORDER BY created_at DESC LIMIT 1`,
+      [item.id]
+    );
+    if (ingresoRowsCorr[0]) {
+      const ingresoDate = String(ingresoRowsCorr[0].start_date).slice(0, 10);
+      const corrDate    = String(startDate).slice(0, 10);
+      if (corrDate > ingresoDate) {
+        const err = new Error(
+          `La fecha de corrección SS (${corrDate}) no puede ser posterior a la fecha de ingreso laboral (${ingresoDate}).`
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
+    }
+
+    // Solo una corrección SS activa por item de nómina
+    const { rows: existingCorrRows } = await pool.query(
+      `SELECT id FROM payroll_novelties
+       WHERE payroll_item_id = $1 AND novelty_type = 'CORRECCION_SEGURIDAD_SOCIAL'
+       LIMIT 1`,
+      [item.id]
+    );
+    if (existingCorrRows.length > 0) {
+      const err = new Error(
+        "Ya existe una corrección de seguridad social para este empleado en este período. Elimine la existente antes de crear una nueva."
+      );
+      err.httpStatus = 409;
+      throw err;
+    }
+
+    startDate = String(startDate).slice(0, 10);
+    endDate   = startDate;
+    days      = 0; // No descuenta días laborados ni afecta salario
+  } else if (typeRaw === "FECHA_INGRESO" || typeRaw === "FECHA_RETIRO") {
+    // INGRESO / RETIRO: requieren fecha exacta dentro del período y calculan días automáticamente
     if (!startDate) {
       const label = typeRaw === "FECHA_INGRESO" ? "ingreso" : "retiro";
       const err = new Error(`La novedad de ${label} requiere la fecha exacta de ${label}.`);
@@ -2243,7 +2342,11 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
     days = Math.max(1, Math.round(diff) + 1);
   }
 
-  if (days <= 0) throw new Error("Los días de la novedad deben ser mayor a 0");
+  // CORRECCION_SEGURIDAD_SOCIAL usa days = 0 (no descuenta días laborados).
+  // Todos los demás tipos deben tener al menos 1 día.
+  if (days <= 0 && typeRaw !== "CORRECCION_SEGURIDAD_SOCIAL") {
+    throw new Error("Los días de la novedad deben ser mayor a 0");
+  }
 
   // ── Detección de novedad que cruza al siguiente período ─────────────────────
   // Si end_date > period_end se recorta al período actual y se guardan las
@@ -3422,9 +3525,7 @@ async function getItemPayslip(itemId) {
       base_salary:          liveAmounts.base_salary,
       transport_allowance:  liveAmounts.transport_allowance,
       other_earnings:       liveAmounts.other_earnings,
-      other_recargos_value: liveCalc.other_recargos_value != null
-        ? n(liveCalc.other_recargos_value)
-        : Math.max(0, liveAmounts.other_earnings - n(liveCalc.internal_cover_value)),
+      other_recargos_value: Math.max(0, liveAmounts.other_earnings - n(liveCalc.internal_cover_value)),
       internal_cover_value: n(liveCalc.internal_cover_value),
       total_devengado:      liveAmounts.total_devengado,
     },
@@ -4019,4 +4120,5 @@ module.exports = {
   listEmployeeSalaryConfig,
   createEmployeeSalaryConfig,
   deleteEmployeeSalaryConfig,
+  clearGroupCache,
 };
