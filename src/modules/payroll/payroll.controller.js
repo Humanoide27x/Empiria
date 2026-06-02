@@ -1242,6 +1242,21 @@ function buildGroupXlsx(options) {
   const covers = options.covers || [];
   function n(v) { return Number(v || 0); }
   function s(v) { return String(v == null ? "" : v); }
+  function computeNoveltyDeduction(item) {
+    const calc = item.calculation || {};
+    let deduction;
+    if (calc.cambio_operativo) {
+      deduction = n(calc.salary_discount) + n(calc.transport_discount);
+    } else if (n(calc.full_base_salary) > 0) {
+      const fullComp = n(calc.full_base_salary) + n(calc.full_transport) + n(calc.full_other);
+      const effectiveComp = n(item.base_salary) + n(item.transport_allowance) +
+        Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+      deduction = Math.max(0, fullComp - effectiveComp);
+    } else {
+      deduction = n(calc.salary_discount) + n(calc.transport_discount) + n(calc.other_discount);
+    }
+    return deduction + n(calc.turn_cover_discount);
+  }
 
   const hdrStyle = {
     font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
@@ -1284,11 +1299,11 @@ function buildGroupXlsx(options) {
     "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
     "Modalidad", "Jornada", "Categoría", "Días lab.", "Días SS",
     "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
-    "Salud (4%)", "Pensión (4%)", "Total deducciones",
+    "Salud (4%)", "Pensión (4%)", "Desc. turnos cubiertos", "Total deducciones",
     "Novedades", "Desc. salario", "Desc. transporte",
     "Neto a pagar", "Motivo retiro", "Req. reemplazo", "Reemplazo", "Revisada",
   ];
-  const nomMonCols = [11,12,13,14,15,16,17,18,20,21,22];
+  const nomMonCols = [11,12,13,14,15,16,17,18,19,21,22,23];
 
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
@@ -1302,7 +1317,7 @@ function buildGroupXlsx(options) {
       s(item.modality), s(item.work_time_type), s(item.salary_category),
       n(item.display_worked_days ?? item.worked_days), n(item.ss_days != null ? item.ss_days : 30),
       n(item.base_salary), n(item.transport_allowance), otros, n(calc.internal_cover_value), n(item.total_devengado),
-      n(calc.deduccion_salud), n(calc.deduccion_pension), n(item.total_deducciones),
+      n(calc.deduccion_salud), n(calc.deduccion_pension), n(calc.turn_cover_discount), n(item.total_deducciones),
       n(item.novelty_count), n(calc.salary_discount), n(calc.transport_discount),
       n(item.neto_pagar), motivoRetiro, reqReemplazo, reemplazo, item.reviewed ? "Sí" : "No",
     ];
@@ -1324,6 +1339,7 @@ function buildGroupXlsx(options) {
     totals.total_devengado,
     items.reduce((a, i) => a + n((i.calculation||{}).deduccion_salud), 0),
     items.reduce((a, i) => a + n((i.calculation||{}).deduccion_pension), 0),
+    items.reduce((a, i) => a + n((i.calculation||{}).turn_cover_discount), 0),
     totals.total_deducciones,
     totals.novelties,
     items.reduce((a, i) => a + n((i.calculation||{}).salary_discount), 0),
@@ -1333,7 +1349,7 @@ function buildGroupXlsx(options) {
   ];
 
   const wsNom = makeSheet(nomHdr, [...nomRows, nomTotal], nomMonCols,
-    [14,32,22,20,28,20,10,10,10,5,7,14,14,12,18,15,12,12,15,7,13,13,14,18,10,20,8]);
+    [14,32,22,20,28,20,10,10,10,5,7,14,14,12,18,15,12,12,15,15,7,13,13,14,18,10,20,8]);
 
   // Style the totals row
   const nomTotR = nomRows.length + 1;
@@ -1359,7 +1375,7 @@ function buildGroupXlsx(options) {
     "Municipio", "Institución", "Sede", "Empleado", "Documento", "Cargo",
     "Tipo de novedad", "Impacto",
     "Fecha inicio", "Fecha fin", "Días",
-    "Desc. salario", "Desc. transporte",
+    "Desc. salario", "Desc. transporte", "Categoría turno", "Valor día turno", "Valor turno",
     "Soporte", "Estado", "Revisada",
   ];
   const uniqueNovelties = [...new Map(novelties.map((nov) => [nov.id, nov])).values()];
@@ -1383,9 +1399,18 @@ function buildGroupXlsx(options) {
       const days   = Math.min(n(nov.days), n(calc.worked_days) || 30);
       const isSal  = SALARY_AFFECTING_XL.has(code) && code !== "FECHA_INGRESO" && code !== "FECHA_RETIRO";
       const isTrans= TRANSPORT_AFFECTING_XL.has(code);
+      const turnCategory = s(nov.origin_salary_category);
+      const turnValueDay = n(nov.replacement_value_per_day);
+      const turnValue = n(nov.replacement_amount);
       const descSal   = isSal   ? Math.round(n(calc.daily_salary    || 0) * days) : 0;
       const descTrans = isTrans ? Math.round(n(calc.daily_transport || 0) * days) : 0;
-      const impact = isSal ? "Desc. salario" : isTrans ? "Desc. transporte" : "Sin impacto";
+      const impact = turnValue
+        ? "Turno cubierto"
+        : isSal
+          ? "Desc. salario"
+          : isTrans
+            ? "Desc. transporte"
+            : "Sin impacto";
       return [
         s(info.municipality_name),
         s(info.institution_name),
@@ -1397,13 +1422,14 @@ function buildGroupXlsx(options) {
         s(nov.end_date   ? s(nov.end_date).slice(0,10)   : ""),
         n(nov.period_days ?? nov.days),
         descSal, descTrans,
+        turnCategory, turnValueDay, turnValue,
         s(nov.support_status || "sin soporte"),
         s(nov.status || "PENDIENTE"),
         nov.reviewed ? "Sí" : "No",
       ];
     });
-  const wsNov = makeSheet(novHdr, novRows2, [11,12],
-    [20,28,20,28,14,22,26,16,12,12,5,13,13,14,12,8]);
+  const wsNov = makeSheet(novHdr, novRows2, [11,12,14,15],
+    [20,28,20,28,14,22,26,16,12,12,5,13,13,14,14,13,13,14,12,8]);
 
   // ── Hoja 3: Resumen en matriz dinámica por municipio ─────────────────────
   // Las columnas se generan automáticamente según los municipios seleccionados.
@@ -1412,19 +1438,7 @@ function buildGroupXlsx(options) {
 
   // Totales globales (para la columna TOTAL GENERAL)
   const totalNoveltyDeductions = items.reduce((sum, item) => {
-    const calc = item.calculation || {};
-    let deduction;
-    if (calc.cambio_operativo) {
-      deduction = n(calc.salary_discount) + n(calc.transport_discount);
-    } else if (n(calc.full_base_salary) > 0) {
-      const fullComp     = n(calc.full_base_salary) + n(calc.full_transport) + n(calc.full_other);
-      const effectiveComp = n(item.base_salary) + n(item.transport_allowance) +
-        Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
-      deduction = Math.max(0, fullComp - effectiveComp);
-    } else {
-      deduction = n(calc.salary_discount) + n(calc.transport_discount) + n(calc.other_discount);
-    }
-    return sum + deduction;
+    return sum + computeNoveltyDeduction(item);
   }, 0);
   const totalNoveltyAdditions = items.reduce((sum, item) => sum + n((item.calculation || {}).internal_cover_value), 0);
   const totalExternalTurns    = turns.filter((t) => t.cover_type === "EXTERNA").reduce((sum, t) => sum + n(t.total_value), 0);
@@ -1553,11 +1567,11 @@ function buildGroupXlsx(options) {
   const turnHdr = [
     "Período", "Fecha turno", "Empleado con novedad", "Documento novedad",
     "Tipo novedad", "Cubierto por", "Tipo cobertura", "Documento cobertura",
-    "Municipio", "Institución", "Sede", "Modalidad",
+    "Municipio", "Institución", "Sede", "Modalidad", "Categoría turno",
     "Días cubiertos", "Valor día", "Valor total",
     "Banco", "Cuenta",
   ];
-  const turnMonCols = [13, 14];
+  const turnMonCols = [14, 15];
   const turnRows = turns.map((t) => [
     s(group.period_id),
     t.novelty_start ? s(t.novelty_start).slice(0, 10) : "",
@@ -1571,6 +1585,7 @@ function buildGroupXlsx(options) {
     s(t.institution_name),
     s(t.site_name),
     s(t.modality),
+    s(t.origin_category),
     n(t.covered_days),
     n(t.calculated_day_value),
     n(t.total_value),
@@ -1578,7 +1593,7 @@ function buildGroupXlsx(options) {
     t.cover_type === "EXTERNA" ? s(t.external_account_number) : "",
   ]);
   const wsTurn = makeSheet(turnHdr, turnRows, turnMonCols,
-    [8,12,32,14,26,32,14,14,20,28,20,10,8,14,14,20,18]);
+    [8,12,32,14,26,32,14,14,20,28,20,10,14,8,14,14,20,18]);
 
   // ── Hoja 0: Variables Nómina (primera, para referencia rápida) ───────────────
   const wsVars = makeVariablesWorksheet(computeVariablesRows(items, novelties));
@@ -1735,21 +1750,7 @@ async function handleMultiGroupExport(req, res, url) {
           const gItems = v.data.items    || [];
           const gTurns = v.turns         || [];
           const gTotals = v.data.totals  || {};
-          const totalNoveltyDed = gItems.reduce((sum, item) => {
-            const calc = item.calculation || {};
-            let d;
-            if (calc.cambio_operativo) {
-              d = n(calc.salary_discount) + n(calc.transport_discount);
-            } else if (n(calc.full_base_salary) > 0) {
-              d = Math.max(0,
-                (n(calc.full_base_salary) + n(calc.full_transport) + n(calc.full_other))
-                - (n(item.base_salary) + n(item.transport_allowance) + Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value)))
-              );
-            } else {
-              d = n(calc.salary_discount) + n(calc.transport_discount) + n(calc.other_discount);
-            }
-            return sum + d;
-          }, 0);
+          const totalNoveltyDed = gItems.reduce((sum, item) => sum + computeNoveltyDeduction(item), 0);
           const totalNoveltyAdd = gItems.reduce((sum, item) => sum + n((item.calculation || {}).internal_cover_value), 0);
           const totalExtTurns   = gTurns.filter((t) => t.cover_type === "EXTERNA").reduce((sum, t) => sum + n(t.total_value), 0);
           const cov = v.coverageData;
