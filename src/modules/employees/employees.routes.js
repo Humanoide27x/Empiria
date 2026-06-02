@@ -8,7 +8,7 @@ async function handleEmployeesRoutes(req, res, url) {
   }
 
   if (req.url.startsWith("/personnel")) {
-    handlePersonnel(req, res);
+    await handlePersonnel(req, res);
     return true;
   }
 

@@ -13,7 +13,154 @@ const {
   payrollInclusionStatus,
 } = require("../../utils/payroll-period-eligibility");
 
+// ── Caché de grupos de nómina (TTL 120s) ─────────────────────────────────────
+const _groupCache = new Map();
+const GROUP_CACHE_TTL = 120_000;
+
+function _groupCacheGet(id) {
+  const e = _groupCache.get(id);
+  if (!e) return null;
+  if (Date.now() - e.ts > GROUP_CACHE_TTL) { _groupCache.delete(id); return null; }
+  return e.data;
+}
+function _groupCacheSet(id, data) { _groupCache.set(id, { ts: Date.now(), data }); }
+function _groupCacheInvalidate(id) { _groupCache.delete(id); }
+function clearGroupCache() { _groupCache.clear(); }
+
 const OPERARIO_POSITION = "OPERARIO MANIPULADOR DE ALIMENTOS";
+
+// ── Normalización de texto para comparaciones de reemplazo ───────────────────
+function nStr(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DÍAS DE SEGURIDAD SOCIAL (ss_days)
+// Lógica independiente de los días laborados. Determina cuántos días del
+// período cubren seguridad social para cada empleado, considerando motivos
+// de retiro y coincidencia de reemplazos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function findReplacementForRetiro(retiringItem, allGroupItems, novsByItem) {
+  for (const candidate of allGroupItems) {
+    if (Number(candidate.id) === Number(retiringItem.id)) continue;
+
+    const matchInst = (candidate.institution_id && retiringItem.institution_id)
+      ? Number(candidate.institution_id) === Number(retiringItem.institution_id)
+      : nStr(candidate.institution_name) === nStr(retiringItem.institution_name);
+    if (!matchInst) continue;
+
+    const matchSite = (candidate.site_id && retiringItem.site_id)
+      ? Number(candidate.site_id) === Number(retiringItem.site_id)
+      : nStr(candidate.site_name) === nStr(retiringItem.site_name);
+    if (!matchSite) continue;
+
+    if (nStr(candidate.modality) !== nStr(retiringItem.modality)) continue;
+    if (nStr(candidate.operational_position) !== nStr(retiringItem.operational_position)) continue;
+
+    const candidateNovs = novsByItem.get(Number(candidate.id)) || [];
+    const ingresoNov = candidateNovs.find((nv) => nv.novelty_type === "FECHA_INGRESO");
+    if (ingresoNov) return { item: candidate, nov: ingresoNov };
+  }
+  return null;
+}
+
+function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
+  const PERIOD = 30;
+
+  // Index ALL novelties by payroll_item_id (numeric key)
+  const novsByItem = new Map();
+  for (const nov of allNovelties) {
+    const key = Number(nov.payroll_item_id);
+    if (!key) continue;
+    if (!novsByItem.has(key)) novsByItem.set(key, []);
+    novsByItem.get(key).push(nov);
+  }
+
+  return filteredItems.map((item) => {
+    const itemNovs  = novsByItem.get(Number(item.id)) || [];
+    const retiroNov   = itemNovs.find((nv) => nv.novelty_type === "FECHA_RETIRO");
+    const ingresoNov  = itemNovs.find((nv) => nv.novelty_type === "FECHA_INGRESO");
+    const corrSsNov   = itemNovs.find((nv) => nv.novelty_type === "CORRECCION_SEGURIDAD_SOCIAL");
+
+    let ssDays               = PERIOD;
+    let retirementReason     = null;
+    let requiresReplacement  = null;
+    let replacementFound     = null;
+    let replacementEmpName   = null;
+    let replacementEmpId     = null;
+
+    if (retiroNov) {
+      retirementReason = retiroNov.retirement_reason || null;
+      const dateStr  = String(retiroNov.end_date || retiroNov.start_date || "").slice(0, 10);
+      const retiroDay = dateStr ? new Date(dateStr + "T00:00:00Z").getUTCDate() : PERIOD;
+
+      if (retirementReason === "disminucion_cupos") {
+        requiresReplacement = false;
+        ssDays = retiroDay;
+      } else if (retirementReason === "renuncia" || retirementReason === "terminacion_contrato") {
+        requiresReplacement = true;
+        const repl = findReplacementForRetiro(item, allGroupItems, novsByItem);
+        if (repl) {
+          replacementFound  = true;
+          replacementEmpName = repl.item.employee_name;
+          replacementEmpId  = repl.item.employee_id;
+          const ingrStr = String(repl.nov.start_date || "").slice(0, 10);
+          const ingresoDay = ingrStr ? new Date(ingrStr + "T00:00:00Z").getUTCDate() : retiroDay + 1;
+          ssDays = ingresoDay > retiroDay + 1 ? ingresoDay - 1 : retiroDay;
+        } else {
+          replacementFound = false;
+          ssDays = retiroDay;
+        }
+      } else {
+        // Sin motivo especificado: tratar como sin reemplazo
+        requiresReplacement = false;
+        ssDays = retiroDay;
+      }
+    } else if (ingresoNov) {
+      const ingrStr = String(ingresoNov.start_date || "").slice(0, 10);
+      const ingresoDay = ingrStr ? new Date(ingrStr + "T00:00:00Z").getUTCDate() : 1;
+      ssDays = Math.max(1, PERIOD - ingresoDay + 1);
+    }
+
+    // CORRECCION_SEGURIDAD_SOCIAL: reemplaza la fecha de ingreso para el cálculo SS
+    // sin afectar días laborados, salario ni ninguna otra deducción.
+    // Solo aplica cuando NO hay FECHA_RETIRO (el retiro es siempre la fecha dominante en SS).
+    if (corrSsNov && !retiroNov) {
+      const corrStr  = String(corrSsNov.start_date || "").slice(0, 10);
+      const corrDay  = corrStr ? new Date(corrStr + "T00:00:00Z").getUTCDate() : 1;
+      ssDays = Math.max(1, PERIOD - corrDay + 1);
+    }
+
+    if (retiroNov || ingresoNov || corrSsNov) {
+      console.log("[payroll social security days]", {
+        employeeId:            item.employee_id,
+        employeeName:          item.employee_name,
+        noveltyType:           retiroNov ? "FECHA_RETIRO" : ingresoNov ? "FECHA_INGRESO" : "CORRECCION_SEGURIDAD_SOCIAL",
+        retirementDate:        retiroNov ? (retiroNov.end_date || retiroNov.start_date) : null,
+        retirementReason,
+        requiresReplacement,
+        replacementEmployeeId:   replacementEmpId,
+        replacementEmployeeName: replacementEmpName,
+        replacementEntryDate:  retiroNov && replacementFound
+          ? (findReplacementForRetiro(item, allGroupItems, novsByItem)?.nov?.start_date || null) : null,
+        corrSsDate:            corrSsNov ? corrSsNov.start_date : null,
+        workedDays:            item.worked_days,
+        socialSecurityDays:    ssDays,
+      });
+    }
+
+    return {
+      ...item,
+      ss_days:                  ssDays,
+      retirement_reason:        retirementReason,
+      requires_replacement:     requiresReplacement,
+      replacement_found:        replacementFound,
+      replacement_employee_name: replacementEmpName,
+      replacement_employee_id:  replacementEmpId,
+    };
+  });
+}
 
 // Tarifas externas fijas por categoría (NO usar salario interno / 30)
 const EXTERNAL_TURN_TARIFFS = {
@@ -42,6 +189,7 @@ const OFFICIAL_NOVELTY_CODES = Object.freeze([
   "FECHA_RETIRO",
   "CITA_MEDICA_FAMILIAR",
   "CAMBIO_OPERATIVO_COBERTURA",
+  "CORRECCION_SEGURIDAD_SOCIAL",
 ]);
 
 // Novedades que reducen salario devengado (pro-rata días no pagados)
@@ -79,6 +227,17 @@ const ADDITIONAL_AFFECTING = new Set([
   "CITA_MEDICA_FAMILIAR",
 ]);
 
+// Novedades cuya duración puede abarcar más de un período de nómina.
+// Solo tipos con rango de fechas explícito (start_date … end_date).
+const CROSS_PERIOD_TYPES = new Set([
+  "INCAPACIDAD_MEDICA",
+  "INCAPACIDAD_ACCIDENTE_LABORAL",
+  "PERMISOS_NO_REMUNERADOS",
+  "SUSPENSION",
+  "LICENCIA_MATERNIDAD_PATERNIDAD",
+  "CALAMIDAD_FAMILIAR",
+]);
+
 // Documentos de soporte requeridos por tipo de novedad
 const SUPPORT_REQUIREMENTS = Object.freeze({
   CITA_MEDICA:                    ["COMPROBANTE_CITA_MEDICA"],
@@ -94,6 +253,7 @@ const SUPPORT_REQUIREMENTS = Object.freeze({
   SUSPENSION:                     [],
   FECHA_INGRESO:                  [],
   FECHA_RETIRO:                   [],
+  CORRECCION_SEGURIDAD_SOCIAL:    [],
 });
 
 const SUPPORT_TYPE_LABELS = Object.freeze({
@@ -154,24 +314,75 @@ function normalizeOperationalPayrollItem(item) {
   const deduccionPension = calculatePayrollDeductionBase(baseSalary);
   const totalDeducciones = deduccionSalud + deduccionPension;
   const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
-  const calculation = item.calculation && typeof item.calculation === "object"
-    ? {
-        ...item.calculation,
-        deduccion_salud: deduccionSalud,
-        deduccion_pension: deduccionPension,
-      }
-    : item.calculation;
+  const calc = item.calculation && typeof item.calculation === "object" ? item.calculation : {};
+
+  // display_worked_days: si ya fue calculado y guardado en el snapshot de cálculo, usarlo.
+  // Si no (items calculados antes de esta versión), derivarlo de worked_days - salary_discount_days.
+  const displayWorkedDays = calc.display_worked_days != null
+    ? n(calc.display_worked_days)
+    : Math.max(0, n(calc.worked_days || item.worked_days || 30) - n(calc.salary_discount_days || 0));
+
+  const calculation = {
+    ...calc,
+    deduccion_salud:     deduccionSalud,
+    deduccion_pension:   deduccionPension,
+    display_worked_days: displayWorkedDays,
+  };
 
   return {
     ...item,
-    total_deducciones: totalDeducciones,
-    neto_pagar: netoPagar,
+    total_deducciones:   totalDeducciones,
+    neto_pagar:          netoPagar,
+    display_worked_days: displayWorkedDays,
     calculation,
   };
 }
 
 function isMedicalIncapacity(code) {
   return MEDICAL_INCAPACITY_TYPES.has(text(code).toUpperCase());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECORTE DE NOVEDADES AL PERÍODO (cross-period clipping)
+// Cuando una novedad tiene start_date..end_date que cruza el límite del período,
+// solo se deben contar los días que caen dentro del período actual.
+// Ejemplo: Incapacidad 25/05→03/06 → Mayo: 6 días | Junio: 3 días.
+// Las continuaciones (is_continuation=true) ya traen los días correctos almacenados.
+// ─────────────────────────────────────────────────────────────────────────────
+function clipNoveltiesByPeriod(novelties, periodStart, periodEnd) {
+  if (!periodStart || !periodEnd || !Array.isArray(novelties)) return novelties;
+  const pStartMs = new Date(periodStart + "T00:00:00Z").getTime();
+  const pEndMs   = new Date(periodEnd   + "T00:00:00Z").getTime();
+
+  return novelties.map((nov) => {
+    const nStartStr = String(nov.start_date || "").slice(0, 10);
+    const nEndStr   = String(nov.end_date   || "").slice(0, 10);
+
+    // Novedades de un solo día o sin rango de fechas: no necesitan recorte
+    if (!nStartStr || !nEndStr || nStartStr === nEndStr) return nov;
+
+    const nStartMs = new Date(nStartStr + "T00:00:00Z").getTime();
+    const nEndMs   = new Date(nEndStr   + "T00:00:00Z").getTime();
+
+    // Sin solapamiento con el período (caso edge, no debería ocurrir con los filtros actuales)
+    if (nEndMs < pStartMs || nStartMs > pEndMs) {
+      return { ...nov, days: 0, period_days: 0, original_days: Number(nov.days || 0) };
+    }
+
+    // Intersección con el período
+    const clippedStartMs = Math.max(nStartMs, pStartMs);
+    const clippedEndMs   = Math.min(nEndMs,   pEndMs);
+    const periodDays     = Math.max(0, Math.round((clippedEndMs - clippedStartMs) / 86400000) + 1);
+    const originalDays   = Number(nov.days || 0);
+
+    // Si los días ya son correctos (continuación ya recortada), solo agregar metadato
+    if (periodDays === originalDays) {
+      return { ...nov, period_days: originalDays, original_days: originalDays };
+    }
+
+    // Devolver con days = días del período y original_days = total almacenado
+    return { ...nov, days: periodDays, period_days: periodDays, original_days: originalDays };
+  });
 }
 
 // Tarifas fijas diarias para turnos EXTERNOS por categoría salarial.
@@ -221,6 +432,9 @@ const _NOVELTY_LABEL_MAP = {
   "FECHA DE RETIRO":                    "FECHA_RETIRO",
   "CAMBIO OPERATIVO COBERTURA":         "CAMBIO_OPERATIVO_COBERTURA",
   "CAMBIO OPERATIVO DE COBERTURA":      "CAMBIO_OPERATIVO_COBERTURA",
+  "CORRECCION SEGURIDAD SOCIAL":        "CORRECCION_SEGURIDAD_SOCIAL",
+  "CORRECCION DE SEGURIDAD SOCIAL":     "CORRECCION_SEGURIDAD_SOCIAL",
+  "CORRECCION SS":                      "CORRECCION_SEGURIDAD_SOCIAL",
 };
 
 function normalizeNoveltyType(raw) {
@@ -416,7 +630,11 @@ async function listSupportRows(filters = {}) {
   }
   if (filters.municipalityId) {
     values.push(id(filters.municipalityId));
-    supportWhere.push(`COALESCE(ns.municipality_id, pn.municipality_id) = $${values.length}`);
+    // Usar pn.municipality_id (de la novedad) en lugar de COALESCE(ns.municipality_id, pn.municipality_id).
+    // Si el registro de novelty_supports tiene un municipality_id incorrecto, el COALESCE
+    // lo usaría antes que el correcto de la novedad, excluyendo la fila indebidamente.
+    // Filtrar siempre por el municipio de la novedad es más robusto.
+    supportWhere.push(`pn.municipality_id = $${values.length}`);
     noveltyWhere.push(`pn.municipality_id = $${values.length}`);
   }
   if (filters.groupId) {
@@ -660,6 +878,71 @@ async function upsertSalaryCategory(contractId, categoryCode, values) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CONFIGURACIÓN SALARIAL INDIVIDUAL (Gestores, Auxiliares, Equipo Mínimo…)
+// No aplica a OPERARIO MANIPULADOR DE ALIMENTOS.
+// ─────────────────────────────────────────────────────────────────────────────
+async function listEmployeeSalaryConfig(employeeId) {
+  const { rows } = await pool.query(
+    `SELECT epc.*, u.username AS created_by_name
+       FROM employee_payroll_config epc
+       LEFT JOIN users u ON u.id = epc.created_by
+      WHERE epc.employee_id = $1
+      ORDER BY epc.effective_date DESC, epc.id DESC`,
+    [id(employeeId)]
+  );
+  return rows;
+}
+
+async function createEmployeeSalaryConfig(employeeId, payload = {}, userId) {
+  const empId = id(employeeId);
+  if (!empId) throw new Error("employeeId inválido");
+  const effectiveDate = text(payload.effective_date || payload.effectiveDate || new Date().toISOString().slice(0, 10));
+  if (!effectiveDate) throw new Error("effective_date es obligatorio");
+  const { rows } = await pool.query(
+    `INSERT INTO employee_payroll_config
+       (employee_id, base_salary, transport_allowance, salary_type, effective_date, notes, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [
+      empId,
+      n(payload.base_salary ?? payload.baseSalary),
+      n(payload.transport_allowance ?? payload.transportAllowance ?? 0),
+      text(payload.salary_type || payload.salaryType || "mensual"),
+      effectiveDate,
+      text(payload.notes || ""),
+      id(userId),
+    ]
+  );
+  return rows[0];
+}
+
+async function deleteEmployeeSalaryConfig(configId) {
+  const cId = id(configId);
+  if (!cId) throw new Error("configId inválido");
+  const { rows } = await pool.query(
+    `DELETE FROM employee_payroll_config WHERE id = $1 RETURNING *`,
+    [cId]
+  );
+  if (!rows.length) throw Object.assign(new Error("Configuración no encontrada"), { httpStatus: 404 });
+  return rows[0];
+}
+
+// Carga masiva de configs vigentes para un conjunto de empleados en una fecha dada.
+// Usa DISTINCT ON para devolver solo la config más reciente por empleado.
+async function getEmployeePayrollConfigs(employeeIds, periodStart) {
+  if (!employeeIds.length || !periodStart) return new Map();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (employee_id) *
+       FROM employee_payroll_config
+      WHERE employee_id = ANY($1::integer[])
+        AND effective_date <= $2::date
+      ORDER BY employee_id, effective_date DESC`,
+    [employeeIds, periodStart]
+  );
+  return new Map(rows.map((r) => [String(r.employee_id), r]));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TIPOS OFICIALES (desde DB)
 // ─────────────────────────────────────────────────────────────────────────────
 async function getOfficialNoveltyTypes() {
@@ -792,17 +1075,21 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
 
   const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
 
+  const displayWorkedDays = Math.max(0, workedDays - salaryDiscountDays);
+
   return {
-    base_salary:         effectiveSalary,
-    transport_allowance: effectiveTransport,
-    other_earnings:      effectiveOther,
-    total_devengado:     totalDevengado,
-    total_deducciones:   totalDeducciones,
-    neto_pagar:          netoPagar,
-    worked_days:         workedDays,
+    base_salary:          effectiveSalary,
+    transport_allowance:  effectiveTransport,
+    other_earnings:       effectiveOther,
+    total_devengado:      totalDevengado,
+    total_deducciones:    totalDeducciones,
+    neto_pagar:           netoPagar,
+    worked_days:          workedDays,
+    display_worked_days:  displayWorkedDays,
     calculation: {
       salary_category:         employee.salary_category || "",
       worked_days:             workedDays,
+      display_worked_days:     displayWorkedDays,
       full_base_salary:        fullBase,
       full_transport:          fullTransport,
       full_other:              fullOther,
@@ -870,8 +1157,9 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
 
   // ── Descuentos de otras novedades sobre tramo original ────────────────────
   // (Se asignan al tramo original por defecto; si start_date > daysOriginal → tramo nuevo)
-  let salaryDiscount    = 0;
-  let transportDiscount = 0;
+  let salaryDiscount     = 0;
+  let salaryDiscountDays = 0;
+  let transportDiscount  = 0;
   const salaryNoveltyDetail    = [];
   const transportNoveltyDetail = [];
 
@@ -886,7 +1174,8 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
     if (SALARY_AFFECTING.has(nov.novelty_type)) {
       const rate   = inNewTranche ? dSalNew : dSalOrig;
       const amount = Math.round(rate * days);
-      salaryDiscount += amount;
+      salaryDiscount     += amount;
+      salaryDiscountDays += days;
       salaryNoveltyDetail.push({ code: nov.novelty_type, days, amount });
     } else if (TRANSPORT_AFFECTING.has(nov.novelty_type)) {
       const rate   = inNewTranche ? dTransNew : dTransOrig;
@@ -915,17 +1204,21 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
   const totalDeducciones = deduccionSalud + deduccionPension;
   const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
 
+  const displayWorkedDaysCambio = Math.max(0, 30 - salaryDiscountDays);
+
   return {
-    base_salary:         totalBase,
-    transport_allowance: totalTrans,
-    other_earnings:      totalOther,
-    total_devengado:     totalDevengado,
-    total_deducciones:   totalDeducciones,
-    neto_pagar:          netoPagar,
-    worked_days:         30,
+    base_salary:          totalBase,
+    transport_allowance:  totalTrans,
+    other_earnings:       totalOther,
+    total_devengado:      totalDevengado,
+    total_deducciones:    totalDeducciones,
+    neto_pagar:           netoPagar,
+    worked_days:          30,
+    display_worked_days:  displayWorkedDaysCambio,
     calculation: {
       salary_category:         employee.salary_category || "",
       worked_days:             30,
+      display_worked_days:     displayWorkedDaysCambio,
       cambio_operativo:        true,
       original_category:       text(extra.original_salary_category || employee.salary_category),
       new_category:            newCatCode,
@@ -943,6 +1236,7 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
       replacement_amount:      internalCoverValue,
       replacement_days:        internalCoverDays,
       salary_discount:         salaryDiscount,
+      salary_discount_days:    salaryDiscountDays,
       salary_novelties:        salaryNoveltyDetail,
       transport_discount:      transportDiscount,
       transport_novelties:     transportNoveltyDetail,
@@ -1075,25 +1369,70 @@ async function createOperationalPeriod(payload = {}, userId) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function ensurePayrollGroups(periodId) {
   const employees = await activeEmployeesForPeriod(periodId);
-  for (const emp of employees) {
-    await pool.query(
-      `INSERT INTO payroll_groups (period_id, company_id, contract_id, municipality_id, operational_position, group_type)
-       SELECT $1, $2, $3, $4, $5, 'MUNICIPAL'
-        WHERE NOT EXISTS (
-          SELECT 1 FROM payroll_groups pg
-           WHERE pg.period_id = $1
-             AND pg.contract_id = $3
-             AND COALESCE(pg.municipality_id, 0) = COALESCE($4::integer, 0)
-             AND UPPER(BTRIM(pg.operational_position)) = UPPER(BTRIM($5))
+  if (!employees.length) return;
+
+  // Eliminar grupos municipales de cargos no-OPERARIO sin items revisados.
+  // Esto convierte automáticamente períodos existentes al modelo consolidado
+  // y evita que reaparezcan al llamar a ensurePayrollGroups varias veces.
+  await pool.query(
+    `DELETE FROM payroll_groups pg
+      WHERE pg.period_id = $1
+        AND pg.municipality_id IS NOT NULL
+        AND UPPER(BTRIM(pg.operational_position)) != $2
+        AND NOT EXISTS (
+          SELECT 1 FROM payroll_items pi
+            WHERE pi.group_id = pg.id AND pi.reviewed = true
         )`,
-      [periodId, emp.company_id, emp.contract_id, emp.municipality_id, emp.operational_position]
-    );
+    [periodId, String(OPERARIO_POSITION).trim().toUpperCase()]
+  );
+
+  // Una sola query para saber qué grupos ya existen en este período
+  const { rows: existing } = await pool.query(
+    `SELECT COALESCE(municipality_id, 0)::text AS muni_key,
+            UPPER(BTRIM(operational_position))  AS pos_key
+       FROM payroll_groups WHERE period_id = $1`,
+    [periodId]
+  );
+  const existingKeys = new Set(existing.map((r) => `${r.muni_key}|${r.pos_key}`));
+
+  // Filtrar combinaciones únicas que aún no existen.
+  // OPERARIO: un grupo por municipio (group_type='MUNICIPAL').
+  // Otros cargos: un único grupo consolidado por cargo (municipality_id=NULL, group_type='CONSOLIDATED').
+  const toInsert = new Map();
+  for (const emp of employees) {
+    const posNorm = String(emp.operational_position || "").trim().toUpperCase();
+    const muniKey = isOperario(posNorm) ? (emp.municipality_id || 0) : 0;
+    const key = `${muniKey}|${posNorm}`;
+    if (!existingKeys.has(key) && !toInsert.has(key)) toInsert.set(key, emp);
   }
+  if (!toInsert.size) return;
+
+  // Un solo INSERT en lote para todos los grupos faltantes
+  const entries = [...toInsert.values()];
+  const values  = [];
+  const placeholders = entries.map((emp, i) => {
+    const b = i * 6;
+    const muniId  = isOperario(emp.operational_position) ? emp.municipality_id : null;
+    const grpType = isOperario(emp.operational_position) ? "MUNICIPAL" : "CONSOLIDATED";
+    values.push(periodId, emp.company_id, emp.contract_id, muniId, emp.operational_position, grpType);
+    return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6})`;
+  }).join(",");
+
+  await pool.query(
+    `INSERT INTO payroll_groups (period_id, company_id, contract_id, municipality_id, operational_position, group_type)
+     VALUES ${placeholders}
+     ON CONFLICT (period_id, contract_id, (COALESCE(municipality_id, 0)), (UPPER(BTRIM(operational_position)))) DO NOTHING`,
+    values
+  );
 }
 
 async function getGroup(groupId) {
+  const cached = _groupCacheGet(groupId);
+  if (cached) return cached;
   const { rows } = await pool.query(`SELECT * FROM payroll_groups WHERE id = $1`, [groupId]);
-  return rows[0] || null;
+  const result = rows[0] || null;
+  if (result) _groupCacheSet(groupId, result);
+  return result;
 }
 
 async function listPayrollGroups(periodId) {
@@ -1102,7 +1441,9 @@ async function listPayrollGroups(periodId) {
 
   const activeCountByGroup = new Map();
   for (const emp of activeEmployees) {
-    const key = `${emp.contract_id}|${emp.municipality_id || 0}|${norm(emp.operational_position)}`;
+    // No-OPERARIO: agrupar bajo muniKey=0 para coincidir con el grupo consolidado
+    const muniKey = isOperario(emp.operational_position) ? (emp.municipality_id || 0) : 0;
+    const key = `${emp.contract_id}|${muniKey}|${norm(emp.operational_position)}`;
     activeCountByGroup.set(key, (activeCountByGroup.get(key) || 0) + 1);
   }
 
@@ -1144,15 +1485,31 @@ async function listPayrollGroups(periodId) {
        LEFT JOIN municipalities m ON m.id = pg.municipality_id
        LEFT JOIN item_stats is1   ON is1.group_id = pg.id
        LEFT JOIN novelty_stats ns1 ON ns1.group_id = pg.id
-       LEFT JOIN payroll_municipality_status pms
-              ON pms.period_id = pg.period_id AND pms.municipality = COALESCE(m.name, '')
+       LEFT JOIN LATERAL (
+                   SELECT *
+                     FROM payroll_municipality_status pms_l
+                    WHERE pms_l.period_id = pg.period_id
+                      AND (
+                            (pms_l.municipality_id IS NOT NULL AND pms_l.municipality_id = pg.municipality_id)
+                         OR (pms_l.municipality_id IS NULL     AND pms_l.municipality    = COALESCE(m.name, ''))
+                          )
+                    ORDER BY pms_l.municipality_id DESC NULLS LAST
+                    LIMIT 1
+                 ) pms ON true
       WHERE pg.period_id = $1
       ORDER BY UPPER(pg.operational_position), m.name NULLS LAST`,
     [periodId]
   );
 
+  // Excluir grupos municipales de cargos no-OPERARIO del listado visual.
+  // Para esos cargos solo debe mostrarse el grupo consolidado (municipality_id IS NULL).
+  // Los grupos municipales de OPERARIO se muestran normalmente.
+  const visibleRows = rows.filter((row) =>
+    row.municipality_id === null || isOperario(row.operational_position)
+  );
+
   const positions = new Map();
-  for (const row of rows) {
+  for (const row of visibleRows) {
     const key = row.operational_position;
     if (!positions.has(key)) {
       positions.set(key, {
@@ -1169,11 +1526,13 @@ async function listPayrollGroups(periodId) {
         municipalities:    [],
       });
     }
+    const isConsolidated = row.group_type === "CONSOLIDATED";
     const activeKey = `${row.contract_id}|${row.municipality_id || 0}|${norm(row.operational_position)}`;
     const item = {
       id:                row.id,
       municipality_id:   row.municipality_id,
-      municipality_name: row.municipality_name || "Sin municipio",
+      municipality_name: isConsolidated ? "Consolidado" : (row.municipality_name || "Sin municipio"),
+      is_consolidated:   isConsolidated,
       status:            row.status,
       employees:         Number(row.employees || activeCountByGroup.get(activeKey) || 0),
       novelties:         Number(row.novelties || 0),
@@ -1198,7 +1557,7 @@ async function listPayrollGroups(periodId) {
     pos.neto              += item.neto;
     pos.municipalities.push(item);
   }
-  return { positions: Array.from(positions.values()), groups: rows };
+  return { positions: Array.from(positions.values()), groups: visibleRows };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1225,6 +1584,7 @@ async function markNeedsRecalculation(groupId) {
     `UPDATE payroll_groups SET needs_recalculation = true, updated_at = NOW() WHERE id = $1`,
     [groupId]
   );
+  _groupCacheInvalidate(groupId);
 }
 
 async function getGroupIdForItem(itemId) {
@@ -1246,57 +1606,241 @@ async function getGroupIdForNovelty(noveltyId) {
   return rows[0]?.group_id || null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPAGACIÓN DE NOVEDADES MULTI-PERÍODO
+// Detecta novedades padre de períodos anteriores que se extienden al período
+// actual (original_end_date >= period_start) y crea los registros de
+// continuación en los payroll_items correspondientes.
+// Se invoca desde calculatePayrollGroup; es idempotente (no duplica registros).
+// ─────────────────────────────────────────────────────────────────────────────
+async function propagateCrossPeriodNovelties(periodId, contractId) {
+  const { rows: periodRows } = await pool.query(
+    `SELECT * FROM payroll_periods WHERE id = $1`, [periodId]
+  );
+  const period = periodRows[0];
+  if (!period) return;
+
+  const cId         = contractId || period.contract_id;
+  const periodStart = String(period.period_start).slice(0, 10);
+  const periodEnd   = String(period.period_end).slice(0, 10);
+
+  // Buscar todas las novedades padre (de cualquier período anterior) cuya
+  // original_end_date llegue al período actual o más allá.
+  const { rows: crossNovs } = await pool.query(
+    `SELECT pn.*, pi.employee_id
+       FROM payroll_novelties pn
+       JOIN payroll_items pi ON pi.id = pn.payroll_item_id
+       JOIN payroll_periods pp ON pp.id = pn.payroll_period_id
+      WHERE pp.contract_id = $1
+        AND pn.original_end_date >= $2::date
+        AND pn.is_continuation = false
+        AND pn.parent_novelty_id IS NULL
+        AND pp.period_end < $2::date`,
+    [cId, periodStart]
+  );
+  if (!crossNovs.length) return;
+
+  for (const nov of crossNovs) {
+    const origEnd    = String(nov.original_end_date).slice(0, 10);
+    const continEnd  = origEnd <= periodEnd ? origEnd : periodEnd;
+    const continDays = Math.max(1,
+      Math.round((new Date(continEnd) - new Date(periodStart)) / 86400000) + 1
+    );
+
+    // Idempotente: no crear si ya existe continuación para este período
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM payroll_novelties
+        WHERE parent_novelty_id = $1 AND payroll_period_id = $2 LIMIT 1`,
+      [nov.id, periodId]
+    );
+    if (existing.length > 0) continue;
+
+    // Buscar el payroll_item del empleado en este período
+    const { rows: items } = await pool.query(
+      `SELECT pi.*, pg.id AS grp_id
+         FROM payroll_items pi
+         JOIN payroll_groups pg ON pg.id = pi.group_id
+        WHERE pi.employee_id = $1 AND pg.period_id = $2
+        LIMIT 1`,
+      [nov.employee_id, periodId]
+    );
+    if (!items.length) continue;
+    const item = items[0];
+
+    await pool.query(
+      `INSERT INTO payroll_novelties (
+         parent_novelty_id, is_continuation,
+         payroll_item_id, payroll_period_id, employee_id, employee_name, document_number,
+         company_id, contract_id, municipality_id, institution_id, site_id,
+         operational_position, novelty_type,
+         start_date, end_date, days,
+         original_start_date, original_end_date,
+         value, observations, description,
+         support_required, support_status, status, created_by_user_id
+       )
+       VALUES ($1,true,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+               0,$19,$19,false,'aprobado','PENDIENTE',$20)`,
+      [
+        nov.id, item.id, periodId,
+        nov.employee_id, nov.employee_name, nov.document_number,
+        nov.company_id, nov.contract_id, nov.municipality_id, nov.institution_id, nov.site_id,
+        nov.operational_position, nov.novelty_type,
+        periodStart, continEnd, continDays,
+        String(nov.original_start_date || nov.start_date || "").slice(0, 10),
+        nov.original_end_date,
+        text(nov.observations || nov.description || ""),
+        nov.created_by_user_id,
+      ]
+    );
+
+    await recalculatePayrollItem(item.id);
+    await markNeedsRecalculation(item.grp_id);
+  }
+}
+
 async function calculatePayrollGroup(groupId) {
   const group = await getGroup(groupId);
   assertGroupEditable(group);
 
+  // Propagar novedades de períodos anteriores que lleguen a este período
+  await propagateCrossPeriodNovelties(group.period_id, group.contract_id);
+
   // Todos los empleados activos del período (para contar peers CAARES por site_id)
   const allPeriodEmployees = await activeEmployeesForPeriod(group.period_id);
 
-  // Empleados de este grupo específico
-  const groupEmployees = allPeriodEmployees.filter((emp) =>
-    emp.contract_id === group.contract_id &&
-    emp.municipality_id === group.municipality_id &&
-    norm(emp.operational_position) === norm(group.operational_position)
-  );
+  // Empleados de este grupo específico.
+  // Grupos OPERARIO (municipales): filtrar por municipio exacto.
+  // Grupos consolidados (no-OPERARIO): todos los empleados con ese cargo sin importar municipio.
+  const groupEmployees = allPeriodEmployees.filter((emp) => {
+    if (emp.contract_id !== group.contract_id) return false;
+    if (norm(emp.operational_position) !== norm(group.operational_position)) return false;
+    if (group.municipality_id !== null) return emp.municipality_id === group.municipality_id;
+    return true;
+  });
+
+  console.log("[payroll municipality filter]", {
+    groupId,
+    selectedMunicipalityId:   group.municipality_id,
+    selectedMunicipalityName: groupEmployees[0]?.municipality_name || "(sin empleados)",
+    totalPeriodEmployees:     allPeriodEmployees.length,
+    groupEmployeeCount:       groupEmployees.length,
+    employees: groupEmployees.map((e) => ({
+      employeeId:            e.employee_id,
+      employeeName:          e.employee_name,
+      employeeMunicipalityId:   e.municipality_id,
+      employeeMunicipalityName: e.municipality_name,
+    })),
+  });
 
   // Configuración salarial desde DB (o fallback JSON)
   const salaryCategories = await getSalaryCategories(group.contract_id);
 
-  // Novedades del período para este municipio
-  const { rows: novelties } = await pool.query(
-    `SELECT * FROM payroll_novelties
-      WHERE payroll_period_id = $1 AND municipality_id = $2`,
-    [group.period_id, group.municipality_id]
-  );
+  // Novedades, coberturas y fechas del período en paralelo
+  const noveltyPromise = group.municipality_id !== null
+    ? pool.query(
+        `SELECT * FROM payroll_novelties
+          WHERE payroll_period_id = $1 AND municipality_id = $2`,
+        [group.period_id, group.municipality_id]
+      )
+    : groupEmployees.length > 0
+      ? pool.query(
+          `SELECT * FROM payroll_novelties
+            WHERE payroll_period_id = $1 AND employee_id = ANY($2::integer[])`,
+          [group.period_id, groupEmployees.map((e) => e.employee_id)]
+        )
+      : Promise.resolve({ rows: [] });
 
-  // Solo coberturas INTERNAS — las externas no afectan ningún payroll_item
-  const { rows: covers } = await pool.query(
-    `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
-    [group.period_id]
-  );
+  const [novResult, coversResult, pResult] = await Promise.all([
+    noveltyPromise,
+    // Solo coberturas INTERNAS — las externas no afectan ningún payroll_item
+    pool.query(
+      `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
+      [group.period_id]
+    ),
+    // Fechas del período para recorte multi-período y salarios individuales
+    pool.query(
+      `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`,
+      [group.period_id]
+    ),
+  ]);
+
+  let novelties    = novResult.rows;
+  const covers     = coversResult.rows;
+  const periodStart = pResult.rows[0] ? String(pResult.rows[0].period_start).slice(0, 10) : null;
+  const periodEnd   = pResult.rows[0] ? String(pResult.rows[0].period_end).slice(0, 10)   : null;
+
+  // Recortar novedades al período actual.
+  // Si una novedad cubre 25/05→03/06, en Mayo solo se contabilizan los días hasta el 30/05.
+  if (periodStart && periodEnd) {
+    novelties = clipNoveltiesByPeriod(novelties, periodStart, periodEnd);
+  }
+
+  // Para grupos consolidados: cargar salario individual de cada empleado
+  // según su configuración vigente en la fecha de inicio del período.
+  let empPayrollConfigs = new Map();
+  if (group.municipality_id === null && groupEmployees.length > 0) {
+    if (periodStart) {
+      empPayrollConfigs = await getEmployeePayrollConfigs(
+        groupEmployees.map((e) => e.employee_id), periodStart
+      );
+    }
+  }
 
   const cfg = getPayrollConfig();
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    console.time(`[payroll recalculation] group=${groupId}`);
 
-    // DEBUG: mostrar mapa completo de categorías para verificar other_recargos
-    console.log("[PAYROLL CATEGORIES]", JSON.stringify(salaryCategories, null, 2));
+    // Eliminar items de empleados que ya no pertenecen a este grupo (no revisados).
+    // Esto evita que cambios de municipio o correcciones previas dejen datos stale
+    // que aparezcan mezclados con los empleados correctos del grupo.
+    if (groupEmployees.length > 0) {
+      const activeIds = groupEmployees.map((e) => String(e.employee_id));
+      await client.query(
+        `DELETE FROM payroll_items
+          WHERE group_id = $1
+            AND reviewed IS NOT TRUE
+            AND employee_id::text != ALL($2)`,
+        [group.id, activeIds]
+      );
+    } else {
+      await client.query(
+        `DELETE FROM payroll_items WHERE group_id = $1 AND reviewed IS NOT TRUE`,
+        [group.id]
+      );
+    }
 
+    // Calcular montos de todos los empleados en JS (puro, sin round-trips)
+    const NCOLS = 25;
+    const bulkRows = [];
     for (const emp of groupEmployees) {
-      // Clasificar usando site_id
       const categoryCode = classifySiteModality(emp, allPeriodEmployees);
       emp.salary_category = categoryCode;
 
-      // Obtener configuración salarial para la categoría
-      const salConfig = salaryCategories[categoryCode] || {
-        base_salary:         n(cfg.modalitySalaries?.[categoryCode] || cfg.smlmv || 0),
-        transport_allowance: n(cfg.transportAllowance || 0),
-        other_recargos:      0,
-      };
+      // Grupos consolidados (no-OPERARIO): usar salario individual si está configurado.
+      // Grupos OPERARIO (municipales): usar tarifa por categoría salarial.
+      let salConfig;
+      if (group.municipality_id === null) {
+        const empCfg = empPayrollConfigs.get(String(emp.employee_id));
+        if (empCfg) {
+          salConfig = {
+            base_salary:         Number(empCfg.base_salary),
+            transport_allowance: Number(empCfg.transport_allowance),
+            other_recargos:      0,
+          };
+        }
+      }
+      if (!salConfig) {
+        salConfig = salaryCategories[categoryCode] || {
+          base_salary:         n(cfg.modalitySalaries?.[categoryCode] || cfg.smlmv || 0),
+          transport_allowance: n(cfg.transportAllowance || 0),
+          other_recargos:      0,
+        };
+      }
 
+<<<<<<< HEAD
       // DEBUG: por empleado
       console.log(`[PAYROLL CATEGORY] ${emp.employee_name} → ${categoryCode}`, salConfig);
 
@@ -1307,6 +1851,8 @@ async function calculatePayrollGroup(groupId) {
       const inclusionStatus = payrollInclusionStatus(emp, group.period_start, group.period_end);
 
       // Novedades del empleado
+=======
+>>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       const empNovelties = novelties.filter(
         (x) => String(x.employee_id) === String(emp.employee_id)
       );
@@ -1316,13 +1862,39 @@ async function calculatePayrollGroup(groupId) {
         ...laborNovelties,
       ];
 
+<<<<<<< HEAD
       // Cambio operativo: usa cálculo proporcional si existe la novedad
       const cambioNov = effectiveNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
+=======
+      const cambioNov = empNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
+>>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       const amounts = cambioNov
         ? calculateAmountsWithCambio(emp, salConfig, effectiveNovelties, covers, cambioNov, salaryCategories)
         : calculateEmployeeAmounts(emp, salConfig, effectiveNovelties, covers);
 
+<<<<<<< HEAD
       const { rows: itemRows } = await client.query(
+=======
+      bulkRows.push([
+        group.id, group.period_id, emp.employee_id, emp.employee_name, emp.document_number,
+        emp.company_id, emp.contract_id, emp.municipality_id, emp.municipality_name,
+        emp.institution_id, emp.institution_name, emp.site_id, emp.site_name,
+        emp.modality, emp.operational_position, emp.work_time_type,
+        categoryCode, amounts.worked_days,
+        amounts.base_salary, amounts.transport_allowance, amounts.other_earnings,
+        amounts.total_devengado, amounts.total_deducciones, amounts.neto_pagar,
+        JSON.stringify(amounts.calculation),
+      ]);
+    }
+
+    // Un único INSERT en lote — N round-trips → 1
+    if (bulkRows.length) {
+      const placeholders = bulkRows.map((_, i) => {
+        const b = i * NCOLS;
+        return `(${Array.from({length: NCOLS}, (_, j) => `$${b + j + 1}`).join(",")},NOW())`;
+      }).join(",");
+      await client.query(
+>>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
         `INSERT INTO payroll_items (
            group_id, period_id, employee_id, employee_name, document_number,
            company_id, contract_id, municipality_id, municipality_name,
@@ -1335,6 +1907,7 @@ async function calculatePayrollGroup(groupId) {
            dias_laborados_calculados, source_fecha_retiro, payroll_inclusion_status,
            updated_at
          )
+<<<<<<< HEAD
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,NOW())
          ON CONFLICT (group_id, employee_id) DO UPDATE SET
            employee_name      = EXCLUDED.employee_name,
@@ -1375,6 +1948,31 @@ async function calculatePayrollGroup(groupId) {
           fechaIngresoAplicada, fechaRetiroAplicada, diasLaboradosCalculados,
           fechaRetiroAplicada ? "PERSONAL" : null, inclusionStatus,
         ]
+=======
+         VALUES ${placeholders}
+         ON CONFLICT (group_id, employee_id) DO UPDATE SET
+           employee_name       = EXCLUDED.employee_name,
+           document_number     = EXCLUDED.document_number,
+           municipality_name   = EXCLUDED.municipality_name,
+           institution_id      = EXCLUDED.institution_id,
+           institution_name    = EXCLUDED.institution_name,
+           site_id             = EXCLUDED.site_id,
+           site_name           = EXCLUDED.site_name,
+           modality            = EXCLUDED.modality,
+           work_time_type      = EXCLUDED.work_time_type,
+           salary_category     = EXCLUDED.salary_category,
+           worked_days         = EXCLUDED.worked_days,
+           base_salary         = EXCLUDED.base_salary,
+           transport_allowance = EXCLUDED.transport_allowance,
+           other_earnings      = EXCLUDED.other_earnings,
+           total_devengado     = EXCLUDED.total_devengado,
+           total_deducciones   = EXCLUDED.total_deducciones,
+           neto_pagar          = EXCLUDED.neto_pagar,
+           calculation         = EXCLUDED.calculation,
+           updated_at          = NOW()
+         WHERE payroll_items.reviewed IS NOT TRUE`,
+        bulkRows.flat()
+>>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       );
       const persistedItem = itemRows[0];
       if (persistedItem) {
@@ -1391,6 +1989,7 @@ async function calculatePayrollGroup(groupId) {
       [group.id]
     );
     await client.query("COMMIT");
+    console.timeEnd(`[payroll recalculation] group=${groupId}`);
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -1398,6 +1997,7 @@ async function calculatePayrollGroup(groupId) {
     client.release();
   }
 
+  _groupCacheInvalidate(groupId);
   return getPayrollGroupDetail(group.period_id, group.id);
 }
 
@@ -1491,6 +2091,10 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
     itemHaving.push(`COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")}) > 0`);
   if (filters.support_status === "complete")
     itemHaving.push(`COUNT(DISTINCT pn.id) FILTER (WHERE ${pendingNoveltySupportSql("pn")}) = 0`);
+  if (filters.cargo) {
+    itemParams.push(String(filters.cargo));
+    itemWhere.push(`UPPER(COALESCE(pi.operational_position, '')) = UPPER($${itemParams.length})`);
+  }
 
   const sortMap = {
     documento:  "pi.document_number",
@@ -1506,13 +2110,16 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
   const sortDir = filters.sort_dir === "desc" ? "DESC" : "ASC";
   const havingSql = itemHaving.length ? `HAVING ${itemHaving.join(" AND ")}` : "";
 
+  console.time(`[payroll novelties load] group=${groupId}`);
   const [
     { rows: items },
-    { rows: novelties },
+    { rows: rawNovelties },
     supports,
     { rows: periodCovers },
     covers,
     salaryCategories,
+    { rows: allGroupItemsForSS },
+    { rows: periodDateRows },
   ] = await Promise.all([
     pool.query(
       `SELECT pi.*,
@@ -1546,25 +2153,41 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
          LEFT JOIN payroll_turn_covers ptc   ON ptc.novelty_id = pn.id
          LEFT JOIN employees repl            ON repl.id = ptc.internal_employee_id
         WHERE pn.payroll_period_id = $1
-          AND (
-            pn.payroll_item_id IN (SELECT id FROM payroll_items WHERE group_id = $2)
-            OR pn.municipality_id = $3
-          )
+          AND pn.payroll_item_id IN (SELECT id FROM payroll_items WHERE group_id = $2)
         ORDER BY pn.id DESC`,
-      [periodId, groupId, group.municipality_id]
+      [periodId, groupId]
     ),
-    listSupportRows({
-      periodId,
-      municipalityId: group.municipality_id,
-      groupId,
-    }),
+    // No pasar municipalityId: el groupId ya acota al municipio correcto
+    // via payroll_items.group_id. Pasar ambos causaba que soportes con
+    // municipality_id incorrecto en novelty_supports quedaran excluidos.
+    listSupportRows({ periodId, groupId }),
     pool.query(
       `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
       [periodId]
     ),
     listGroupTurnCovers(groupId),
     getSalaryCategories(group.contract_id),
+    // Todos los items del grupo (sin filtros) para emparejar reemplazos en SS
+    pool.query(
+      `SELECT id, employee_id, employee_name, institution_id, institution_name,
+              site_id, site_name, modality, operational_position, work_time_type
+         FROM payroll_items WHERE group_id = $1`,
+      [groupId]
+    ),
+    // Fechas del período para el recorte de novedades multi-período
+    pool.query(
+      `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`, [periodId]
+    ),
   ]);
+  console.timeEnd(`[payroll novelties load] group=${groupId}`);
+
+  // Recortar novedades al período actual: si una novedad cubre 25/05→03/06,
+  // en Mayo se aplican solo los días hasta el 30/05 (y en Junio los del 01→03/06).
+  const periodStart = periodDateRows[0] ? String(periodDateRows[0].period_start).slice(0, 10) : null;
+  const periodEnd   = periodDateRows[0] ? String(periodDateRows[0].period_end).slice(0, 10)   : null;
+  const novelties   = (periodStart && periodEnd)
+    ? clipNoveltiesByPeriod(rawNovelties, periodStart, periodEnd)
+    : rawNovelties;
 
   // ── Índice de novedades por item ─────────────────────────────────────────
   const novByItem = {};
@@ -1606,14 +2229,15 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
 
     return {
       ...item,
-      base_salary:         amounts.base_salary,
-      transport_allowance: amounts.transport_allowance,
-      other_earnings:      amounts.other_earnings,
-      total_devengado:     amounts.total_devengado,
-      total_deducciones:   amounts.total_deducciones,
-      neto_pagar:          amounts.neto_pagar,
-      worked_days:         amounts.worked_days,
-      calculation:         amounts.calculation,
+      base_salary:          amounts.base_salary,
+      transport_allowance:  amounts.transport_allowance,
+      other_earnings:       amounts.other_earnings,
+      total_devengado:      amounts.total_devengado,
+      total_deducciones:    amounts.total_deducciones,
+      neto_pagar:           amounts.neto_pagar,
+      worked_days:          amounts.worked_days,
+      display_worked_days:  amounts.display_worked_days,
+      calculation:          amounts.calculation,
     };
   });
 
@@ -1634,7 +2258,10 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
     nov.impact_type = salaryAmount ? "salary" : transportAmount ? "transport" : null;
   }
 
-  const totals = normalizedItems.reduce(
+  // ── Calcular Días SS (lógica independiente de días laborados) ───────────────
+  const itemsWithSS = computeSocialSecurityDays(normalizedItems, novelties, allGroupItemsForSS);
+
+  const totals = itemsWithSS.reduce(
     (acc, item) => {
       acc.employees         += 1;
       acc.total_devengado   += n(item.total_devengado);
@@ -1650,7 +2277,7 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
     { employees: 0, total_devengado: 0, total_deducciones: 0, neto: 0, novelties: 0, reviewed: 0, pending_supports: 0, items_reviewed: 0, items_pending: 0 }
   );
 
-  return { group, items: normalizedItems, novelties, supports, covers, totals };
+  return { group, items: itemsWithSS, novelties, supports, covers, totals };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1659,12 +2286,13 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
 // en payroll_items aplicando todas las novedades actuales del empleado.
 // ─────────────────────────────────────────────────────────────────────────────
 async function recalculatePayrollItem(itemId) {
+  console.time(`[payroll recalculation] item=${itemId}`);
   const { rows: itemRows } = await pool.query(
     `SELECT * FROM payroll_items WHERE id = $1`,
     [itemId]
   );
   const item = itemRows[0];
-  if (!item || item.reviewed) return item; // no tocar revisados
+  if (!item || item.reviewed) { console.timeEnd(`[payroll recalculation] item=${itemId}`); return item; }
 
   const salaryCategories = await getSalaryCategories(item.contract_id);
 
@@ -1728,7 +2356,53 @@ async function recalculatePayrollItem(itemId) {
       JSON.stringify(amounts.calculation),
     ]
   );
+  console.timeEnd(`[payroll recalculation] item=${itemId}`);
   return updated[0];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SINCRONIZACIÓN: FECHA_RETIRO → estado del empleado en Personal
+// Consulta el retiro más reciente activo en nómina y actualiza employees.
+// Si no quedan novedades de retiro activas, restaura el empleado a ACTIVO.
+// Diseño deliberado: no lanza excepción — si falla no bloquea la operación
+// de nómina principal, y el error se loguea.
+// ─────────────────────────────────────────────────────────────────────────────
+async function syncEmployeeRetirement(employeeId) {
+  const empId = id(employeeId);
+  if (!empId) return;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT MAX(COALESCE(start_date, end_date)) AS latest_retiro
+         FROM payroll_novelties
+        WHERE employee_id = $1
+          AND novelty_type = 'FECHA_RETIRO'`,
+      [empId]
+    );
+    const latestRetiro = rows[0]?.latest_retiro || null;
+
+    if (latestRetiro) {
+      await pool.query(
+        `UPDATE employees
+            SET status = 'INACTIVO',
+                retirement_date = $2,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [empId, String(latestRetiro).slice(0, 10)]
+      );
+    } else {
+      await pool.query(
+        `UPDATE employees
+            SET status = 'ACTIVO',
+                retirement_date = NULL,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [empId]
+      );
+    }
+  } catch (err) {
+    console.error("[syncEmployeeRetirement] error al sincronizar estado de empleado:", empId, err.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1748,14 +2422,12 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
 
   // Normalizar y validar tipo oficial
   const rawInput = text(payload.novelty_type || payload.noveltyType || "");
-  console.log("[NOVELTY PAYLOAD]", JSON.stringify({ item_id: itemId, ...payload }));
   let typeRaw;
   try {
     typeRaw = normalizeNoveltyType(rawInput);
   } catch (validationErr) {
     throw new Error(validationErr.message);
   }
-  console.log("[NOVELTY TYPE NORMALIZED]", typeRaw);
   if (typeRaw === "CAMBIO_OPERATIVO_COBERTURA") {
     throw new Error("Use el endpoint /payroll/items/:id/cambio-operativo para registrar cambios operativos de cobertura");
   }
@@ -1765,8 +2437,73 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   let endDate   = text(payload.end_date || payload.endDate) || null;
   let days = n(payload.days);
 
-  // INGRESO / RETIRO: requieren fecha exacta dentro del período y calculan días automáticamente
-  if (typeRaw === "FECHA_INGRESO" || typeRaw === "FECHA_RETIRO") {
+  // CORRECCION_SEGURIDAD_SOCIAL: fecha que reemplaza la de ingreso solo para el cálculo SS.
+  // No afecta días laborados, salario ni transporte.
+  if (typeRaw === "CORRECCION_SEGURIDAD_SOCIAL") {
+    if (!startDate) {
+      const err = new Error("La corrección SS requiere la fecha de corrección (fecha_correccion_ss).");
+      err.httpStatus = 400;
+      throw err;
+    }
+
+    // Validar que la fecha esté dentro del período
+    const { rows: periodRowsCorr } = await pool.query(
+      `SELECT period_start, period_end FROM payroll_periods WHERE id = $1`,
+      [item.period_id]
+    );
+    const periodCorr = periodRowsCorr[0];
+    if (periodCorr) {
+      const corrStr  = String(startDate).slice(0, 10);
+      const perStart = String(periodCorr.period_start).slice(0, 10);
+      const perEnd   = String(periodCorr.period_end).slice(0, 10);
+      if (corrStr < perStart || corrStr > perEnd) {
+        const err = new Error(
+          `La fecha de corrección SS (${corrStr}) debe estar dentro del período (${perStart} — ${perEnd}).`
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
+    }
+
+    // Validar que no sea posterior a la FECHA_INGRESO registrada para este item
+    const { rows: ingresoRowsCorr } = await pool.query(
+      `SELECT start_date FROM payroll_novelties
+       WHERE payroll_item_id = $1 AND novelty_type = 'FECHA_INGRESO'
+       ORDER BY created_at DESC LIMIT 1`,
+      [item.id]
+    );
+    if (ingresoRowsCorr[0]) {
+      const ingresoDate = String(ingresoRowsCorr[0].start_date).slice(0, 10);
+      const corrDate    = String(startDate).slice(0, 10);
+      if (corrDate > ingresoDate) {
+        const err = new Error(
+          `La fecha de corrección SS (${corrDate}) no puede ser posterior a la fecha de ingreso laboral (${ingresoDate}).`
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
+    }
+
+    // Solo una corrección SS activa por item de nómina
+    const { rows: existingCorrRows } = await pool.query(
+      `SELECT id FROM payroll_novelties
+       WHERE payroll_item_id = $1 AND novelty_type = 'CORRECCION_SEGURIDAD_SOCIAL'
+       LIMIT 1`,
+      [item.id]
+    );
+    if (existingCorrRows.length > 0) {
+      const err = new Error(
+        "Ya existe una corrección de seguridad social para este empleado en este período. Elimine la existente antes de crear una nueva."
+      );
+      err.httpStatus = 409;
+      throw err;
+    }
+
+    startDate = String(startDate).slice(0, 10);
+    endDate   = startDate;
+    days      = 0; // No descuenta días laborados ni afecta salario
+  } else if (typeRaw === "FECHA_INGRESO" || typeRaw === "FECHA_RETIRO") {
+    // INGRESO / RETIRO: requieren fecha exacta dentro del período y calculan días automáticamente
     if (!startDate) {
       const label = typeRaw === "FECHA_INGRESO" ? "ingreso" : "retiro";
       const err = new Error(`La novedad de ${label} requiere la fecha exacta de ${label}.`);
@@ -1802,7 +2539,30 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
     days = Math.max(1, Math.round(diff) + 1);
   }
 
-  if (days <= 0) throw new Error("Los días de la novedad deben ser mayor a 0");
+  // CORRECCION_SEGURIDAD_SOCIAL usa days = 0 (no descuenta días laborados).
+  // Todos los demás tipos deben tener al menos 1 día.
+  if (days <= 0 && typeRaw !== "CORRECCION_SEGURIDAD_SOCIAL") {
+    throw new Error("Los días de la novedad deben ser mayor a 0");
+  }
+
+  // ── Detección de novedad que cruza al siguiente período ─────────────────────
+  // Si end_date > period_end se recorta al período actual y se guardan las
+  // fechas originales para propagar la continuación al calcular el período siguiente.
+  let originalStartDate = null;
+  let originalEndDate   = null;
+
+  if (CROSS_PERIOD_TYPES.has(typeRaw) && startDate && endDate && endDate > startDate) {
+    const { rows: pRows } = await pool.query(
+      `SELECT period_end FROM payroll_periods WHERE id = $1`, [item.period_id]
+    );
+    const pEnd = pRows[0] ? String(pRows[0].period_end).slice(0, 10) : null;
+    if (pEnd && endDate > pEnd) {
+      originalStartDate = startDate;
+      originalEndDate   = endDate;
+      endDate           = pEnd;
+      days              = Math.max(1, Math.round((new Date(pEnd) - new Date(startDate)) / 86400000) + 1);
+    }
+  }
 
   // Obtener metadatos del tipo de novedad desde DB
   const { rows: typeRows } = await pool.query(
@@ -1864,15 +2624,20 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
     throw err;
   }
 
+  const retirementReason = typeRaw === "FECHA_RETIRO"
+    ? (text(payload.retirement_reason || payload.retirementReason) || null)
+    : null;
+
   const { rows: inserted } = await pool.query(
     `INSERT INTO payroll_novelties (
        payroll_item_id, payroll_period_id, employee_id, employee_name, document_number,
        company_id, contract_id, municipality_id, institution_id, site_id,
        operational_position, novelty_type, start_date, end_date, days,
        value, observations, description, support_required, support_status, status,
-       created_by_user_id
+       created_by_user_id, retirement_reason,
+       original_start_date, original_end_date
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'PENDIENTE',$21)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'PENDIENTE',$21,$22,$23,$24)
      RETURNING *`,
     [
       item.id, item.period_id, item.employee_id, item.employee_name, item.document_number,
@@ -1881,7 +2646,8 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
       n(payload.value), text(payload.observations || payload.description),
       text(payload.description || payload.observations),
       supportRequired, supportRequired ? "pendiente" : "aprobado",
-      id(userId),
+      id(userId), retirementReason,
+      originalStartDate, originalEndDate,
     ]
   );
 
@@ -1929,6 +2695,9 @@ async function createNoveltyForItem(itemId, payload = {}, userId) {
   // Recalcular el item inmediatamente para reflejar el impacto de la novedad
   await recalculatePayrollItem(item.id);
   await markNeedsRecalculation(item.group_id);
+
+  // Sincronizar estado en Personal cuando se registra un retiro
+  if (typeRaw === "FECHA_RETIRO") await syncEmployeeRetirement(item.employee_id);
 
   return inserted[0];
 }
@@ -2146,15 +2915,16 @@ async function patchNovelty(noveltyId, payload = {}, userId) {
   }
 
   const allowed = {
-    novelty_type:     (v) => text(v).toUpperCase(),
-    start_date:       (v) => v || null,
-    end_date:         (v) => v || null,
-    days:             n,
-    value:            n,
-    observations:     text,
-    description:      text,
-    support_required: Boolean,
-    support_status:   text,
+    novelty_type:       (v) => text(v).toUpperCase(),
+    start_date:         (v) => v || null,
+    end_date:           (v) => v || null,
+    days:               n,
+    value:              n,
+    observations:       text,
+    description:        text,
+    support_required:   Boolean,
+    support_status:     text,
+    retirement_reason:  (v) => text(v) || null,
   };
 
   for (const [key, transform] of Object.entries(allowed)) {
@@ -2199,6 +2969,69 @@ async function patchNovelty(noveltyId, payload = {}, userId) {
     await recalculatePayrollItem(novelty.payroll_item_id);
   }
   if (novelty.group_id) await markNeedsRecalculation(novelty.group_id);
+
+  // ── Cascade multi-período: si cambia la fecha fin de una novedad padre ────
+  // Solo aplica si era una novedad multi-período (tenía original_end_date) y
+  // el usuario cambió la fecha fin (end_date en el payload).
+  const intendedEnd = text(payload.end_date || payload.endDate || payload.novelty_date || "");
+  if (
+    !novelty.is_continuation &&
+    novelty.original_end_date &&
+    intendedEnd &&
+    intendedEnd.slice(0, 10) !== String(novelty.original_end_date).slice(0, 10)
+  ) {
+    const newOrigEnd = intendedEnd.slice(0, 10);
+
+    // Obtener el límite del período actual
+    const { rows: pRows } = await pool.query(
+      `SELECT pp.period_end FROM payroll_periods pp
+       JOIN payroll_items pi ON pi.period_id = pp.id
+       WHERE pi.id = $1 LIMIT 1`,
+      [novelty.payroll_item_id]
+    );
+    const pEnd = pRows[0] ? String(pRows[0].period_end).slice(0, 10) : null;
+
+    if (pEnd && newOrigEnd <= pEnd) {
+      // Ya no cruza período — eliminar original_end_date
+      await pool.query(
+        `UPDATE payroll_novelties SET original_end_date = NULL, original_start_date = NULL WHERE id = $1`,
+        [noveltyId]
+      );
+    } else if (pEnd && newOrigEnd > pEnd) {
+      // Sigue cruzando — actualizar original_end_date y re-recortar end_date
+      const newStart = String(rows[0]?.start_date || novelty.start_date || "").slice(0, 10);
+      const newDays  = Math.max(1, Math.round((new Date(pEnd) - new Date(newStart)) / 86400000) + 1);
+      await pool.query(
+        `UPDATE payroll_novelties SET original_end_date = $2, end_date = $3, days = $4 WHERE id = $1`,
+        [noveltyId, newOrigEnd, pEnd, newDays]
+      );
+    }
+
+    // Eliminar continuaciones — se re-propagarán en el próximo calculatePayrollGroup
+    const { rows: continuations } = await pool.query(
+      `SELECT payroll_item_id FROM payroll_novelties WHERE parent_novelty_id = $1`,
+      [noveltyId]
+    );
+    if (continuations.length > 0) {
+      await pool.query(`DELETE FROM payroll_novelties WHERE parent_novelty_id = $1`, [noveltyId]);
+      for (const c of continuations) {
+        if (!c.payroll_item_id) continue;
+        await recalculatePayrollItem(c.payroll_item_id);
+        const { rows: gr } = await pool.query(
+          `SELECT group_id FROM payroll_items WHERE id = $1`, [c.payroll_item_id]
+        );
+        if (gr[0]?.group_id) await markNeedsRecalculation(gr[0].group_id);
+      }
+    }
+  }
+
+  // Sincronizar estado en Personal si la novedad es (o era) un retiro
+  if (
+    (effectiveType === "FECHA_RETIRO" || novelty.novelty_type === "FECHA_RETIRO") &&
+    novelty.employee_id
+  ) {
+    await syncEmployeeRetirement(novelty.employee_id);
+  }
 
   return rows[0];
 }
@@ -2264,10 +3097,31 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
   );
   const novelty = novRows[0];
   if (!novelty) throw new Error("Novedad no encontrada");
+
+  // ── Verificar permiso considerando el tipo de cobertura ─────────────────────
+  // Regla: la nómina cerrada NO bloquea operaciones documentales/administrativas.
+  // Coberturas EXTERNAS = proceso documental → permitido aunque esté cerrada.
+  // Coberturas INTERNAS = afectan liquidación del empleado cubridor → bloqueado.
   if (novelty.group_id) {
-    const group = await getGroup(novelty.group_id);
-    assertGroupEditable(group);
+    const isRemoveOp = payload.remove === true || payload.remove === "true"
+      || payload.cover_type === null || payload.coverType === null;
+    let isExternalOp = norm(payload.cover_type || payload.coverType || "") === "EXTERNA";
+
+    if (isRemoveOp && !isExternalOp) {
+      // Remove sin tipo explícito: verificar tipo de la cobertura existente
+      const { rows: existingCover } = await pool.query(
+        `SELECT cover_type FROM payroll_turn_covers WHERE novelty_id = $1 LIMIT 1`,
+        [noveltyId]
+      );
+      isExternalOp = existingCover[0]?.cover_type === "EXTERNA";
+    }
+
+    if (!isExternalOp) {
+      const group = await getGroup(novelty.group_id);
+      assertGroupEditable(group);
+    }
   }
+
   if (novelty.reviewed) {
     throw new Error(
       "Esta novedad ya fue revisada. Para modificarla debe quitar primero la marca de revisada."
@@ -2912,9 +3766,7 @@ async function getItemPayslip(itemId) {
       base_salary:          liveAmounts.base_salary,
       transport_allowance:  liveAmounts.transport_allowance,
       other_earnings:       liveAmounts.other_earnings,
-      other_recargos_value: liveCalc.other_recargos_value != null
-        ? n(liveCalc.other_recargos_value)
-        : Math.max(0, liveAmounts.other_earnings - n(liveCalc.internal_cover_value)),
+      other_recargos_value: Math.max(0, liveAmounts.other_earnings - n(liveCalc.internal_cover_value)),
       internal_cover_value: n(liveCalc.internal_cover_value),
       total_devengado:      liveAmounts.total_devengado,
     },
@@ -3011,7 +3863,13 @@ async function deleteNovelty(noveltyId, user = {}) {
     );
   } catch (_) { /* audit es best-effort */ }
 
-  // Eliminar novedad (cascadea: novelty_supports, payroll_turn_covers)
+  // Recoger continuaciones ANTES de borrar (CASCADE las elimina)
+  const { rows: continuations } = await pool.query(
+    `SELECT payroll_item_id FROM payroll_novelties WHERE parent_novelty_id = $1`,
+    [noveltyId]
+  );
+
+  // Eliminar novedad (cascadea: novelty_supports, payroll_turn_covers, continuaciones)
   await pool.query(`DELETE FROM payroll_novelties WHERE id = $1`, [noveltyId]);
 
   // Recalcular el item afectado
@@ -3019,6 +3877,21 @@ async function deleteNovelty(noveltyId, user = {}) {
     await recalculatePayrollItem(novelty.payroll_item_id);
   }
   if (novelty.group_id) await markNeedsRecalculation(novelty.group_id);
+
+  // Recalcular items de continuaciones que quedaron sin la novedad
+  for (const c of continuations) {
+    if (!c.payroll_item_id) continue;
+    await recalculatePayrollItem(c.payroll_item_id);
+    const { rows: gr } = await pool.query(
+      `SELECT group_id FROM payroll_items WHERE id = $1`, [c.payroll_item_id]
+    );
+    if (gr[0]?.group_id) await markNeedsRecalculation(gr[0].group_id);
+  }
+
+  // Revertir estado en Personal si era un retiro (la fila ya fue borrada)
+  if (novelty.novelty_type === "FECHA_RETIRO" && novelty.employee_id) {
+    await syncEmployeeRetirement(novelty.employee_id);
+  }
 
   return { deleted: true, payroll_item_id: novelty.payroll_item_id };
 }
@@ -3484,4 +4357,9 @@ module.exports = {
   updateExternalWorkerDocs,
   getVariablesExportData,
   getPeriodItemsForExport,
+  // Configuración salarial individual (Gestores, Auxiliares, Equipo Mínimo)
+  listEmployeeSalaryConfig,
+  createEmployeeSalaryConfig,
+  deleteEmployeeSalaryConfig,
+  clearGroupCache,
 };

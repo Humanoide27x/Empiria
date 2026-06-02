@@ -2,6 +2,7 @@ const { sendJson } = require("../../http/response");
 const { readJsonBody } = require("../../http/request");
 const { withModuleProtection, isDemoUser } = require("../../http/protection");
 const { clearCoverageSummaryCache } = require("../coverage/coverage.controller");
+const { findUserByCredentialsAsync } = require("../../data/users");
 
 const {
   getEmployees,
@@ -9,6 +10,10 @@ const {
   createEmployee,
   updateEmployee,
   updateEmployeePhoto,
+  checkEmployeeHistory,
+  deactivateEmployee,
+  hardDeleteEmployee,
+  logEmployeeDeletion,
 } = require("../../db/employees.repository");
 const {
   resolveMunicipalityRecord,
@@ -852,6 +857,108 @@ function handlePersonnel(req, res) {
         });
       }
     )(req, res);
+  }
+
+  // ==============================
+  // ELIMINAR EMPLEADO (seguro)
+  // ==============================
+  if (req.method === "DELETE") {
+    const deleteUrl = new URL(req.url, "http://localhost");
+    const deleteMatch = deleteUrl.pathname.match(/^\/personnel\/(\d+)$/);
+    if (!deleteMatch) {
+      return sendJson(res, 400, { ok: false, message: "ID de empleado requerido." });
+    }
+    const employeeId = Number(deleteMatch[1]);
+
+    return withModuleProtection(
+      "gestion_personal",
+      "update",
+      async (innerReq, innerRes, _url, user) => {
+        if ((user.role || "").toLowerCase() !== "administrador") {
+          return sendJson(innerRes, 403, { ok: false, message: "Solo el administrador puede eliminar empleados." });
+        }
+
+        let body;
+        try { body = await readJsonBody(innerReq); } catch { body = {}; }
+        const password = String(body.password || "").trim();
+        if (!password) {
+          return sendJson(innerRes, 400, { ok: false, message: "La contraseña de administrador es obligatoria." });
+        }
+
+        const ip = String(innerReq.headers["x-forwarded-for"] || innerReq.socket?.remoteAddress || "");
+        const ua = String(innerReq.headers["user-agent"] || "");
+
+        // Validar contraseña en backend
+        let validUser = null;
+        try { validUser = await findUserByCredentialsAsync(user.username, password); } catch { validUser = null; }
+
+        if (!validUser) {
+          const empForLog = await getEmployeeById(employeeId).catch(() => null);
+          await logEmployeeDeletion({
+            employee_id:       employeeId,
+            employee_name:     empForLog?.fullName || empForLog?.full_name || "",
+            document_number:   empForLog?.documentNumber || empForLog?.document_number || "",
+            action_type:       "INTENTO_FALLIDO",
+            performed_by_id:   user.id,
+            performed_by_name: user.full_name || user.name || user.username,
+            ip, user_agent: ua,
+            company_id:        user.company_id || user.companyId || null,
+            notes:             "Contraseña incorrecta al intentar eliminar empleado",
+          });
+          return sendJson(innerRes, 401, { ok: false, message: "Contraseña incorrecta." });
+        }
+
+        // Verificar si el empleado existe y tiene historial
+        const history = await checkEmployeeHistory(employeeId);
+        if (!history.exists) {
+          return sendJson(innerRes, 404, { ok: false, message: "Empleado no encontrado." });
+        }
+
+        if (history.hasHistory) {
+          // Baja lógica: inactivar
+          const updated = await deactivateEmployee(employeeId);
+          await logEmployeeDeletion({
+            employee_id:       employeeId,
+            employee_name:     updated?.full_name || history.full_name || "",
+            document_number:   updated?.document_number || history.document_number || "",
+            action_type:       "INACTIVACION",
+            performed_by_id:   user.id,
+            performed_by_name: user.full_name || user.name || user.username,
+            ip, user_agent: ua,
+            company_id:        user.company_id || user.companyId || null,
+            notes:             "Empleado con historial – inactivación lógica",
+          });
+          try { clearCoverageSummaryCache(); } catch (_) {}
+          return sendJson(innerRes, 200, {
+            ok: true,
+            action: "INACTIVACION",
+            message: "Empleado inactivado correctamente. Su historial permanecerá disponible para consulta.",
+            data: updated,
+          });
+        } else {
+          // Eliminación física
+          const deleted = await hardDeleteEmployee(employeeId);
+          await logEmployeeDeletion({
+            employee_id:       employeeId,
+            employee_name:     deleted?.full_name || history.full_name || "",
+            document_number:   deleted?.document_number || history.document_number || "",
+            action_type:       "ELIMINACION_DEFINITIVA",
+            performed_by_id:   user.id,
+            performed_by_name: user.full_name || user.name || user.username,
+            ip, user_agent: ua,
+            company_id:        user.company_id || user.companyId || null,
+            notes:             "Empleado sin historial – eliminación física definitiva",
+          });
+          try { clearCoverageSummaryCache(); } catch (_) {}
+          return sendJson(innerRes, 200, {
+            ok: true,
+            action: "ELIMINACION_DEFINITIVA",
+            message: "Empleado eliminado correctamente.",
+            data: deleted,
+          });
+        }
+      }
+    )(req, res, deleteUrl);
   }
 
   return sendJson(res, 405, {

@@ -7840,6 +7840,29 @@ body {
 .personnel-icon-btn.btn-icon-view:hover { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
 .personnel-icon-btn.btn-icon-edit:hover { background: #fef3c7; color: #92400e; border-color: #fde68a; }
 .personnel-icon-btn.btn-icon-docs:hover { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+.personnel-icon-btn.btn-icon-delete { color: #94a3b8; }
+.personnel-icon-btn.btn-icon-delete:hover { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+
+/* Badge INACTIVO en nombre de empleado */
+.badge-inactivo {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 1px 5px;
+  letter-spacing: .04em;
+  vertical-align: middle;
+  margin-left: 5px;
+  line-height: 1.4;
+}
+
+/* Fila de empleado inactivo */
+tr.personnel-row-inactive { opacity: .75; }
+tr.personnel-row-inactive td { color: #94a3b8; }
+tr.personnel-row-inactive .personnel-name-link { color: #94a3b8; }
 
 /* Tooltip global fijo — nunca recortado por overflow */
 #pnl-tooltip {

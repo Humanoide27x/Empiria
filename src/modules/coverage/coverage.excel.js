@@ -706,8 +706,17 @@ function getCoverageAssignedPersonnel({
 }
 
 async function getActiveEmployeeCoverageIndex(currentUpload) {
+  // Condición de estado: misma lógica que isActiveEmployeeStatus (exclusión, no lista blanca).
+  // Usar exclusión en lugar de lista blanca ('ACTIVO','VINCULADO') para incluir variantes
+  // válidas como 'ACTIVA', 'VINCULADA', 'EN CONTRATO' sin romper los casos existentes.
+  const activeStatusCondition =
+    `${SQL_NORMALIZE_TEXT("e.status")} NOT IN ('RETIRADO','RETIRADA','INACTIVO','INACTIVA')`;
+
   const conditions = [
-    `${SQL_NORMALIZE_TEXT("e.status")} IN ('ACTIVO', 'VINCULADO', 'EN CONTRATO')`,
+    activeStatusCondition,
+    // Requiere sede asignada (site_id) para poder cruzar el empleado con la fila correcta
+    // del Excel de cobertura. Sin site_id el empleado no puede matchear ninguna sede.
+    // Los empleados sin site_id aparecen en getCoverageExcludedEmployees() con el motivo.
     "e.site_id IS NOT NULL",
   ];
 
@@ -1051,10 +1060,83 @@ async function getCoverageRowsByUpload(uploadId, municipalityIds = null) {
   });
 }
 
+// ─── Diagnóstico: empleados excluidos de cobertura ───────────────────────────
+// Devuelve empleados que DEBERÍAN contar en cobertura pero están siendo
+// excluidos, junto con la razón exacta para que el administrador pueda
+// corregirlos desde el módulo de Personal.
+async function getCoverageExcludedEmployees({ companyId, contractId } = {}) {
+  const values = [];
+  const companyFilter = [];
+  if (companyId)  { values.push(Number(companyId));  companyFilter.push(`e.company_id  = $${values.length}`); }
+  if (contractId) { values.push(Number(contractId)); companyFilter.push(`e.contract_id = $${values.length}`); }
+  const scopeWhere = companyFilter.length ? `AND ${companyFilter.join(" AND ")}` : "";
+
+  // Empleados activos cuyo cargo cuenta para cobertura (o es OPERARIO) pero les falta site_id.
+  // Estos son los que aparecen en Personal pero NO aparecen en el conteo de cobertura.
+  const result = await pool.query(
+    `
+    SELECT
+      e.id,
+      e.full_name,
+      e.document_number,
+      e.real_position,
+      e.status,
+      e.municipality_id,
+      e.institution_id,
+      e.site_id,
+      e.modality,
+      m.name AS municipality_name,
+      i.name AS institution_name,
+      s.name AS site_name,
+      cp.counts_for_coverage
+    FROM employees e
+    LEFT JOIN municipalities    m  ON m.id = e.municipality_id
+    LEFT JOIN institutions      i  ON i.id = e.institution_id
+    LEFT JOIN educational_sites s  ON s.id = e.site_id
+    LEFT JOIN contract_positions cp
+      ON cp.contract_id = e.contract_id
+     AND (cp.company_id = e.company_id OR cp.company_id IS NULL OR e.company_id IS NULL)
+     AND cp.active = true
+     AND ${SQL_NORMALIZE_TEXT("cp.name")} = ${SQL_NORMALIZE_TEXT("e.real_position")}
+    WHERE
+      -- Solo empleados activos
+      ${SQL_NORMALIZE_TEXT("e.status")} NOT IN ('RETIRADO','RETIRADA','INACTIVO','INACTIVA')
+      ${scopeWhere}
+      -- Solo cargos que deben contar en cobertura
+      AND (
+        COALESCE(cp.counts_for_coverage, false) = true
+        OR ${SQL_NORMALIZE_TEXT("e.real_position")} = 'OPERARIO MANIPULADOR DE ALIMENTOS'
+      )
+      -- Y que estén siendo excluidos por falta de sede asignada
+      AND e.site_id IS NULL
+    ORDER BY m.name, e.full_name
+    `,
+    values
+  );
+
+  return result.rows.map((row) => ({
+    id:               row.id,
+    fullName:         row.full_name,
+    documentNumber:   row.document_number,
+    realPosition:     row.real_position,
+    status:           row.status,
+    municipalityId:   row.municipality_id,
+    municipalityName: row.municipality_name || "Sin municipio",
+    institutionId:    row.institution_id,
+    institutionName:  row.institution_name  || "",
+    siteId:           row.site_id,
+    siteName:         row.site_name         || "",
+    modality:         row.modality          || "",
+    exclusionReason:  "SIN_SEDE_ASIGNADA",
+    exclusionDetail:  "El empleado no tiene Sede (site_id) asignada. Sin sede no se puede cruzar con el Excel de cobertura. Corrija desde el módulo Personal → Editar empleado → Sede educativa.",
+  }));
+}
+
 module.exports = {
   calculateRequiredPersonnel,
   saveCoverageUpload,
   getCoverageHistory,
   getCoverageRowsByUpload,
   getCoverageAssignedPersonnel,
+  getCoverageExcludedEmployees,
 };

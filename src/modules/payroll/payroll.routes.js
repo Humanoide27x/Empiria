@@ -35,6 +35,7 @@ const {
   handleItemReviewed,
   handleDeleteNovelty,
   handleGroupExport,
+  handleMultiGroupExport,
   handleGroupClose,
   handleGroupReopen,
   handleGroupHistory,
@@ -42,10 +43,20 @@ const {
   handleExternalWorkerDocs,
   handleVariablesExport,
   handlePeriodFullExport,
+  handleEmployeeSalaryConfig,
+  handleNoveltiesTemplate,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
   const { pathname } = url;
+
+  // ── Configuración salarial individual (Gestores, Auxiliares, Equipo Mínimo) ──
+  if (/^\/payroll\/employees\/\d+\/salary-config$/.test(pathname)) {
+    await handleEmployeeSalaryConfig(req, res, url); return true;
+  }
+  if (/^\/payroll\/employee-salary-config\/\d+$/.test(pathname) && req.method === "DELETE") {
+    await handleEmployeeSalaryConfig(req, res, url); return true;
+  }
 
   // ── Nuevas rutas (033) ──────────────────────────────────────────────────────
   if (pathname === "/payroll/salary-categories") {
@@ -78,6 +89,9 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/\d+\/groups$/.test(pathname)) {
     await handleOperationalGroups(req, res, url); return true;
+  }
+  if (pathname === "/payroll/groups/multi-export") {
+    await handleMultiGroupExport(req, res, url); return true;
   }
   if (/^\/payroll\/groups\/\d+\/export$/.test(pathname)) {
     await handleGroupExport(req, res, url); return true;
@@ -127,6 +141,10 @@ async function handlePayrollRoutes(req, res, url) {
   // GET /payroll/periods/:id/results
   if (/^\/payroll\/periods\/\d+\/results$/.test(pathname)) {
     await handlePeriodResults(req, res, url); return true;
+  }
+  // GET /payroll/periods/:id/novelties-template  (plantilla mensual de novedades)
+  if (/^\/payroll\/periods\/\d+\/novelties-template$/.test(pathname)) {
+    await handleNoveltiesTemplate(req, res, url); return true;
   }
   // GET /payroll/periods/:id/full-export  (Variables + Nómina + Resumen, todos los municipios)
   if (/^\/payroll\/periods\/\d+\/full-export$/.test(pathname)) {

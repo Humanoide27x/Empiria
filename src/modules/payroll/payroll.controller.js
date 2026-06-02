@@ -24,6 +24,7 @@ const {
 } = require("./payroll.repository");
 
 const operational = require("./payroll.operational.repository");
+const { clearGroupCache } = operational;
 
 // ── Salary categories ────────────────────────────────────────────────────────
 async function handleSalaryCategories(req, res, url) {
@@ -264,6 +265,7 @@ async function handleOperationalGroupById(req, res, url) {
           institution_id: qp.get("institution_id") ? Number(qp.get("institution_id")) : null,
           site_id:        qp.get("site_id")        ? Number(qp.get("site_id"))        : null,
           modality:       qp.get("modality")       || null,
+          cargo:          qp.get("cargo")          || null,
           has_novelties:  qp.has("has_novelties")  ? qp.get("has_novelties") === "true" : null,
           reviewed:       qp.has("reviewed")       ? qp.get("reviewed") === "true"      : null,
           support_status: qp.get("support_status") || null,
@@ -1062,45 +1064,80 @@ async function handleMunicipalityStatus(req, res, url) {
       ACTIONS.REGISTER,
       async (innerReq, innerRes, innerUrl, user) => {
         const body = await readJsonBody(innerReq);
-        const municipality = String(body.municipality || "").trim();
-        if (!municipality) {
-          sendJson(innerRes, 400, { ok: false, message: "Municipio requerido" }); return;
+        // Aceptar municipalityId (número) O municipality (nombre) para compatibilidad
+        const municipalityId   = body.municipalityId != null ? Number(body.municipalityId) : null;
+        const municipalityName = String(body.municipality || "").trim();
+        if (!municipalityId && !municipalityName) {
+          sendJson(innerRes, 400, { ok: false, message: "municipalityId o municipality requerido" }); return;
         }
         const isComplete = Boolean(body.isComplete !== false);
         const userName = user.username || user.name || "";
         const userId   = user.id || null;
-        try {
-          await pool.query(
-            `INSERT INTO payroll_municipality_status
-               (period_id, municipality, is_complete,
-                completed_by_user_id, completed_by_name, completed_at,
-                unreviewed_by_user_id, unreviewed_by_name, unreviewed_at,
-                notes, updated_at)
-             VALUES ($1, $2, $3,
-               CASE WHEN $3 THEN $4 ELSE NULL END,
-               CASE WHEN $3 THEN $5 ELSE NULL END,
-               CASE WHEN $3 THEN NOW() ELSE NULL END,
-               CASE WHEN NOT $3 THEN $4 ELSE NULL END,
-               CASE WHEN NOT $3 THEN $5 ELSE NULL END,
-               CASE WHEN NOT $3 THEN NOW() ELSE NULL END,
-               $6, NOW())
-             ON CONFLICT (period_id, municipality) DO UPDATE SET
+
+        // Resolver nombre si solo se envió el ID (para auditoría y mensajes)
+        let resolvedName = municipalityName;
+        if (municipalityId && !resolvedName) {
+          const { rows: mRows } = await pool.query(
+            `SELECT name FROM municipalities WHERE id = $1`, [municipalityId]
+          );
+          resolvedName = mRows[0]?.name || "";
+        }
+
+        const upsertBase = `
                is_complete           = EXCLUDED.is_complete,
-               -- When marking complete: record completer, clear unreview info
                completed_by_user_id  = CASE WHEN EXCLUDED.is_complete THEN $4
                                             ELSE payroll_municipality_status.completed_by_user_id END,
                completed_by_name     = CASE WHEN EXCLUDED.is_complete THEN $5
                                             ELSE payroll_municipality_status.completed_by_name END,
                completed_at          = CASE WHEN EXCLUDED.is_complete THEN NOW()
                                             ELSE payroll_municipality_status.completed_at END,
-               -- When unreviewing: record who unreviewed, preserve completer info
                unreviewed_by_user_id = CASE WHEN NOT EXCLUDED.is_complete THEN $4 ELSE NULL END,
                unreviewed_by_name    = CASE WHEN NOT EXCLUDED.is_complete THEN $5 ELSE NULL END,
                unreviewed_at         = CASE WHEN NOT EXCLUDED.is_complete THEN NOW() ELSE NULL END,
                notes      = COALESCE(EXCLUDED.notes, payroll_municipality_status.notes),
-               updated_at = NOW()`,
-            [periodId, municipality, isComplete, userId, userName, body.notes || null]
-          );
+               updated_at = NOW()`;
+
+        try {
+          if (municipalityId) {
+            // Inserción por ID — usa el índice único pms_period_muni_id_uk
+            await pool.query(
+              `INSERT INTO payroll_municipality_status
+                 (period_id, municipality_id, municipality, is_complete,
+                  completed_by_user_id, completed_by_name, completed_at,
+                  unreviewed_by_user_id, unreviewed_by_name, unreviewed_at,
+                  notes, updated_at)
+               VALUES ($1, $2, $7, $3,
+                 CASE WHEN $3 THEN $4 ELSE NULL END,
+                 CASE WHEN $3 THEN $5 ELSE NULL END,
+                 CASE WHEN $3 THEN NOW() ELSE NULL END,
+                 CASE WHEN NOT $3 THEN $4 ELSE NULL END,
+                 CASE WHEN NOT $3 THEN $5 ELSE NULL END,
+                 CASE WHEN NOT $3 THEN NOW() ELSE NULL END,
+                 $6, NOW())
+               ON CONFLICT (period_id, municipality_id) WHERE municipality_id IS NOT NULL
+               DO UPDATE SET ${upsertBase}`,
+              [periodId, municipalityId, isComplete, userId, userName, body.notes || null, resolvedName]
+            );
+          } else {
+            // Fallback: inserción por nombre (filas históricas sin id)
+            await pool.query(
+              `INSERT INTO payroll_municipality_status
+                 (period_id, municipality, is_complete,
+                  completed_by_user_id, completed_by_name, completed_at,
+                  unreviewed_by_user_id, unreviewed_by_name, unreviewed_at,
+                  notes, updated_at)
+               VALUES ($1, $2, $3,
+                 CASE WHEN $3 THEN $4 ELSE NULL END,
+                 CASE WHEN $3 THEN $5 ELSE NULL END,
+                 CASE WHEN $3 THEN NOW() ELSE NULL END,
+                 CASE WHEN NOT $3 THEN $4 ELSE NULL END,
+                 CASE WHEN NOT $3 THEN $5 ELSE NULL END,
+                 CASE WHEN NOT $3 THEN NOW() ELSE NULL END,
+                 $6, NOW())
+               ON CONFLICT (period_id, municipality) DO UPDATE SET ${upsertBase}`,
+              [periodId, resolvedName, isComplete, userId, userName, body.notes || null]
+            );
+          }
           sendJson(innerRes, 200, { ok: true, message: isComplete ? "Municipio marcado como revisado" : "Revisión removida — municipio reabierto" });
         } catch (err) {
           sendJson(innerRes, 500, { ok: false, message: err.message });
@@ -1245,38 +1282,41 @@ function buildGroupXlsx(options) {
   // ── Hoja 1: Nómina ──────────────────────────────────────────────────────
   const nomHdr = [
     "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
-    "Modalidad", "Jornada", "Categoría", "Días",
+    "Modalidad", "Jornada", "Categoría", "Días lab.", "Días SS",
     "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
     "Salud (4%)", "Pensión (4%)", "Total deducciones",
     "Novedades", "Desc. salario", "Desc. transporte",
-    "Neto a pagar", "Revisada",
+    "Neto a pagar", "Motivo retiro", "Req. reemplazo", "Reemplazo", "Revisada",
   ];
-  const nomMonCols = [10,11,12,13,14,15,16,17,19,20,21];
+  const nomMonCols = [11,12,13,14,15,16,17,18,20,21,22];
 
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
-    const otros = calc.other_recargos_value != null
-      ? n(calc.other_recargos_value)
-      : Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+    const otros = Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+    const motivoRetiro = { disminucion_cupos: "Disminución de cupos", renuncia: "Renuncia", terminacion_contrato: "Terminación de contrato" }[item.retirement_reason] || "";
+    const reqReemplazo = item.requires_replacement === true ? "Sí" : item.requires_replacement === false ? "No" : "";
+    const reemplazo = item.replacement_employee_name || (item.replacement_found === false ? "No encontrado" : "");
     return [
       s(item.document_number), s(item.employee_name), s(item.operational_position),
       s(item.municipality_name), s(item.institution_name), s(item.site_name),
-      s(item.modality), s(item.work_time_type), s(item.salary_category), n(item.worked_days),
+      s(item.modality), s(item.work_time_type), s(item.salary_category),
+      n(item.display_worked_days ?? item.worked_days), n(item.ss_days != null ? item.ss_days : 30),
       n(item.base_salary), n(item.transport_allowance), otros, n(calc.internal_cover_value), n(item.total_devengado),
       n(calc.deduccion_salud), n(calc.deduccion_pension), n(item.total_deducciones),
       n(item.novelty_count), n(calc.salary_discount), n(calc.transport_discount),
-      n(item.neto_pagar), item.reviewed ? "Sí" : "No",
+      n(item.neto_pagar), motivoRetiro, reqReemplazo, reemplazo, item.reviewed ? "Sí" : "No",
     ];
   });
 
   // Totals
   function otrosItem(i) {
     const c = i.calculation || {};
-    return c.other_recargos_value != null ? n(c.other_recargos_value) : Math.max(0, n(i.other_earnings) - n(c.internal_cover_value));
+    return Math.max(0, n(i.other_earnings) - n(c.internal_cover_value));
   }
   const nomTotal = [
     "TOTAL", "", "", "", "", "", "", "", "",
-    items.reduce((a, i) => a + n(i.worked_days), 0),
+    items.reduce((a, i) => a + n(i.display_worked_days ?? i.worked_days), 0),
+    items.reduce((a, i) => a + n(i.ss_days != null ? i.ss_days : 30), 0),
     items.reduce((a, i) => a + n(i.base_salary), 0),
     items.reduce((a, i) => a + n(i.transport_allowance), 0),
     items.reduce((a, i) => a + otrosItem(i), 0),
@@ -1289,11 +1329,11 @@ function buildGroupXlsx(options) {
     items.reduce((a, i) => a + n((i.calculation||{}).salary_discount), 0),
     items.reduce((a, i) => a + n((i.calculation||{}).transport_discount), 0),
     totals.neto,
-    `${totals.items_reviewed}/${totals.employees} rev.`,
+    "", "", "", `${totals.items_reviewed}/${totals.employees} rev.`,
   ];
 
   const wsNom = makeSheet(nomHdr, [...nomRows, nomTotal], nomMonCols,
-    [14,32,22,20,28,20,10,10,10,5,14,14,12,18,15,12,12,15,7,13,13,14,8]);
+    [14,32,22,20,28,20,10,10,10,5,7,14,14,12,18,15,12,12,15,7,13,13,14,18,10,20,8]);
 
   // Style the totals row
   const nomTotR = nomRows.length + 1;
@@ -1303,116 +1343,213 @@ function buildGroupXlsx(options) {
   }
 
   // ── Hoja 2: Novedades ───────────────────────────────────────────────────
-  const SALARY_AFFECTING_XL   = new Set(["PERMISOS_NO_REMUNERADOS","SUSPENSION","FECHA_INGRESO","FECHA_RETIRO"]);
+  const SALARY_AFFECTING_XL    = new Set(["PERMISOS_NO_REMUNERADOS","SUSPENSION","FECHA_INGRESO","FECHA_RETIRO"]);
   const TRANSPORT_AFFECTING_XL = new Set(["DIAS_NO_CLASE","CITA_MEDICA","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","CALAMIDAD_FAMILIAR","LUTO","CITACIONES_OFICIALES","LICENCIA_MATERNIDAD_PATERNIDAD"]);
 
-  // Índice de cálculo por item para obtener tarifas diarias reales
+  // Índice de cálculo e información de ubicación por item
   const itemCalcMap = new Map(items.map((i) => [String(i.id), i.calculation || {}]));
+  const itemInfoMap = new Map(items.map((i) => [String(i.id), {
+    municipality_name:    i.municipality_name    || "",
+    institution_name:     i.institution_name     || "",
+    site_name:            i.site_name            || "",
+    operational_position: i.operational_position || "",
+  }]));
 
   const novHdr = [
-    "ID novedad", "Empleado", "Documento", "Tipo de novedad", "Impacto",
+    "Municipio", "Institución", "Sede", "Empleado", "Documento", "Cargo",
+    "Tipo de novedad", "Impacto",
     "Fecha inicio", "Fecha fin", "Días",
     "Desc. salario", "Desc. transporte",
     "Soporte", "Estado", "Revisada",
   ];
-  // Deduplicar por pn.id como segunda defensa (la consulta ya usa DISTINCT ON)
   const uniqueNovelties = [...new Map(novelties.map((nov) => [nov.id, nov])).values()];
   const novRows2 = uniqueNovelties
     .filter((nov) => nov.novelty_type !== "CAMBIO_OPERATIVO_COBERTURA")
+    // Ordenar: primero por nombre de colaborador (A→Z), luego por fecha de inicio (cronológico).
+    // Mantiene una fila por novedad — solo mejora el orden para facilitar revisión y auditoría.
+    .sort((a, b) => {
+      const nameA = String(a.employee_name || "").toUpperCase();
+      const nameB = String(b.employee_name || "").toUpperCase();
+      if (nameA < nameB) return -1;
+      if (nameA > nameB) return  1;
+      const dateA = String(a.start_date || a.novelty_date || "");
+      const dateB = String(b.start_date || b.novelty_date || "");
+      return dateA < dateB ? -1 : dateA > dateB ? 1 : 0;
+    })
     .map((nov) => {
-      const code  = s(nov.novelty_type);
-      const calc  = itemCalcMap.get(String(nov.payroll_item_id)) || {};
-      const days  = Math.min(n(nov.days), n(calc.worked_days) || 30);
-      const isSal   = SALARY_AFFECTING_XL.has(code) && code !== "FECHA_INGRESO" && code !== "FECHA_RETIRO";
-      const isTrans = TRANSPORT_AFFECTING_XL.has(code);
+      const code   = s(nov.novelty_type);
+      const calc   = itemCalcMap.get(String(nov.payroll_item_id)) || {};
+      const info   = itemInfoMap.get(String(nov.payroll_item_id)) || {};
+      const days   = Math.min(n(nov.days), n(calc.worked_days) || 30);
+      const isSal  = SALARY_AFFECTING_XL.has(code) && code !== "FECHA_INGRESO" && code !== "FECHA_RETIRO";
+      const isTrans= TRANSPORT_AFFECTING_XL.has(code);
       const descSal   = isSal   ? Math.round(n(calc.daily_salary    || 0) * days) : 0;
       const descTrans = isTrans ? Math.round(n(calc.daily_transport || 0) * days) : 0;
-      const impact = isSal ? "Descuento salario" : isTrans ? "Descuento transporte" : "Sin impacto";
+      const impact = isSal ? "Desc. salario" : isTrans ? "Desc. transporte" : "Sin impacto";
       return [
-        n(nov.id),
+        s(info.municipality_name),
+        s(info.institution_name),
+        s(info.site_name),
         s(nov.employee_name), s(nov.document_number),
+        s(info.operational_position),
         s(nov.novelty_name || nov.novelty_type), impact,
         s(nov.start_date ? s(nov.start_date).slice(0,10) : ""),
         s(nov.end_date   ? s(nov.end_date).slice(0,10)   : ""),
-        n(nov.days),
-        descSal,
-        descTrans,
+        n(nov.period_days ?? nov.days),
+        descSal, descTrans,
         s(nov.support_status || "sin soporte"),
         s(nov.status || "PENDIENTE"),
         nov.reviewed ? "Sí" : "No",
       ];
     });
-  const wsNov = makeSheet(novHdr, novRows2, [8,9],
-    [10,28,14,26,20,12,12,5,13,13,14,12,8]);
+  const wsNov = makeSheet(novHdr, novRows2, [11,12],
+    [20,28,20,28,14,22,26,16,12,12,5,13,13,14,12,8]);
 
-  const coverHdr = ["Empleado reemplazante", "Documento", "Concepto", "Referencia", "Días", "Valor día", "Valor"];
-  const coverRows2 = (options.turns || [])
-    .filter((t) => t.cover_type === "INTERNA" && t.internal_employee_id)
-    .map((t) => [
-      s(t.internal_employee_name),
-      s(t.internal_document),
-      "Reemplazo incapacidad",
-      s(t.origin_employee_name),
-      n(t.covered_days),
-      n(t.calculated_day_value),
-      n(t.total_value),
-    ]);
-  const wsCover = makeSheet(coverHdr, coverRows2, [5,6], [30,14,24,30,8,14,14]);
+  // ── Hoja 3: Resumen en matriz dinámica por municipio ─────────────────────
+  // Las columnas se generan automáticamente según los municipios seleccionados.
 
-  // ── Hoja 3: Resumen ─────────────────────────────────────────────────────
-  const resHdr  = ["Concepto", "Valor"];
-  const coverageRows = coverage
-    ? [
-        ["", ""],
-        ["── COBERTURA ──",        ""],
-        ["TC requerido",           coverage.tc_requerido],
-        ["TC contratado",          coverage.tc_contratado],
-        ["Diferencia TC",          coverage.diferencia_tc],
-        ["MT requerido",           coverage.mt_requerido],
-        ["MT contratado",          coverage.mt_contratado],
-        ["Diferencia MT",          coverage.diferencia_mt],
-        ["Estado cobertura",       coverage.estado_cobertura],
-      ]
-    : [["Cobertura", "Sin datos de cobertura para este período/municipio"]];
-  const resRows = [
-    ["Municipio",               s(group.municipality_name)],
-    ["Período",                 s(group.period_id)],
-    ["Cargo",                   s(group.operational_position)],
-    ["Total empleados",         totals.employees],
-    ["Items revisados",         totals.items_reviewed],
-    ["Items pendientes",        totals.items_pending],
-    ["Total novedades",         totals.novelties],
-    ["Novedades revisadas",     totals.reviewed],
-    ["Soportes pendientes",     totals.pending_supports],
-    ["Total devengado",         totals.total_devengado],
-    ["Total deducciones",       totals.total_deducciones],
-    ["Neto total",              totals.neto],
-    ...coverageRows,
-  ];
-  const wsRes = makeSheet(resHdr, resRows, [1], [30, 22]);
-
-  // ── Hoja 4: Soportes ────────────────────────────────────────────────────
-  const supHdr  = [
-    "ID novedad", "ID soporte", "Empleado", "Documento", "Tipo novedad",
-    "Estado soporte", "Municipio", "Fecha novedad", "Tipo soporte", "Archivo", "Observación",
-  ];
-  const supRows = supports.map((sup) => [
-    s(sup.novelty_id),
-    s(sup.support_id),
-    s(sup.employee_name),
-    s(sup.document_number),
-    s(sup.novelty_type),
-    s(sup.support_status || sup.status),
-    s(sup.municipality_name),
-    sup.novelty_date ? s(sup.novelty_date).slice(0,10) : "",
-    s(sup.support_type),
-    s(sup.file_name),
-    s(sup.observations),
-  ]);
-  const wsSup = makeSheet(supHdr, supRows, [], [12,12,28,14,22,16,20,12,18,24,36]);
-
-  // ── Hoja 5: Turnos ──────────────────────────────────────────────────────────
   const turns = Array.isArray(options.turns) ? options.turns : [];
+
+  // Totales globales (para la columna TOTAL GENERAL)
+  const totalNoveltyDeductions = items.reduce((sum, item) => {
+    const calc = item.calculation || {};
+    let deduction;
+    if (calc.cambio_operativo) {
+      deduction = n(calc.salary_discount) + n(calc.transport_discount);
+    } else if (n(calc.full_base_salary) > 0) {
+      const fullComp     = n(calc.full_base_salary) + n(calc.full_transport) + n(calc.full_other);
+      const effectiveComp = n(item.base_salary) + n(item.transport_allowance) +
+        Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value));
+      deduction = Math.max(0, fullComp - effectiveComp);
+    } else {
+      deduction = n(calc.salary_discount) + n(calc.transport_discount) + n(calc.other_discount);
+    }
+    return sum + deduction;
+  }, 0);
+  const totalNoveltyAdditions = items.reduce((sum, item) => sum + n((item.calculation || {}).internal_cover_value), 0);
+  const totalExternalTurns    = turns.filter((t) => t.cover_type === "EXTERNA").reduce((sum, t) => sum + n(t.total_value), 0);
+
+  // Municipios para las columnas: usar _municipalities si existe, si no crear uno desde los totales
+  const munis = Array.isArray(group._municipalities) && group._municipalities.length > 0
+    ? group._municipalities
+    : [{
+        name:               s(group.municipality_name) || "Municipio",
+        period_id:          s(group.period_id),
+        position:           s(group.operational_position),
+        employees:          n(totals.employees),
+        items_reviewed:     n(totals.items_reviewed),
+        items_pending:      n(totals.items_pending),
+        novelties:          n(totals.novelties),
+        reviewed:           n(totals.reviewed),
+        pending_supports:   n(totals.pending_supports),
+        total_devengado:    n(totals.total_devengado),
+        total_deducciones:  n(totals.total_deducciones),
+        novelty_deductions: totalNoveltyDeductions,
+        novelty_additions:  totalNoveltyAdditions,
+        external_turns:     totalExternalTurns,
+        neto:               n(totals.neto),
+      }];
+
+  const sumCol = (key) => munis.reduce((acc, m) => acc + n(m[key] || 0), 0);
+  const TOTAL = "TOTAL GENERAL";
+
+  // Estilos para la hoja Resumen
+  const resMatHdrStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { fgColor: { rgb: "1E293B" }, type: "pattern", patternType: "solid" }, alignment: { horizontal: "center", vertical: "center" } };
+  const resSectStyle   = { font: { bold: true, color: { rgb: "334155" }, sz: 10 },  fill: { fgColor: { rgb: "F1F5F9" }, type: "pattern", patternType: "solid" } };
+  const resTotStyle    = { font: { bold: true }, fill: { fgColor: { rgb: "DCFCE7" }, type: "pattern", patternType: "solid" } };
+
+  // Construir encabezado y filas
+  const resHdr  = ["Concepto", ...munis.map((m) => m.name.toUpperCase()), TOTAL];
+  const resRows = [
+    // ── Identificación ──
+    ["Período",   ...munis.map((m) => s(m.period_id  || group.period_id)),          s(group.period_id)],
+    ["Cargo",     ...munis.map((m) => s(m.position   || group.operational_position)), s(group.operational_position)],
+    ["", ...munis.map(() => ""), ""],
+    // ── Empleados ──
+    ["── EMPLEADOS ──", ...munis.map(() => ""), ""],
+    ["Total empleados",  ...munis.map((m) => n(m.employees)),      sumCol("employees")],
+    ["Items revisados",  ...munis.map((m) => n(m.items_reviewed)), sumCol("items_reviewed")],
+    ["Items pendientes", ...munis.map((m) => n(m.items_pending)),  sumCol("items_pending")],
+    ["", ...munis.map(() => ""), ""],
+    // ── Novedades ──
+    ["── NOVEDADES ──", ...munis.map(() => ""), ""],
+    ["Total novedades",     ...munis.map((m) => n(m.novelties)),       sumCol("novelties")],
+    ["Novedades revisadas", ...munis.map((m) => n(m.reviewed)),        sumCol("reviewed")],
+    ["Soportes pendientes", ...munis.map((m) => n(m.pending_supports)),sumCol("pending_supports")],
+    ["", ...munis.map(() => ""), ""],
+    // ── Valores ──
+    ["── VALORES ──", ...munis.map(() => ""), ""],
+    ["Total devengado",         ...munis.map((m) => n(m.total_devengado)),    sumCol("total_devengado")],
+    ["Total deducciones",       ...munis.map((m) => n(m.total_deducciones)),  sumCol("total_deducciones")],
+    ["Desc. por novedades",     ...munis.map((m) => n(m.novelty_deductions)), sumCol("novelty_deductions")],
+    ["Adic. por novedades",     ...munis.map((m) => n(m.novelty_additions)),  sumCol("novelty_additions")],
+    ["Turnos externos",         ...munis.map((m) => n(m.external_turns)),     sumCol("external_turns")],
+    ["Neto total",              ...munis.map((m) => n(m.neto)),               sumCol("neto")],
+  ];
+
+  // Cobertura: municipio único usa el parámetro coverage; multi-municipio usa campos por muni
+  const hasMuniCov = munis.some((m) => m.coverage_tc_req != null);
+  if (coverage && munis.length === 1) {
+    resRows.push(["", ...munis.map(() => ""), ""]);
+    resRows.push(["── COBERTURA ──", ...munis.map(() => ""), ""]);
+    resRows.push(["TC requerido",       n(coverage.tc_requerido),      n(coverage.tc_requerido)]);
+    resRows.push(["TC contratado",      n(coverage.tc_contratado),     n(coverage.tc_contratado)]);
+    resRows.push(["Diferencia TC",      n(coverage.diferencia_tc),     n(coverage.diferencia_tc)]);
+    resRows.push(["MT requerido",       n(coverage.mt_requerido),      n(coverage.mt_requerido)]);
+    resRows.push(["MT contratado",      n(coverage.mt_contratado),     n(coverage.mt_contratado)]);
+    resRows.push(["Diferencia MT",      n(coverage.diferencia_mt),     n(coverage.diferencia_mt)]);
+    resRows.push(["Cumple",             s(coverage.estado_cobertura),  s(coverage.estado_cobertura)]);
+  } else if (hasMuniCov) {
+    const sumTcReq = munis.reduce((acc, m) => acc + n(m.coverage_tc_req), 0);
+    const sumTcCon = munis.reduce((acc, m) => acc + n(m.coverage_tc_con), 0);
+    const sumMtReq = munis.reduce((acc, m) => acc + n(m.coverage_mt_req), 0);
+    const sumMtCon = munis.reduce((acc, m) => acc + n(m.coverage_mt_con), 0);
+    resRows.push(["", ...munis.map(() => ""), ""]);
+    resRows.push(["── COBERTURA ──", ...munis.map(() => ""), ""]);
+    resRows.push(["TC Req vs Contratada",
+      ...munis.map((m) => `${n(m.coverage_tc_req)} / ${n(m.coverage_tc_con)}`),
+      `${sumTcReq} / ${sumTcCon}`]);
+    resRows.push(["MT Req vs Contratada",
+      ...munis.map((m) => `${n(m.coverage_mt_req)} / ${n(m.coverage_mt_con)}`),
+      `${sumMtReq} / ${sumMtCon}`]);
+    resRows.push(["Cumple",
+      ...munis.map((m) => m.coverage_estado || ""),
+      sumTcCon >= sumTcReq && sumMtCon >= sumMtReq ? "Sí" : "No"]);
+  }
+
+  // Columnas monetarias: todas excepto la primera ("Concepto")
+  const moneyColsRes = Array.from({ length: munis.length + 1 }, (_, i) => i + 1);
+  // Filas de sección (texto descriptivo): no aplicar formato monetario
+  const sectionRows = new Set([2, 7, 11, 15]); // 0-indexed rows del array resRows (las de "──")
+
+  const wsRes = (() => {
+    const ws = XLSX.utils.aoa_to_sheet([resHdr, ...resRows]);
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    // Estilo encabezado
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[addr]) ws[addr].s = { ...resMatHdrStyle };
+    }
+    // Formato dinámico por fila
+    resRows.forEach((row, ri) => {
+      const isSect = String(row[0]).startsWith("──");
+      const isTot  = String(row[0]) === "Neto total";
+      for (let c = 0; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r: ri + 1, c });
+        if (!ws[addr]) continue;
+        if (isSect) { ws[addr].s = { ...resSectStyle }; continue; }
+        if (isTot)  { ws[addr].s = { ...resTotStyle  }; }
+        if (c > 0 && !isSect && typeof ws[addr].v === "number") ws[addr].z = MONEY;
+      }
+    });
+    ws["!freeze"]    = { xSplit: 1, ySplit: 1 };
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: range.e.c } }) };
+    // Anchos de columna: 30 para Concepto, 22 para cada municipio, 22 para Total
+    ws["!cols"] = [{ wch: 30 }, ...munis.map(() => ({ wch: 22 })), { wch: 22 }];
+    return ws;
+  })();
+
+  // ── Hoja 4: Turnos ──────────────────────────────────────────────────────────
   const turnHdr = [
     "Período", "Fecha turno", "Empleado con novedad", "Documento novedad",
     "Tipo novedad", "Cubierto por", "Tipo cobertura", "Documento cobertura",
@@ -1450,10 +1587,8 @@ function buildGroupXlsx(options) {
   XLSX.utils.book_append_sheet(wb, wsVars, "Variables Nómina");
   XLSX.utils.book_append_sheet(wb, wsNom,  "Nómina");
   XLSX.utils.book_append_sheet(wb, wsNov,  "Novedades");
-  XLSX.utils.book_append_sheet(wb, wsCover,"Reemplazos");
   XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
   XLSX.utils.book_append_sheet(wb, wsRes,  "Resumen");
-  XLSX.utils.book_append_sheet(wb, wsSup,  "Soportes");
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
@@ -1495,6 +1630,202 @@ async function handleGroupExport(req, res, url) {
   )(req, res, url);
 }
 
+// ── Exportación multi-municipio: varios grupos en un solo Excel ──────────────
+// GET /payroll/groups/multi-export?groupIds=1,2,3
+async function handleMultiGroupExport(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+
+  const groupIdsRaw = url.searchParams.get("groupIds") || "";
+  const groupIds = groupIdsRaw.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (!groupIds.length) {
+    sendJson(res, 400, { ok: false, message: "Parámetro groupIds requerido (ej. groupIds=1,2,3)" }); return;
+  }
+
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.EXPORT,
+    async (innerReq, innerRes) => {
+      try {
+        console.log("[EXPORT] Grupos seleccionados:", groupIds);
+        console.log("[MEMORY] inicio:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+        // Cargar detalle de cada grupo en secuencia para identificar cuál falla
+        const valid = [];
+        for (const gid of groupIds) {
+          console.log("[EXPORT] Iniciando grupo", gid);
+          try {
+            const grp = await operational.getGroup(gid);
+            if (!grp) { console.warn("[EXPORT] Grupo no encontrado:", gid); continue; }
+
+            console.log("[EXPORT] Municipio:", grp.municipality_name, "| período:", grp.period_id);
+            console.log("[MEMORY] antes de cargar grupo", gid, ":", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+            const [data, turnsRes, coverageData] = await Promise.all([
+              operational.getPayrollGroupDetail(grp.period_id, gid),
+              operational.listGroupTurns(gid).catch(() => ({ turns: [] })),
+              operational.getCoverageStatsForGroup(grp.contract_id, grp.municipality_id).catch(() => null),
+            ]);
+
+            const payrollRows  = (data.items     || []).length;
+            const noveltyRows  = (data.novelties || []).length;
+            const supportRows  = (data.supports  || []).length;
+            const turnRows     = (turnsRes.turns  || []).length;
+
+            console.log("[EXPORT] Volumen grupo", gid, "(", grp.municipality_name, "):", {
+              payrollRows, noveltyRows, supportRows, turnRows,
+            });
+
+            if (payrollRows  > 5000) console.warn("[EXPORT WARNING] payrollRows > 5000 en grupo", gid, ":", payrollRows);
+            if (noveltyRows  > 5000) console.warn("[EXPORT WARNING] noveltyRows > 5000 en grupo", gid, ":", noveltyRows);
+            if (supportRows  > 5000) console.warn("[EXPORT WARNING] supportRows > 5000 en grupo", gid, ":", supportRows);
+            if (turnRows     > 5000) console.warn("[EXPORT WARNING] turnRows    > 5000 en grupo", gid, ":", turnRows);
+
+            console.log("[MEMORY] después de cargar grupo", gid, ":", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+            valid.push({ grp, data, turns: turnsRes.turns || [], coverageData });
+          } catch (err) {
+            console.error("[EXPORT GRUPO ERROR] groupId =", gid);
+            console.error(err);
+            throw new Error(`Fallo al procesar grupo ${gid}: ${err.message}`);
+          }
+        }
+
+        if (!valid.length) {
+          sendJson(innerRes, 404, { ok: false, message: "Ningún grupo encontrado" }); return;
+        }
+
+        // Combinar items, novedades, turnos y soportes
+        const allItems    = valid.flatMap((v) => v.data.items    || []);
+        const allNovs     = valid.flatMap((v) => v.data.novelties || []);
+        const allCovers   = valid.flatMap((v) => v.data.covers   || []);
+        const allTurns    = valid.flatMap((v) => v.turns);
+
+        console.log("[EXPORT] Totales combinados:", {
+          items:    allItems.length,
+          novs:     allNovs.length,
+          covers:   allCovers.length,
+          turns:    allTurns.length,
+        });
+        console.log("[MEMORY] antes de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+        const n = (v) => Number(v || 0);
+        const combinedTotals = allItems.reduce(
+          (acc, item) => {
+            acc.employees++;
+            acc.total_devengado   += n(item.total_devengado);
+            acc.total_deducciones += n(item.total_deducciones);
+            acc.neto              += n(item.neto_pagar);
+            acc.novelties         += n(item.novelty_count);
+            acc.reviewed          += n(item.reviewed_count);
+            acc.pending_supports  += n(item.pending_supports);
+            acc.items_reviewed    += item.reviewed ? 1 : 0;
+            acc.items_pending     += item.reviewed ? 0 : 1;
+            return acc;
+          },
+          { employees: 0, total_devengado: 0, total_deducciones: 0, neto: 0,
+            novelties: 0, reviewed: 0, pending_supports: 0, items_reviewed: 0, items_pending: 0 }
+        );
+
+        // Construir un "grupo sintético" con los datos combinados para buildGroupXlsx
+        const firstGrp = valid[0].grp;
+        const muniNames = valid.map((v) => v.grp.municipality_name || "").filter(Boolean);
+
+        // Estadísticas completas por municipio para la hoja Resumen en matriz
+        const munStatsPerGroup = valid.map((v) => {
+          const gItems = v.data.items    || [];
+          const gTurns = v.turns         || [];
+          const gTotals = v.data.totals  || {};
+          const totalNoveltyDed = gItems.reduce((sum, item) => {
+            const calc = item.calculation || {};
+            let d;
+            if (calc.cambio_operativo) {
+              d = n(calc.salary_discount) + n(calc.transport_discount);
+            } else if (n(calc.full_base_salary) > 0) {
+              d = Math.max(0,
+                (n(calc.full_base_salary) + n(calc.full_transport) + n(calc.full_other))
+                - (n(item.base_salary) + n(item.transport_allowance) + Math.max(0, n(item.other_earnings) - n(calc.internal_cover_value)))
+              );
+            } else {
+              d = n(calc.salary_discount) + n(calc.transport_discount) + n(calc.other_discount);
+            }
+            return sum + d;
+          }, 0);
+          const totalNoveltyAdd = gItems.reduce((sum, item) => sum + n((item.calculation || {}).internal_cover_value), 0);
+          const totalExtTurns   = gTurns.filter((t) => t.cover_type === "EXTERNA").reduce((sum, t) => sum + n(t.total_value), 0);
+          const cov = v.coverageData;
+          return {
+            name:               v.grp.municipality_name || "",
+            period_id:          v.grp.period_id,
+            position:           v.grp.operational_position,
+            employees:          Number(gTotals.employees        || gItems.length),
+            items_reviewed:     Number(gTotals.items_reviewed   || 0),
+            items_pending:      Number(gTotals.items_pending    || 0),
+            novelties:          Number(gTotals.novelties        || 0),
+            reviewed:           Number(gTotals.reviewed         || 0),
+            pending_supports:   Number(gTotals.pending_supports || 0),
+            total_devengado:    Number(gTotals.total_devengado  || 0),
+            total_deducciones:  Number(gTotals.total_deducciones|| 0),
+            novelty_deductions: totalNoveltyDed,
+            novelty_additions:  totalNoveltyAdd,
+            external_turns:     totalExtTurns,
+            neto:               Number(gTotals.neto             || 0),
+            coverage_tc_req:    cov ? Number(cov.tc_requerido   || 0) : null,
+            coverage_tc_con:    cov ? Number(cov.tc_contratado  || 0) : null,
+            coverage_mt_req:    cov ? Number(cov.mt_requerido   || 0) : null,
+            coverage_mt_con:    cov ? Number(cov.mt_contratado  || 0) : null,
+            coverage_estado:    cov ? s(cov.estado_cobertura)         : "",
+          };
+        });
+
+        const syntheticGroup = {
+          ...firstGrp,
+          municipality_name: muniNames.join(", ") || "Múltiples municipios",
+          _municipalities:   munStatsPerGroup,
+        };
+
+        let buf;
+        try {
+          buf = buildGroupXlsx({
+            group:    syntheticGroup,
+            items:    allItems,
+            novelties: allNovs,
+            supports: [],
+            covers:   allCovers,
+            turns:    allTurns,
+            totals:   combinedTotals,
+            coverage: null,
+          });
+        } catch (xlsxErr) {
+          console.error("[EXPORT XLSX ERROR] Fallo al generar el workbook multi-grupo");
+          console.error("[EXPORT XLSX ERROR] Municipios involucrados:", muniNames);
+          console.error("[EXPORT XLSX ERROR] Volumen: items=%d novs=%d covers=%d turns=%d",
+            allItems.length, allNovs.length, allCovers.length, allTurns.length);
+          console.error(xlsxErr);
+          throw new Error(`Error generando Excel (${muniNames.join(", ")}): ${xlsxErr.message}`);
+        }
+
+        console.log("[MEMORY] después de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+        console.log("[EXPORT] Excel generado, tamaño:", Math.round(buf.length / 1024), "KB");
+
+        const periodLabel = firstGrp.period_id || "periodo";
+        const munSafe = muniNames.slice(0, 3).join("-").replace(/[^a-z0-9\-_]/gi, "-");
+        const filename = `nomina-${munSafe}-${periodLabel}.xlsx`;
+
+        innerRes.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": buf.length,
+        });
+        innerRes.end(buf);
+      } catch (err) {
+        console.error("[EXPORT MULTI ERROR] Error general en handleMultiGroupExport:", err.message);
+        console.error(err.stack);
+        sendJson(innerRes, 400, { ok: false, message: err.message, stack: process.env.NODE_ENV !== "production" ? err.stack : undefined });
+      }
+    }
+  )(req, res, url);
+}
+
 // ── Turnos cubiertos de un grupo ─────────────────────────────────────────────
 async function handleGroupTurns(req, res, url) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
@@ -1531,6 +1862,7 @@ async function handleGroupClose(req, res, url) {
     async (innerReq, innerRes, _url, user) => {
       try {
         const group = await operational.closePayrollGroup(groupId, user);
+        clearGroupCache();
         sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina cerrada correctamente." });
       } catch (err) {
         sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
@@ -1562,12 +1894,86 @@ async function handleGroupReopen(req, res, url) {
           sendJson(innerRes, 400, { ok: false, message: "Debe indicar el motivo de reapertura." }); return;
         }
         const group = await operational.reopenPayrollGroup(groupId, user, reason, body.observations || "");
+        clearGroupCache();
         sendJson(innerRes, 200, { ok: true, data: group, message: "Nómina reabierta." });
       } catch (err) {
         sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
+}
+
+// ── Configuración salarial individual por empleado (Gestores, Auxiliares…) ───
+// GET    /payroll/employees/:id/salary-config    → historial completo
+// POST   /payroll/employees/:id/salary-config    → nueva entrada
+// DELETE /payroll/employee-salary-config/:id     → eliminar entrada
+async function handleEmployeeSalaryConfig(req, res, url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+
+  // DELETE /payroll/employee-salary-config/:configId
+  if (req.method === "DELETE" && parts[1] === "employee-salary-config") {
+    const configId = Number(parts[2]);
+    if (!Number.isFinite(configId) || configId <= 0) {
+      sendJson(res, 400, { ok: false, message: "ID de configuración inválido" }); return;
+    }
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.UPDATE,
+      async (innerReq, innerRes, _url, user) => {
+        if (!isAdminOrTH(user)) {
+          sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede eliminar configuraciones salariales." }); return;
+        }
+        try {
+          await operational.deleteEmployeeSalaryConfig(configId);
+          sendJson(innerRes, 200, { ok: true, message: "Configuración eliminada" });
+        } catch (err) {
+          sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+
+  // GET / POST /payroll/employees/:employeeId/salary-config
+  const employeeId = Number(parts[2]);
+  if (!Number.isFinite(employeeId) || employeeId <= 0) {
+    sendJson(res, 400, { ok: false, message: "ID de empleado inválido" }); return;
+  }
+
+  if (req.method === "GET") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.VIEW,
+      async (innerReq, innerRes) => {
+        try {
+          const data = await operational.listEmployeeSalaryConfig(employeeId);
+          sendJson(innerRes, 200, { ok: true, data });
+        } catch (err) {
+          sendJson(innerRes, 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+
+  if (req.method === "POST") {
+    return withModuleProtection(
+      MODULES.PAYROLL,
+      ACTIONS.UPDATE,
+      async (innerReq, innerRes, _url, user) => {
+        if (!isAdminOrTH(user)) {
+          sendJson(innerRes, 403, { ok: false, message: "Solo Administrador o Talento Humano puede configurar salarios." }); return;
+        }
+        try {
+          const body = await readJsonBody(innerReq);
+          const data = await operational.createEmployeeSalaryConfig(employeeId, body, user.id);
+          sendJson(innerRes, 201, { ok: true, data, message: "Configuración salarial guardada" });
+        } catch (err) {
+          sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+        }
+      }
+    )(req, res, url);
+  }
+
+  sendMethodNotAllowed(res);
 }
 
 // ── Historial de grupo de nómina ─────────────────────────────────────────────
@@ -1609,10 +2015,12 @@ const VARIABLES_HEADERS = [
   "Incapacidad Médica",
   "Incapacidad por Accidente Laboral",
   "Calamidad Familiar",
+  "Luto",
   "Citaciones (Fiscalía, Procuraduría, Unidad de Víctimas, Colegio, Comisaría, Juzgado, Personería, EPS, ARL, etc.)",
   "Licencia de maternidad/paternidad",
   "Suspensión",
   "Permisos NO remunerados",
+  "Fecha de ingreso",
   "Fecha de retiro",
   "Días Laborados",
 ];
@@ -1676,6 +2084,7 @@ function computeVariablesRows(items, novelties) {
       incapacidad_medica:      sumDays("INCAPACIDAD_MEDICA"),
       incapacidad_accidente:   sumDays("INCAPACIDAD_ACCIDENTE_LABORAL"),
       calamidad_familiar:      sumDays("CALAMIDAD_FAMILIAR"),
+      luto:                    sumDays("LUTO"),
       citaciones_oficiales:    sumDays("CITACIONES_OFICIALES"),
       licencia_maternidad:     sumDays("LICENCIA_MATERNIDAD_PATERNIDAD"),
       suspension:              sumDays("SUSPENSION"),
@@ -1704,10 +2113,12 @@ function makeVariablesWorksheet(rows) {
     nv(row.incapacidad_medica),
     nv(row.incapacidad_accidente),
     nv(row.calamidad_familiar),
+    nv(row.luto),
     nv(row.citaciones_oficiales),
     nv(row.licencia_maternidad),
     nv(row.suspension),
     nv(row.permisos_no_remunerados),
+    fmtFechaCol(row.fecha_ingreso),
     fmtFechaCol(row.fecha_retiro),
     calcDiasLaborados(row),
   ]);
@@ -1721,8 +2132,8 @@ function makeVariablesWorksheet(rows) {
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: VARIABLES_HEADERS.length - 1 } }) };
   ws["!cols"] = [
     { wch: 14 }, { wch: 34 }, { wch: 22 },
-    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 },
-    { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 10 },
+    { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
   ];
   return ws;
 }
@@ -1786,7 +2197,7 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
   const nomMonCols = [10,11,12,13,14,15,16,17,19,20,21];
   function otrosItem(item) {
     const c = item.calculation || {};
-    return c.other_recargos_value != null ? nn(c.other_recargos_value) : Math.max(0, nn(item.other_earnings) - nn(c.internal_cover_value));
+    return Math.max(0, nn(item.other_earnings) - nn(c.internal_cover_value));
   }
   const nomRows = items.map((item) => {
     const calc = (item.calculation && typeof item.calculation === "object") ? item.calculation : {};
@@ -1825,18 +2236,66 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
     if (wsNom[addr]) { wsNom[addr].s = { ...totStyle }; if (typeof wsNom[addr].v === "number") wsNom[addr].z = MONEY; }
   }
 
-  // ── Resumen global del período ────────────────────────────────────────────
-  const resRows = [
-    ["Período",              periodLabel],
-    ["Total municipios",     new Set(items.map((i) => i.municipality_name)).size],
-    ["Total empleados",      nn(totals.employees)],
-    ["Items revisados",      nn(totals.items_reviewed)],
-    ["Total novedades",      nn(totals.novelties)],
-    ["Total devengado",      nn(totals.total_devengado)],
-    ["Total deducciones",    nn(totals.total_deducciones)],
-    ["Neto total",           nn(totals.neto)],
+  // ── Resumen global del período — columnas dinámicas por municipio ────────
+  const muniNamesSet = [...new Set(items.map((i) => i.municipality_name || "").filter(Boolean))].sort();
+  const muniTotals = muniNamesSet.map((mName) => {
+    const mItems = items.filter((i) => i.municipality_name === mName);
+    return {
+      name:             mName,
+      employees:        mItems.length,
+      items_reviewed:   mItems.filter((i) => i.reviewed).length,
+      items_pending:    mItems.filter((i) => !i.reviewed).length,
+      novelties:        mItems.reduce((a, i) => a + nn(i.novelty_count), 0),
+      total_devengado:  mItems.reduce((a, i) => a + nn(i.total_devengado), 0),
+      total_deducciones:mItems.reduce((a, i) => a + nn(i.total_deducciones), 0),
+      neto:             mItems.reduce((a, i) => a + nn(i.neto_pagar), 0),
+    };
+  });
+  const sumMf = (key) => muniTotals.reduce((a, m) => a + nn(m[key]), 0);
+  const TOTALG = "TOTAL GENERAL";
+  const resHdrFull = ["Concepto", ...muniTotals.map((m) => m.name.toUpperCase()), TOTALG];
+  const resRowsFull = [
+    ["Período",            ...muniTotals.map(() => periodLabel),           periodLabel],
+    ["", ...muniTotals.map(() => ""), ""],
+    ["── EMPLEADOS ──",    ...muniTotals.map(() => ""),                    ""],
+    ["Total empleados",    ...muniTotals.map((m) => m.employees),          sumMf("employees")],
+    ["Items revisados",    ...muniTotals.map((m) => m.items_reviewed),     sumMf("items_reviewed")],
+    ["Items pendientes",   ...muniTotals.map((m) => m.items_pending),      sumMf("items_pending")],
+    ["", ...muniTotals.map(() => ""), ""],
+    ["── NOVEDADES ──",    ...muniTotals.map(() => ""),                    ""],
+    ["Total novedades",    ...muniTotals.map((m) => m.novelties),          sumMf("novelties")],
+    ["", ...muniTotals.map(() => ""), ""],
+    ["── VALORES ──",      ...muniTotals.map(() => ""),                    ""],
+    ["Total devengado",    ...muniTotals.map((m) => m.total_devengado),    sumMf("total_devengado")],
+    ["Total deducciones",  ...muniTotals.map((m) => m.total_deducciones),  sumMf("total_deducciones")],
+    ["Neto total",         ...muniTotals.map((m) => m.neto),               sumMf("neto")],
   ];
-  const wsRes = makeSheet(["Concepto", "Valor"], resRows, [1], [30, 22]);
+  const resHdrStyle2 = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { fgColor: { rgb: "1E293B" }, type: "pattern", patternType: "solid" }, alignment: { horizontal: "center", vertical: "center" } };
+  const resSectStyle2 = { font: { bold: true, color: { rgb: "334155" }, sz: 10 }, fill: { fgColor: { rgb: "F1F5F9" }, type: "pattern", patternType: "solid" } };
+  const resTotStyle2  = { font: { bold: true }, fill: { fgColor: { rgb: "DCFCE7" }, type: "pattern", patternType: "solid" } };
+  const wsRes = (() => {
+    const ws = XLSX.utils.aoa_to_sheet([resHdrFull, ...resRowsFull]);
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c });
+      if (ws[addr]) ws[addr].s = { ...resHdrStyle2 };
+    }
+    resRowsFull.forEach((row, ri) => {
+      const isSect = String(row[0]).startsWith("──");
+      const isTot  = String(row[0]) === "Neto total";
+      for (let c = 0; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r: ri + 1, c });
+        if (!ws[addr]) continue;
+        if (isSect) { ws[addr].s = { ...resSectStyle2 }; continue; }
+        if (isTot)  { ws[addr].s = { ...resTotStyle2  }; }
+        if (c > 0 && !isSect && typeof ws[addr].v === "number") ws[addr].z = "#,##0";
+      }
+    });
+    ws["!freeze"]     = { xSplit: 1, ySplit: 1 };
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: range.e.c } }) };
+    ws["!cols"] = [{ wch: 28 }, ...muniTotals.map(() => ({ wch: 22 })), { wch: 22 }];
+    return ws;
+  })();
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsVars, "Variables Nómina");
@@ -1858,8 +2317,43 @@ async function handlePeriodFullExport(req, res, url) {
     ACTIONS.EXPORT,
     async (innerReq, innerRes) => {
       try {
+        console.log("[EXPORT] Exportación completa del período:", periodId);
+        console.log("[MEMORY] inicio:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
         const { items, novelties, totals, periodLabel } = await operational.getPeriodItemsForExport(periodId);
-        const buf      = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+
+        const payrollRows = (items     || []).length;
+        const noveltyRows = (novelties || []).length;
+        console.log("[EXPORT] Volumen período", periodId, "(", periodLabel, "):", {
+          payrollRows, noveltyRows,
+        });
+        if (payrollRows > 5000) console.warn("[EXPORT WARNING] payrollRows > 5000:", payrollRows);
+        if (noveltyRows > 5000) console.warn("[EXPORT WARNING] noveltyRows > 5000:", noveltyRows);
+
+        // Desglose por municipio para detectar cuál tiene datos anómalos
+        const muniBreakdown = {};
+        for (const item of (items || [])) {
+          const mName = item.municipality_name || "sin municipio";
+          if (!muniBreakdown[mName]) muniBreakdown[mName] = { items: 0 };
+          muniBreakdown[mName].items++;
+        }
+        console.log("[EXPORT] Items por municipio:", muniBreakdown);
+        console.log("[MEMORY] antes de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+
+        let buf;
+        try {
+          buf = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+        } catch (xlsxErr) {
+          console.error("[EXPORT XLSX ERROR] Fallo al generar workbook período completo", periodId);
+          console.error("[EXPORT XLSX ERROR] Volumen: items=%d novs=%d", payrollRows, noveltyRows);
+          console.error("[EXPORT XLSX ERROR] Municipios:", Object.keys(muniBreakdown));
+          console.error(xlsxErr);
+          throw new Error(`Error generando Excel período ${periodId}: ${xlsxErr.message}`);
+        }
+
+        console.log("[MEMORY] después de generar Excel:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
+        console.log("[EXPORT] Excel generado, tamaño:", Math.round(buf.length / 1024), "KB");
+
         const safeLbl  = (periodLabel || String(periodId)).replace(/[^a-z0-9\-_]/gi, "-");
         const filename = `nomina-completa-${safeLbl}.xlsx`;
         innerRes.writeHead(200, {
@@ -1869,7 +2363,9 @@ async function handlePeriodFullExport(req, res, url) {
         });
         innerRes.end(buf);
       } catch (err) {
-        sendJson(innerRes, 400, { ok: false, message: err.message });
+        console.error("[EXPORT PERIODO ERROR] periodId =", periodId, "| mensaje:", err.message);
+        console.error(err.stack);
+        sendJson(innerRes, 400, { ok: false, message: err.message, stack: process.env.NODE_ENV !== "production" ? err.stack : undefined });
       }
     }
   )(req, res, url);
@@ -1908,6 +2404,61 @@ async function handleVariablesExport(req, res, url) {
       }
     }
   )(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA MENSUAL DE NOVEDADES — descarga
+// GET /payroll/periods/:id/novelties-template
+// ─────────────────────────────────────────────────────────────────────────────
+const novTemplate = require("./payroll.novelties-template");
+
+async function handleNoveltiesTemplate(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes, innerUrl) => {
+      const parts    = url.pathname.split("/").filter(Boolean);
+      const periodId = Number(parts[2]);
+      if (!Number.isFinite(periodId) || periodId <= 0) {
+        sendJson(innerRes, 400, { ok: false, message: "periodId inválido" }); return;
+      }
+      try {
+        const buf = await novTemplate.generateNoveltiesTemplate(periodId);
+        innerRes.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        innerRes.setHeader("Content-Disposition", `attachment; filename="plantilla-novedades-periodo-${periodId}.xlsx"`);
+        innerRes.end(buf);
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLANTILLA MENSUAL DE NOVEDADES — importación
+// POST /payroll/periods/:id/import-novelties-template  (Express + multer en app.js)
+// El handler recibe el buffer ya parseado por multer en req.file.buffer
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleImportNoveltiesTemplate(req, res) {
+  const auth = require("../../modules/auth/auth.helpers").requireAuth(req, res);
+  if (!auth) return;
+
+  const parts    = req.url ? req.url.split("/").filter(Boolean) : [];
+  const periodId = Number(parts[2]);
+  if (!Number.isFinite(periodId) || periodId <= 0) {
+    res.status(400).json({ ok: false, message: "periodId inválido" }); return;
+  }
+  if (!req.file || !req.file.buffer) {
+    res.status(400).json({ ok: false, message: "Archivo Excel requerido" }); return;
+  }
+
+  try {
+    const result = await novTemplate.importNoveltiesTemplate(periodId, req.file.buffer, auth.user.id);
+    res.status(result.ok ? 200 : 422).json({ ok: result.ok, data: result });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
 }
 
 module.exports = {
@@ -1950,6 +2501,7 @@ module.exports = {
   handleDeleteNovelty,
   // Exportación por municipio (detallada)
   handleGroupExport,
+  handleMultiGroupExport,
   handleGroupClose,
   handleGroupReopen,
   handleGroupHistory,
@@ -1959,4 +2511,9 @@ module.exports = {
   handleVariablesExport,
   // Exportación completa del período (todos los municipios)
   handlePeriodFullExport,
+  // Configuración salarial individual (Gestores, Auxiliares, Equipo Mínimo)
+  handleEmployeeSalaryConfig,
+  // Plantilla mensual de novedades por días (056)
+  handleNoveltiesTemplate,
+  handleImportNoveltiesTemplate,
 };

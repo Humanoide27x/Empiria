@@ -175,4 +175,8 @@ export const moduleViews = {
     title: "Dotación",
     submodules: [],
   },
+  portal_colaborador: {
+    title: "Portal del Colaborador",
+    submodules: [],
+  },
 };

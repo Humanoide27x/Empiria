@@ -105,7 +105,8 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Directory)",
       "Bash(PGPASSWORD='0WNkgBnHTS0l1b8X' psql *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Desktop\\\\Empiria\" -Recurse -Force)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\public\\\\js\\\\modules\\\\payroll.js\"\\).Count)"
     ]
   }
 }

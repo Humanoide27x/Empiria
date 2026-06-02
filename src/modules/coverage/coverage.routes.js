@@ -6,6 +6,7 @@ const {
   handleCoverageByContract,
   handleCoverageByMunicipality,
   handleCoverageEmployees,
+  handleCoverageExclusions,
 } = require("./coverage.controller");
 
 async function handleCoverageRoutes(req, res, url) {
@@ -43,6 +44,11 @@ async function handleCoverageRoutes(req, res, url) {
 
   if (pathname === "/coverage/employees") {
     await handleCoverageEmployees(req, res, url);
+    return true;
+  }
+
+  if (pathname === "/coverage/exclusions") {
+    await handleCoverageExclusions(req, res, url);
     return true;
   }
 

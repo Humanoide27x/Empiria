@@ -38,6 +38,8 @@ const MODULES = Object.freeze({
   DASHBOARD_HR: "dashboard_hr",
 
   DOTACION: "gestion_dotacion",
+
+  PORTAL_COLABORADOR: "portal_colaborador",
 });
 
 const ACTIONS = Object.freeze({
@@ -277,6 +279,54 @@ const DOTACION_PERMISSIONS_VIEW = Object.freeze({
   features: Object.freeze(["ver_dotacion"]),
 });
 
+const PORTAL_PERMISSIONS_FULL = Object.freeze({
+  allowedActions: [
+    ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPDATE,
+    ACTIONS.UPLOAD, ACTIONS.MANAGE, ACTIONS.AUDIT,
+  ],
+  features: Object.freeze([
+    "dashboard_portal",
+    "gestionar_soportes",
+    "aprobar_rechazar_soportes",
+    "ver_turnos",
+    "gestionar_tickets",
+    "responder_tickets",
+    "documentos_automaticos",
+    "notificaciones",
+    "auditoria_portal",
+  ]),
+});
+
+const PORTAL_PERMISSIONS_TH = Object.freeze({
+  allowedActions: [
+    ACTIONS.VIEW, ACTIONS.UPDATE, ACTIONS.MANAGE, ACTIONS.AUDIT,
+  ],
+  features: Object.freeze([
+    "dashboard_portal",
+    "gestionar_soportes",
+    "aprobar_rechazar_soportes",
+    "ver_turnos",
+    "gestionar_tickets",
+    "responder_tickets",
+    "documentos_automaticos",
+    "notificaciones",
+    "auditoria_portal",
+  ]),
+});
+
+const PORTAL_PERMISSIONS_GESTOR = Object.freeze({
+  allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.UPLOAD],
+  features: Object.freeze([
+    "dashboard_portal",
+    "ver_soportes",
+    "subir_soportes",
+    "ver_turnos",
+    "crear_tickets",
+    "documentos_automaticos",
+    "notificaciones",
+  ]),
+});
+
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMINISTRATOR]: {
     scope: SCOPE_RULES.ALL,
@@ -311,6 +361,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
       [MODULES.DOTACION]: DOTACION_PERMISSIONS_FULL,
+      [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_FULL,
     },
   },
 
@@ -365,6 +416,7 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
       [MODULES.DOTACION]: DOTACION_PERMISSIONS_HR,
+      [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_TH,
     },
   },
 
@@ -494,6 +546,7 @@ const ROLE_PERMISSIONS = Object.freeze({
         ]),
       },
       [MODULES.CALCULATOR]: CALCULATOR_PERMISSIONS,
+      [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_GESTOR,
     },
   },
 

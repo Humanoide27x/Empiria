@@ -14,10 +14,11 @@ const {
   saveCoverageUpload,
   getCoverageHistory,
   getCoverageRowsByUpload,
+  getCoverageExcludedEmployees,
 } = require("./coverage.excel");
 
 const COVERAGE_SUMMARY_CACHE = new Map();
-const COVERAGE_SUMMARY_TTL = 90 * 1000;
+const COVERAGE_SUMMARY_TTL = 300 * 1000; // 5 minutos
 
 function getCoverageSummaryCacheKey(filters = {}) {
   const municipalityIds = Array.isArray(filters.municipalityIds) ? filters.municipalityIds.join(",") : "";
@@ -419,6 +420,36 @@ function handleCoverageEmployees(req, res, url) {
   )(req, res, url);
 }
 
+// GET /coverage/exclusions
+// Devuelve empleados activos excluidos del conteo de cobertura y el motivo exacto.
+// Usado para diagnóstico: el admin puede ver quién necesita corrección en Personal.
+function handleCoverageExclusions(req, res, url) {
+  if (req.method !== "GET") {
+    sendMethodNotAllowed(res);
+    return;
+  }
+
+  return withModuleProtection(
+    MODULES.COVERAGE,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes, innerUrl, user, resource) => {
+      const companyId  = resource.companyId  || innerUrl.searchParams.get("companyId");
+      const contractId = resource.contractId || innerUrl.searchParams.get("contractId");
+
+      const data = await getCoverageExcludedEmployees({ companyId, contractId });
+
+      sendJson(innerRes, 200, {
+        ok: true,
+        total: data.length,
+        message: data.length > 0
+          ? `${data.length} empleado(s) activos excluidos del conteo de cobertura por no tener sede asignada.`
+          : "Todos los empleados activos con cargo de cobertura tienen sede asignada correctamente.",
+        data,
+      });
+    }
+  )(req, res, url);
+}
+
 module.exports = {
   handleCoverageSummary,
   handleCoverageUpload,
@@ -427,5 +458,6 @@ module.exports = {
   handleCoverageByContract,
   handleCoverageByMunicipality,
   handleCoverageEmployees,
+  handleCoverageExclusions,
   clearCoverageSummaryCache,
 };

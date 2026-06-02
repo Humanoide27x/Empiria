@@ -195,6 +195,11 @@ export function getModuleMeta(moduleKey) {
       // SlidersHorizontal — controles / ajustes
       icon: iconSvg(`<line x1="4" y1="6" x2="20" y2="6"/><circle cx="14" cy="6" r="2"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="8" cy="12" r="2"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="17" cy="18" r="2"/>`),
     },
+    portal_colaborador: {
+      label: "Portal del Colaborador",
+      // Briefcase — portal de gestión
+      icon: iconSvg(`<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="12" stroke-width="3" stroke-linecap="round"/><path d="M2 12h20"/>`),
+    },
   };
   return moduleMap[moduleKey] || { label: prettyLabel(moduleKey), icon: iconSvg(`<circle cx="12" cy="12" r="3"></circle>`) };
 }

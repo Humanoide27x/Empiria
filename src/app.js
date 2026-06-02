@@ -167,6 +167,19 @@ app.post(
   }
 );
 
+// ── Importación de plantilla mensual de novedades ────────────────────────────
+const multerMemory = require("multer")({ storage: require("multer").memoryStorage() });
+const { handleImportNoveltiesTemplate } = require("./modules/payroll/payroll.controller");
+app.post(
+  /^\/payroll\/periods\/\d+\/import-novelties-template$/,
+  _supAuthMw,
+  multerMemory.single("file"),
+  async (req, res) => { await handleImportNoveltiesTemplate(req, res); },
+  (err, req, res, _next) => {
+    res.status(err.status || 400).json({ ok: false, message: err.message });
+  }
+);
+
 // ── Puente hacia el handler legacy ───────────────────────────────────────────
 app.use(async (req, res, next) => {
   try {
