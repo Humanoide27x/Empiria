@@ -5,7 +5,8 @@ const { normalizeText } = require("../utils/text");
 // Columnas reales de employee_documents:
 //   id, employee_id, document_type_id, employee_contract_id,
 //   file_url, file_name, status, uploaded_at, expiration_date,
-//   validated, validated_by_user_id, validated_at, observations, created_at
+//   validated, validated_by_user_id, validated_at, observations, created_at,
+//   uploaded_by
 //
 // company_id no existe en la tabla — se obtiene via JOIN con employees.
 
@@ -21,8 +22,11 @@ function mapDocument(row) {
     // fileKey: clave interna (R2 key o ruta local) — NO exponer en respuestas
     fileKey: row.file_url,
     fileName: row.file_name,
+    uploadedBy: row.uploaded_by || null,
+    uploadedByName: row.uploaded_by_name || "Sistema",
     validated: Boolean(row.validated),
     validatedByUserId: row.validated_by_user_id || null,
+    validatedBy: row.validated_by_name || null,
     validatedAt: row.validated_at || null,
     observations: row.observations || null,
     expiryDate: row.expiration_date || null,
@@ -55,10 +59,14 @@ const BASE_SELECT = `
     ed.*,
     dt.name      AS doc_type_name,
     e.full_name  AS employee_name,
-    e.company_id AS company_id
+    e.company_id AS company_id,
+    COALESCE(vu.full_name, vu.username, vu.email, 'Sistema') AS uploaded_by_name,
+    COALESCE(rv.full_name, rv.username, rv.email) AS validated_by_name
   FROM employee_documents ed
   LEFT JOIN document_types dt ON dt.id  = ed.document_type_id
   JOIN  employees          e  ON e.id   = ed.employee_id
+  LEFT JOIN users          vu ON vu.id  = ed.uploaded_by
+  LEFT JOIN users          rv ON rv.id  = ed.validated_by_user_id
 `;
 
 // ─── Funciones públicas ───────────────────────────────────────────────────────
@@ -108,8 +116,8 @@ async function createDocument({
   const result = await pool.query(
     `INSERT INTO employee_documents (
        employee_id, document_type_id, file_url, file_name, status,
-       expiration_date, validated, uploaded_at
-     ) VALUES ($1,$2,$3,$4,'pendiente',$5,false,CURRENT_TIMESTAMP)
+       expiration_date, validated, uploaded_at, uploaded_by
+     ) VALUES ($1,$2,$3,$4,'pendiente',$5,false,CURRENT_TIMESTAMP,$6)
      RETURNING *`,
     [
       pgEmployeeId,
@@ -117,11 +125,85 @@ async function createDocument({
       fileKey,
       fileName,
       expiryDate ?? null,
+      uploadedBy ?? null,
     ]
   );
 
   // Re-query con JOINs para devolver el mapDocument completo
   return getDocumentById(result.rows[0].id, companyId);
+}
+
+async function documentExistsByFileKey(fileKey, companyId) {
+  if (!fileKey) return false;
+  const result = await pool.query(
+    `SELECT ed.id
+     FROM employee_documents ed
+     JOIN employees e ON e.id = ed.employee_id
+     WHERE ed.file_url = $1
+       AND e.company_id = $2
+     LIMIT 1`,
+    [fileKey, companyId]
+  );
+  return Boolean(result.rows.length);
+}
+
+async function getDocumentDiagnostics(companyId) {
+  const result = await pool.query(
+    `SELECT
+       COUNT(ed.id)::int AS total_records,
+       COUNT(ed.id) FILTER (WHERE e.id IS NOT NULL)::int AS linked_to_employees,
+       COUNT(ed.id) FILTER (WHERE e.id IS NULL)::int AS orphan_records,
+       COUNT(ed.id) FILTER (WHERE ed.document_type_id IS NULL)::int AS without_document_type,
+       COUNT(ed.id) FILTER (WHERE ed.document_type_id IS NOT NULL AND dt.id IS NULL)::int AS invalid_document_type,
+       COUNT(DISTINCT ed.file_url) FILTER (WHERE ed.file_url IS NOT NULL AND ed.file_url <> '')::int AS distinct_file_keys,
+       (COUNT(ed.id) - COUNT(DISTINCT ed.file_url) FILTER (WHERE ed.file_url IS NOT NULL AND ed.file_url <> ''))::int AS duplicate_file_keys
+     FROM employee_documents ed
+     LEFT JOIN employees e ON e.id = ed.employee_id AND e.company_id = $1
+     LEFT JOIN document_types dt ON dt.id = ed.document_type_id`,
+    [companyId]
+  );
+  return result.rows[0] || {};
+}
+
+async function getInvalidDocumentRelations(companyId) {
+  const result = await pool.query(
+    `SELECT
+       ed.id,
+       ed.employee_id,
+       ed.document_type_id,
+       ed.employee_contract_id,
+       ed.file_url,
+       ed.file_name,
+       CASE
+         WHEN e.id IS NULL THEN 'EMPLOYEE_NOT_FOUND_OR_OTHER_COMPANY'
+         WHEN ed.document_type_id IS NULL THEN 'DOCUMENT_TYPE_NULL'
+         WHEN ed.document_type_id IS NOT NULL AND dt.id IS NULL THEN 'DOCUMENT_TYPE_NOT_FOUND'
+         ELSE 'OK'
+       END AS relation_status
+     FROM employee_documents ed
+     LEFT JOIN employees e ON e.id = ed.employee_id AND e.company_id = $1
+     LEFT JOIN document_types dt ON dt.id = ed.document_type_id
+     WHERE e.id IS NULL
+        OR ed.document_type_id IS NULL
+        OR (ed.document_type_id IS NOT NULL AND dt.id IS NULL)
+     ORDER BY ed.created_at DESC, ed.id DESC
+     LIMIT 1000`,
+    [companyId]
+  );
+  return result.rows;
+}
+
+async function getExistingDocumentFileKeys(companyId) {
+  const result = await pool.query(
+    `SELECT ed.file_url
+     FROM employee_documents ed
+     JOIN employees e ON e.id = ed.employee_id
+     WHERE e.company_id = $1
+       AND ed.file_url IS NOT NULL
+       AND ed.file_url <> ''`,
+    [companyId]
+  );
+  return new Set(result.rows.map((row) => row.file_url));
 }
 
 async function updateDocumentStatus(id, companyId, { status, reviewedBy, reviewNotes }) {
@@ -239,6 +321,10 @@ module.exports = {
   getDocumentsByEmployee,
   getDocumentById,
   createDocument,
+  documentExistsByFileKey,
+  getDocumentDiagnostics,
+  getInvalidDocumentRelations,
+  getExistingDocumentFileKeys,
   updateDocumentStatus,
   deleteDocument,
   getDocumentAlerts,

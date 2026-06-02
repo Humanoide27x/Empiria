@@ -7,6 +7,8 @@
  */
 
 const { Router } = require("express");
+const fs = require("fs");
+const path = require("path");
 const { requireAuth } = require("../auth/auth.helpers");
 const { sendJson } = require("../../http/response");
 const { readJsonBody } = require("../../http/request");
@@ -21,6 +23,10 @@ const {
   getDocumentAlerts,
   getDocumentTypes,
   getEmployeesForDocumentMatching,
+  documentExistsByFileKey,
+  getDocumentDiagnostics,
+  getInvalidDocumentRelations,
+  getExistingDocumentFileKeys,
 } = require("../../db/documents.repository");
 const { buildBulkReviewRow } = require("./bulk-match.service");
 
@@ -56,6 +62,120 @@ function resolveCompanyId(req) {
     Number(req.query.companyId || req.body?.companyId) ||
     null
   );
+}
+
+const BULK_ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".docx"]);
+
+function getBulkFileExt(fileName) {
+  return path.extname(String(fileName || "")).toLowerCase();
+}
+
+function summarizeBulkRows(rows) {
+  return rows.reduce((acc, row) => {
+    acc.processed += 1;
+    if (row.status === "MATCHED") acc.matched += 1;
+    if (row.status === "NO_MATCH") acc.unmatched += 1;
+    if (row.status === "DUPLICATE" || row.isDuplicateFileName) acc.duplicates += 1;
+    if (row.status === "ERROR" || row.status === "INVALID_EXTENSION" || row.status === "NEEDS_REVIEW") acc.errors += 1;
+    if (row.canAutoAssign) acc.assignable += 1;
+    return acc;
+  }, {
+    processed: 0,
+    matched: 0,
+    unmatched: 0,
+    duplicates: 0,
+    errors: 0,
+    assignable: 0,
+  });
+}
+
+function listLocalDocumentFiles() {
+  const root = path.resolve(process.cwd(), "uploads", "documents");
+  if (!fs.existsSync(root)) return [];
+
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      const rel = path.relative(path.resolve(process.cwd(), "uploads"), abs).replace(/\\/g, "/");
+      const stat = fs.statSync(abs);
+      out.push({
+        fileKey: rel,
+        fileName: entry.name,
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function markFileNameDuplicates(rows) {
+  const counts = new Map();
+  rows.forEach((row) => {
+    const key = String(row.fileName || "").trim().toUpperCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return rows.map((row) => {
+    const key = String(row.fileName || "").trim().toUpperCase();
+    const isDuplicateFileName = counts.get(key) > 1;
+    return isDuplicateFileName
+      ? { ...row, status: "DUPLICATE", isDuplicateFileName, canAutoAssign: false }
+      : row;
+  });
+}
+
+async function buildDocumentFileUrl(doc) {
+  if (!doc?.fileKey) return "";
+
+  if (!isR2Configured()) {
+    return `/uploads/documents/${doc.fileKey.split("/").pop()}`;
+  }
+
+  return getPrivateUrl(doc.fileKey, 3600);
+}
+
+async function mapDbDocumentForLegacyClient(doc) {
+  const fileUrl = await buildDocumentFileUrl(doc);
+  const status = doc.status === "aprobado"
+    ? "VALIDADO"
+    : doc.status === "rechazado"
+      ? "RECHAZADO"
+      : "PENDIENTE_VALIDACION";
+
+  return {
+    id: doc.id,
+    employeeId: doc.employeeId,
+    documentType: doc.docTypeName || "",
+    documentTypeId: doc.docTypeId || null,
+    issueDate: "",
+    expirationDate: doc.expiryDate || "",
+    fileName: doc.fileName || "",
+    fileUrl,
+    validationStatus: status,
+    status: doc.status || "pendiente",
+    uploadedBy: doc.uploadedByName || "Sistema",
+    validatedBy: doc.validatedBy || "",
+    validatedAt: doc.validatedAt || "",
+    rejectionReason: doc.observations || "",
+    createdAt: doc.createdAt || doc.uploadedAt || "",
+    uploadedAt: doc.uploadedAt || "",
+    source: "postgres",
+  };
+}
+
+async function getDocumentsForEmployeeResponse(employeeId, companyId) {
+  const legacyData = legacyDocs.getDocumentsByEmployee(employeeId);
+  if (!companyId) return legacyData;
+
+  const dbDocs = await getDocumentsByEmployee(employeeId, companyId);
+  const mappedDbDocs = await Promise.all(dbDocs.map(mapDbDocumentForLegacyClient));
+  return [...mappedDbDocs, ...legacyData];
 }
 
 // ─── Error handler de multer ──────────────────────────────────────────────────
@@ -114,25 +234,280 @@ function createDocumentsRouter() {
         getDocumentTypes(),
       ]);
 
-      const rows = files.map((file) =>
-        buildBulkReviewRow(
-          typeof file === "string" ? { originalname: file } : file,
-          employees,
-          documentTypes
-        )
-      );
+      const rows = markFileNameDuplicates(files.map((file) => {
+        const fileObj = typeof file === "string" ? { originalname: file } : file;
+        const fileName = fileObj.originalname || fileObj.fileName || fileObj.name || "";
+        const ext = getBulkFileExt(fileName);
+        if (!BULK_ALLOWED_EXT.has(ext)) {
+          return {
+            fileName,
+            documentTypeCode: "",
+            documentTypeId: null,
+            documentTypeName: "",
+            extractedName: "",
+            normalizedName: "",
+            documentNumber: "",
+            format: "INVALID_EXTENSION",
+            employeeId: null,
+            detectedEmployee: null,
+            candidates: [],
+            status: "INVALID_EXTENSION",
+            confidence: 0,
+            canAutoAssign: false,
+            error: `Extension no permitida: ${ext || "(sin extension)"}`,
+          };
+        }
+        return buildBulkReviewRow(fileObj, employees, documentTypes);
+      }));
 
-      const summary = rows.reduce((acc, row) => {
-        acc.total += 1;
-        acc[row.status] = (acc[row.status] || 0) + 1;
-        if (row.canAutoAssign) acc.assignable += 1;
-        return acc;
-      }, { total: 0, assignable: 0 });
+      const summary = summarizeBulkRows(rows);
 
       return sendJson(res, 200, { ok: true, data: { rows, summary } });
     } catch (err) {
       console.error("[documents] POST /bulk-preview:", err.message);
       return sendJson(res, 500, { ok: false, message: "Error prevalidando documentos" });
+    }
+  });
+
+  router.post(
+    "/bulk-upload",
+    authMiddleware,
+    uploadMiddleware.array("files", 500),
+    async (req, res) => {
+      try {
+        const companyId = resolveCompanyId(req);
+        if (!companyId) {
+          return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+        }
+
+        const files = Array.isArray(req.files) ? req.files : [];
+        if (!files.length) {
+          return sendJson(res, 400, { ok: false, message: "Debes adjuntar archivos" });
+        }
+
+        const assignments = (() => {
+          try { return JSON.parse(req.body.assignments || "{}"); } catch { return {}; }
+        })();
+
+        const [employees, documentTypes] = await Promise.all([
+          getEmployeesForDocumentMatching(companyId),
+          getDocumentTypes(),
+        ]);
+
+        const rows = markFileNameDuplicates(files.map((file) =>
+          buildBulkReviewRow(file, employees, documentTypes)
+        ));
+        const details = [];
+
+        for (const [index, row] of rows.entries()) {
+          const file = files[index];
+          const normalized = normalizeUploadedFile(file);
+          const assignment = assignments[row.fileName] || assignments[String(index)] || {};
+          const employeeId = assignment.employeeId || row.employeeId || null;
+          const docTypeId = assignment.documentTypeId || row.documentTypeId || null;
+          const detail = {
+            ...row,
+            stored: Boolean(normalized?.key),
+            fileKey: normalized?.key || "",
+            employeeId,
+            documentTypeId: docTypeId,
+            linked: false,
+            documentId: null,
+            error: "",
+          };
+
+          try {
+            if (row.isDuplicateFileName) {
+              detail.error = "Nombre de archivo duplicado en la carga";
+            } else if (!employeeId) {
+              detail.error = "Sin coincidencia de empleado";
+            } else if (!docTypeId) {
+              detail.error = "Tipo de documento no identificado";
+            } else if (await documentExistsByFileKey(normalized.key, companyId)) {
+              detail.status = "DUPLICATE";
+              detail.error = "El archivo ya tiene registro en documentos";
+            } else {
+              const doc = await createDocument({
+                employeeId,
+                docTypeId: Number(docTypeId),
+                companyId,
+                fileKey: normalized.key,
+                fileName: normalized.fileName,
+                uploadedBy: req.user.id || null,
+                expiryDate: null,
+              });
+              detail.linked = Boolean(doc?.id);
+              detail.documentId = doc?.id || null;
+              detail.status = detail.linked ? "MATCHED" : "ERROR";
+            }
+          } catch (err) {
+            detail.status = "ERROR";
+            detail.error = err.message;
+          }
+
+          details.push(detail);
+        }
+
+        const summary = {
+          processed: details.length,
+          stored: details.filter((row) => row.stored).length,
+          linked: details.filter((row) => row.linked).length,
+          unmatched: details.filter((row) => !row.linked && row.error === "Sin coincidencia de empleado").length,
+          duplicates: details.filter((row) => row.status === "DUPLICATE" || row.isDuplicateFileName).length,
+          errors: details.filter((row) => !row.linked && row.error && row.error !== "Sin coincidencia de empleado").length,
+        };
+
+        return sendJson(res, 201, {
+          ok: true,
+          data: { rows: details, summary },
+          message: `Archivos procesados: ${summary.processed}. Vinculados correctamente: ${summary.linked}. Sin coincidencia: ${summary.unmatched}. Duplicados: ${summary.duplicates}. Errores: ${summary.errors}.`,
+        });
+      } catch (err) {
+        console.error("[documents] POST /bulk-upload:", err.message);
+        return sendJson(res, 500, { ok: false, message: "Error cargando documentos masivos" });
+      }
+    },
+    multerErrorHandler
+  );
+
+  router.get("/bulk-audit", authMiddleware, async (req, res) => {
+    try {
+      const companyId = resolveCompanyId(req);
+      if (!companyId) {
+        return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+      }
+
+      const physicalFiles = listLocalDocumentFiles();
+      const existingKeys = await getExistingDocumentFileKeys(companyId);
+      const db = await getDocumentDiagnostics(companyId);
+      const invalidRelations = await getInvalidDocumentRelations(companyId);
+      const missingDbRows = physicalFiles.filter((file) => !existingKeys.has(file.fileKey));
+      const physicalDuplicates = physicalFiles.reduce((acc, file) => {
+        const key = file.fileName.toUpperCase();
+        acc.set(key, (acc.get(key) || 0) + 1);
+        return acc;
+      }, new Map());
+
+      return sendJson(res, 200, {
+        ok: true,
+        data: {
+          storage: isR2Configured() ? "r2" : "local",
+          physical: {
+            total: physicalFiles.length,
+            storedFiles: physicalFiles,
+            duplicates: [...physicalDuplicates.entries()]
+              .filter(([, count]) => count > 1)
+              .map(([fileName, count]) => ({ fileName, count })),
+            missingDbRows,
+          },
+          database: db,
+          relations: invalidRelations,
+          summary: {
+            totalPhysicalFiles: physicalFiles.length,
+            totalDocumentRecords: Number(db.total_records || 0),
+            totalLinkedToEmployees: Number(db.linked_to_employees || 0),
+            totalOrphans: Number(db.orphan_records || 0),
+            totalWithoutDocumentType: Number(db.without_document_type || 0),
+            totalInvalidDocumentType: Number(db.invalid_document_type || 0),
+            totalPhysicalWithoutDbRecord: missingDbRows.length,
+          },
+        },
+      });
+    } catch (err) {
+      console.error("[documents] GET /bulk-audit:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error generando auditoria documental" });
+    }
+  });
+
+  router.post("/bulk-repair/preview", authMiddleware, async (req, res) => {
+    try {
+      const companyId = resolveCompanyId(req);
+      if (!companyId) {
+        return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+      }
+
+      const body = await readJsonBody(req);
+      const physicalFiles = Array.isArray(body.files) && body.files.length
+        ? body.files.map((file) => ({
+            fileKey: file.fileKey || `documents/${file.fileName || file.name || file}`,
+            fileName: file.fileName || file.name || file,
+          }))
+        : listLocalDocumentFiles();
+      const existingKeys = await getExistingDocumentFileKeys(companyId);
+      const missing = physicalFiles.filter((file) => !existingKeys.has(file.fileKey));
+      const [employees, documentTypes] = await Promise.all([
+        getEmployeesForDocumentMatching(companyId),
+        getDocumentTypes(),
+      ]);
+      const rows = markFileNameDuplicates(missing.map((file) => ({
+        ...buildBulkReviewRow({ originalname: file.fileName }, employees, documentTypes),
+        fileKey: file.fileKey,
+      })));
+
+      return sendJson(res, 200, {
+        ok: true,
+        data: { rows, summary: summarizeBulkRows(rows) },
+      });
+    } catch (err) {
+      console.error("[documents] POST /bulk-repair/preview:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error previsualizando reparacion documental" });
+    }
+  });
+
+  router.post("/bulk-repair/apply", requireRole("administrador", "talento_humano"), async (req, res) => {
+    try {
+      const companyId = resolveCompanyId(req);
+      if (!companyId) {
+        return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+      }
+
+      const body = await readJsonBody(req);
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const details = [];
+      for (const row of rows) {
+        const detail = {
+          fileName: row.fileName || "",
+          fileKey: row.fileKey || "",
+          employeeId: row.employeeId || null,
+          documentTypeId: row.documentTypeId || row.documentType_id || null,
+          linked: false,
+          documentId: null,
+          error: "",
+        };
+        try {
+          if (!detail.fileKey) throw new Error("fileKey requerido");
+          if (!detail.employeeId) throw new Error("employeeId requerido");
+          if (!detail.documentTypeId) throw new Error("documentTypeId requerido");
+          if (await documentExistsByFileKey(detail.fileKey, companyId)) {
+            detail.error = "El archivo ya tiene registro en documentos";
+          } else {
+            const doc = await createDocument({
+              employeeId: detail.employeeId,
+              docTypeId: Number(detail.documentTypeId),
+              companyId,
+              fileKey: detail.fileKey,
+              fileName: detail.fileName || path.basename(detail.fileKey),
+              uploadedBy: req.user.id || null,
+              expiryDate: null,
+            });
+            detail.linked = Boolean(doc?.id);
+            detail.documentId = doc?.id || null;
+          }
+        } catch (err) {
+          detail.error = err.message;
+        }
+        details.push(detail);
+      }
+
+      const summary = {
+        processed: details.length,
+        linked: details.filter((row) => row.linked).length,
+        errors: details.filter((row) => !row.linked).length,
+      };
+      return sendJson(res, 200, { ok: true, data: { rows: details, summary } });
+    } catch (err) {
+      console.error("[documents] POST /bulk-repair/apply:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error aplicando reparacion documental" });
     }
   });
 
@@ -325,18 +700,24 @@ function createDocumentsRouter() {
   // ── Rutas heredadas (backward compat — JSON/base64) ───────────────────────
 
   // GET /documents y GET /documents?employeeId=xxx
-  router.get("/", authMiddleware, (req, res) => {
+  router.get("/", authMiddleware, async (req, res) => {
     const employeeId = req.query.employeeId;
     const employeeIds = String(req.query.employeeIds || "")
       .split(",")
       .map((id) => id.trim())
       .filter(Boolean);
-    const data = employeeId
-      ? legacyDocs.getDocumentsByEmployee(employeeId)
-      : employeeIds.length
-        ? legacyDocs.getDocumentsByEmployees(employeeIds)
-      : legacyDocs.getAllDocuments();
-    return sendJson(res, 200, { ok: true, data });
+    try {
+      const companyId = resolveCompanyId(req);
+      const data = employeeId
+        ? await getDocumentsForEmployeeResponse(employeeId, companyId)
+        : employeeIds.length
+          ? legacyDocs.getDocumentsByEmployees(employeeIds)
+        : legacyDocs.getAllDocuments();
+      return sendJson(res, 200, { ok: true, data });
+    } catch (err) {
+      console.error("[documents] GET /:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error obteniendo documentos" });
+    }
   });
 
   // POST /documents (base64 PDF, flujo anterior)
@@ -372,7 +753,20 @@ function createDocumentsRouter() {
       if (!body.id) return sendJson(res, 400, { ok: false, message: "id es requerido" });
 
       const document = legacyDocs.validateDocument(body.id, body.userName || "Usuario");
-      if (!document) return sendJson(res, 404, { ok: false, message: "Documento no encontrado" });
+      if (!document) {
+        const companyId = resolveCompanyId(req);
+        if (!companyId) return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+
+        const updated = await updateDocumentStatus(Number(body.id), companyId, {
+          status: "aprobado",
+          reviewedBy: req.user.id || null,
+          reviewNotes: null,
+        });
+        if (!updated) return sendJson(res, 404, { ok: false, message: "Documento no encontrado" });
+
+        const data = await mapDbDocumentForLegacyClient(updated);
+        return sendJson(res, 200, { ok: true, data, message: "Documento validado correctamente" });
+      }
 
       return sendJson(res, 200, { ok: true, data: document, message: "Documento validado correctamente" });
     } catch (err) {
@@ -387,7 +781,20 @@ function createDocumentsRouter() {
       if (!body.id) return sendJson(res, 400, { ok: false, message: "id es requerido" });
 
       const document = legacyDocs.rejectDocument(body.id, body.reason || "", body.userName || "Usuario");
-      if (!document) return sendJson(res, 404, { ok: false, message: "Documento no encontrado" });
+      if (!document) {
+        const companyId = resolveCompanyId(req);
+        if (!companyId) return sendJson(res, 400, { ok: false, message: "companyId requerido" });
+
+        const updated = await updateDocumentStatus(Number(body.id), companyId, {
+          status: "rechazado",
+          reviewedBy: req.user.id || null,
+          reviewNotes: body.reason || "",
+        });
+        if (!updated) return sendJson(res, 404, { ok: false, message: "Documento no encontrado" });
+
+        const data = await mapDbDocumentForLegacyClient(updated);
+        return sendJson(res, 200, { ok: true, data, message: "Documento rechazado correctamente" });
+      }
 
       return sendJson(res, 200, { ok: true, data: document, message: "Documento rechazado correctamente" });
     } catch (err) {

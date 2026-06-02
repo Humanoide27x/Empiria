@@ -3914,15 +3914,17 @@ async function openBulkDocumentUploadModal() {
   modal.innerHTML = `
     <div class="modal-card" style="max-width:1100px">
       <div class="modal-header">
-        <h3>Validacion de carga documental masiva</h3>
+        <h3>Auditoria de carga documental masiva</h3>
         <button type="button" class="modal-close" id="closeBulkDocumentModal">x</button>
       </div>
       <div class="modal-body">
-        <div style="display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end;margin-bottom:1rem">
-          <label style="font-size:13px;font-weight:600">PDFs
-            <input id="bulkDocumentFiles" type="file" accept="application/pdf" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
+        <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:.75rem;align-items:end;margin-bottom:1rem">
+          <label style="font-size:13px;font-weight:600">Archivos
+            <input id="bulkDocumentFiles" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
           </label>
           <button type="button" class="btn btn-secondary" id="previewBulkDocuments">Prevalidar</button>
+          <button type="button" class="btn btn-secondary" id="auditBulkDocuments">Auditar fisicos/BD</button>
+          <button type="button" class="btn btn-secondary" id="repairBulkDocuments">Previsualizar reparacion</button>
         </div>
         <div id="bulkDocumentSummary" style="margin-bottom:.75rem;font-size:13px;color:#475569"></div>
         <div style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px">
@@ -3945,7 +3947,9 @@ async function openBulkDocumentUploadModal() {
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Cargar seleccionados</button>
+        <button type="button" class="btn btn-secondary" id="downloadBulkAudit" disabled>Descargar Excel</button>
+        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Cargar y vincular</button>
+        <button type="button" class="btn btn-primary" id="applyBulkRepair" disabled>Aplicar reparacion</button>
         <button type="button" class="btn btn-secondary" id="cancelBulkDocumentModal">Cancelar</button>
       </div>
     </div>
@@ -3956,7 +3960,10 @@ async function openBulkDocumentUploadModal() {
   const rowsBody = modal.querySelector("#bulkDocumentRows");
   const summaryEl = modal.querySelector("#bulkDocumentSummary");
   const uploadBtn = modal.querySelector("#uploadBulkDocuments");
+  const repairApplyBtn = modal.querySelector("#applyBulkRepair");
+  const downloadBtn = modal.querySelector("#downloadBulkAudit");
   let reviewRows = [];
+  let mode = "upload";
 
   const close = () => modal.remove();
   modal.querySelector("#closeBulkDocumentModal")?.addEventListener("click", close);
@@ -3966,6 +3973,8 @@ async function openBulkDocumentUploadModal() {
     if (!reviewRows.length) {
       rowsBody.innerHTML = `<tr><td colspan="7" style="padding:1rem;color:#64748b">Sin resultados.</td></tr>`;
       uploadBtn.disabled = true;
+      repairApplyBtn.disabled = true;
+      downloadBtn.disabled = true;
       return;
     }
 
@@ -3974,7 +3983,15 @@ async function openBulkDocumentUploadModal() {
       const statusColor = row.status === "MATCHED" ? "#15803d"
         : row.status === "NO_MATCH" ? "#dc2626"
         : "#d97706";
-      const options = `<option value="">No asignar</option>` + employees.map((emp) => {
+      const optionEmployees = [...employees];
+      if (row.detectedEmployee?.id && !optionEmployees.some((emp) => String(emp.id) === String(row.detectedEmployee.id))) {
+        optionEmployees.unshift({
+          id: row.detectedEmployee.id,
+          fullName: row.detectedEmployee.fullName,
+          documentNumber: row.detectedEmployee.documentNumber,
+        });
+      }
+      const options = `<option value="">No asignar</option>` + optionEmployees.map((emp) => {
         const selected = String(row.employeeId || "") === String(emp.id) ? " selected" : "";
         const label = `${getPersonnelFullName(emp)} - ${getPersonnelDocument(emp)}`;
         return `<option value="${escapeAttr(String(emp.id))}"${selected}>${escapeHtml(label)}</option>`;
@@ -3992,54 +4009,186 @@ async function openBulkDocumentUploadModal() {
         </td>
       </tr>`;
     }).join("");
-    uploadBtn.disabled = false;
+    uploadBtn.disabled = mode !== "upload";
+    repairApplyBtn.disabled = mode !== "repair";
+    downloadBtn.disabled = false;
+  };
+
+  const setSummary = (summary = {}) => {
+    const processed = summary.processed ?? summary.total ?? 0;
+    const linked = summary.linked ?? summary.matched ?? summary.MATCHED ?? 0;
+    const unmatched = summary.unmatched ?? summary.NO_MATCH ?? 0;
+    const duplicates = summary.duplicates ?? summary.DUPLICATE ?? 0;
+    const errors = summary.errors ?? summary.ERROR ?? 0;
+    summaryEl.innerHTML =
+      `<b>Archivos procesados:</b> ${processed} &nbsp; ` +
+      `<b>Vinculados correctamente:</b> ${linked} &nbsp; ` +
+      `<b>Sin coincidencia:</b> ${unmatched} &nbsp; ` +
+      `<b>Duplicados:</b> ${duplicates} &nbsp; ` +
+      `<b>Errores:</b> ${errors}`;
+  };
+
+  const selectedRows = () => reviewRows.map((row, index) => ({
+    ...row,
+    employeeId: modal.querySelector(`[data-bulk-employee-select="${index}"]`)?.value || "",
+  }));
+
+  const downloadRows = (rows, name) => {
+    exportToExcel(
+      [
+        "Archivo", "File key", "Tipo", "Documento extraido", "Empleado",
+        "Estado", "Confianza", "Almacenado", "Vinculado", "Error",
+      ],
+      rows.map((row) => [
+        row.fileName || "",
+        row.fileKey || "",
+        row.documentTypeName || row.documentTypeCode || "",
+        row.documentNumber || row.extractedName || "",
+        row.detectedEmployee?.fullName || row.employeeName || row.employeeId || "",
+        row.status || "",
+        row.confidence || 0,
+        row.stored ? "SI" : "",
+        row.linked ? "SI" : "",
+        row.error || "",
+      ]),
+      name
+    );
   };
 
   modal.querySelector("#previewBulkDocuments")?.addEventListener("click", async () => {
     const files = Array.from(fileInput?.files || []);
-    if (!files.length) { showWarning("Selecciona al menos un PDF."); return; }
+    if (!files.length) { showWarning("Selecciona al menos un archivo."); return; }
     try {
+      mode = "upload";
       const res = await apiFetch("/documents/bulk-preview", {
         method: "POST",
         body: JSON.stringify({ files: files.map((file) => file.name) }),
       });
       reviewRows = res.data?.rows || [];
-      const summary = res.data?.summary || {};
-      summaryEl.textContent = `${summary.total || 0} archivos - ${summary.MATCHED || 0} exactos - ${summary.PARTIAL_MATCH || 0} parciales - ${summary.NO_MATCH || 0} sin coincidencia - ${summary.DUPLICATE || 0} duplicados`;
+      setSummary(res.data?.summary || {});
       renderRows();
     } catch (err) {
       showError(err.message);
     }
   });
 
+  modal.querySelector("#auditBulkDocuments")?.addEventListener("click", async () => {
+    try {
+      mode = "audit";
+      const res = await apiFetch("/documents/bulk-audit", { skipDedupe: true });
+      const data = res.data || {};
+      const summary = data.summary || {};
+      summaryEl.innerHTML =
+        `<b>Total archivos fisicos:</b> ${summary.totalPhysicalFiles || 0} &nbsp; ` +
+        `<b>Total registros documentos:</b> ${summary.totalDocumentRecords || 0} &nbsp; ` +
+        `<b>Vinculados a empleados:</b> ${summary.totalLinkedToEmployees || 0} &nbsp; ` +
+        `<b>Huerfanos:</b> ${summary.totalOrphans || 0} &nbsp; ` +
+        `<b>Fisicos sin registro:</b> ${summary.totalPhysicalWithoutDbRecord || 0}`;
+      const missing = data.physical?.missingDbRows || [];
+      const relations = data.relations || [];
+      reviewRows = [
+        ...missing.map((row) => ({
+          fileName: row.fileName,
+          fileKey: row.fileKey,
+          status: "PHYSICAL_WITHOUT_DB",
+          confidence: 0,
+          error: "Archivo fisico sin registro en documentos",
+        })),
+        ...relations.map((row) => ({
+          fileName: row.file_name,
+          fileKey: row.file_url,
+          status: row.relation_status,
+          confidence: 0,
+          error: row.relation_status,
+        })),
+      ];
+      renderRows();
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  modal.querySelector("#repairBulkDocuments")?.addEventListener("click", async () => {
+    try {
+      mode = "repair";
+      const files = Array.from(fileInput?.files || []);
+      const body = files.length
+        ? { files: files.map((file) => ({ fileName: file.name, fileKey: `documents/${file.name}` })) }
+        : {};
+      const res = await apiFetch("/documents/bulk-repair/preview", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      reviewRows = res.data?.rows || [];
+      setSummary(res.data?.summary || {});
+      renderRows();
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  downloadBtn.addEventListener("click", () => {
+    downloadRows(selectedRows(), `auditoria_documentos_${new Date().toISOString().slice(0, 10)}`);
+  });
+
   uploadBtn.addEventListener("click", async () => {
     const files = Array.from(fileInput?.files || []);
     const byName = new Map(files.map((file) => [file.name, file]));
-    const selectedRows = reviewRows.map((row, index) => ({
-      ...row,
-      employeeId: modal.querySelector(`[data-bulk-employee-select="${index}"]`)?.value || "",
-    })).filter((row) => row.employeeId);
+    const rowsToUpload = selectedRows().filter((row) => row.employeeId);
 
-    if (!selectedRows.length) {
+    if (!rowsToUpload.length) {
       showWarning("Selecciona al menos un empleado para cargar.");
       return;
     }
 
-    let uploaded = 0;
-    for (const row of selectedRows) {
+    const formData = new FormData();
+    const assignments = {};
+    for (const row of rowsToUpload) {
       const file = byName.get(row.fileName);
       if (!file) continue;
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("employeeId", row.employeeId);
-      if (row.documentTypeId) formData.append("docTypeId", String(row.documentTypeId));
-      await apiFetch("/documents/upload", { method: "POST", body: formData });
-      uploaded += 1;
+      formData.append("files", file);
+      assignments[row.fileName] = {
+        employeeId: row.employeeId,
+        documentTypeId: row.documentTypeId || null,
+      };
     }
+    formData.append("assignments", JSON.stringify(assignments));
 
-    showSuccess(`${uploaded} documentos cargados.`);
-    close();
-    await openModule("gestion_personal");
+    const res = await apiFetch("/documents/bulk-upload", { method: "POST", body: formData });
+    reviewRows = res.data?.rows || [];
+    setSummary(res.data?.summary || {});
+    renderRows();
+    downloadRows(reviewRows, `resultado_carga_documentos_${new Date().toISOString().slice(0, 10)}`);
+    showSuccess(res.message || "Carga masiva procesada.");
+  });
+
+  repairApplyBtn.addEventListener("click", async () => {
+    const rows = selectedRows()
+      .filter((row) => row.employeeId && row.fileKey && (row.documentTypeId || row.documentType_id))
+      .map((row) => ({
+        fileName: row.fileName,
+        fileKey: row.fileKey,
+        employeeId: row.employeeId,
+        documentTypeId: row.documentTypeId || row.documentType_id,
+      }));
+    if (!rows.length) {
+      showWarning("Selecciona empleados y tipos validos para reparar.");
+      return;
+    }
+    try {
+      const res = await apiFetch("/documents/bulk-repair/apply", {
+        method: "POST",
+        body: JSON.stringify({ rows }),
+      });
+      reviewRows = res.data?.rows || [];
+      setSummary(res.data?.summary || {});
+      renderRows();
+      downloadRows(reviewRows, `resultado_reparacion_documentos_${new Date().toISOString().slice(0, 10)}`);
+      showSuccess("Reparacion documental procesada.");
+      await openModule("gestion_personal");
+    } catch (err) {
+      showError(err.message);
+    }
   });
 }
 

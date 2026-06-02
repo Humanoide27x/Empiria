@@ -115,10 +115,7 @@ module.exports = { runMigrations };
 
 // Ejecución directa: node scripts/run-migrations.js
 if (require.main === module) {
-<<<<<<< HEAD
-=======
   // dotenv ya fue cargado al inicio del módulo — no repetir aquí.
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
   runMigrations()
     .then(() => {
       console.log("[migrations] Proceso finalizado.");

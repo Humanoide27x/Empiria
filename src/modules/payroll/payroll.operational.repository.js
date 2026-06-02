@@ -1912,8 +1912,6 @@ async function calculatePayrollGroup(groupId) {
     }
 
     // Calcular montos de todos los empleados en JS (puro, sin round-trips)
-    const NCOLS = 25;
-    const bulkRows = [];
     for (const emp of groupEmployees) {
       const categoryCode = classifySiteModality(emp, allPeriodEmployees);
       emp.salary_category = categoryCode;
@@ -1939,7 +1937,6 @@ async function calculatePayrollGroup(groupId) {
         };
       }
 
-<<<<<<< HEAD
       // DEBUG: por empleado
       console.log(`[PAYROLL CATEGORY] ${emp.employee_name} → ${categoryCode}`, salConfig);
 
@@ -1950,8 +1947,6 @@ async function calculatePayrollGroup(groupId) {
       const inclusionStatus = payrollInclusionStatus(emp, group.period_start, group.period_end);
 
       // Novedades del empleado
-=======
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       const empNovelties = novelties.filter(
         (x) => String(x.employee_id) === String(emp.employee_id)
       );
@@ -1961,39 +1956,13 @@ async function calculatePayrollGroup(groupId) {
         ...laborNovelties,
       ];
 
-<<<<<<< HEAD
       // Cambio operativo: usa cálculo proporcional si existe la novedad
       const cambioNov = effectiveNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
-=======
-      const cambioNov = empNovelties.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       const amounts = cambioNov
         ? calculateAmountsWithCambio(emp, salConfig, effectiveNovelties, covers, cambioNov, salaryCategories)
         : calculateEmployeeAmounts(emp, salConfig, effectiveNovelties, covers);
 
-<<<<<<< HEAD
       const { rows: itemRows } = await client.query(
-=======
-      bulkRows.push([
-        group.id, group.period_id, emp.employee_id, emp.employee_name, emp.document_number,
-        emp.company_id, emp.contract_id, emp.municipality_id, emp.municipality_name,
-        emp.institution_id, emp.institution_name, emp.site_id, emp.site_name,
-        emp.modality, emp.operational_position, emp.work_time_type,
-        categoryCode, amounts.worked_days,
-        amounts.base_salary, amounts.transport_allowance, amounts.other_earnings,
-        amounts.total_devengado, amounts.total_deducciones, amounts.neto_pagar,
-        JSON.stringify(amounts.calculation),
-      ]);
-    }
-
-    // Un único INSERT en lote — N round-trips → 1
-    if (bulkRows.length) {
-      const placeholders = bulkRows.map((_, i) => {
-        const b = i * NCOLS;
-        return `(${Array.from({length: NCOLS}, (_, j) => `$${b + j + 1}`).join(",")},NOW())`;
-      }).join(",");
-      await client.query(
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
         `INSERT INTO payroll_items (
            group_id, period_id, employee_id, employee_name, document_number,
            company_id, contract_id, municipality_id, municipality_name,
@@ -2006,7 +1975,6 @@ async function calculatePayrollGroup(groupId) {
            dias_laborados_calculados, source_fecha_retiro, payroll_inclusion_status,
            updated_at
          )
-<<<<<<< HEAD
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,NOW())
          ON CONFLICT (group_id, employee_id) DO UPDATE SET
            employee_name      = EXCLUDED.employee_name,
@@ -2047,31 +2015,6 @@ async function calculatePayrollGroup(groupId) {
           fechaIngresoAplicada, fechaRetiroAplicada, diasLaboradosCalculados,
           fechaRetiroAplicada ? "PERSONAL" : null, inclusionStatus,
         ]
-=======
-         VALUES ${placeholders}
-         ON CONFLICT (group_id, employee_id) DO UPDATE SET
-           employee_name       = EXCLUDED.employee_name,
-           document_number     = EXCLUDED.document_number,
-           municipality_name   = EXCLUDED.municipality_name,
-           institution_id      = EXCLUDED.institution_id,
-           institution_name    = EXCLUDED.institution_name,
-           site_id             = EXCLUDED.site_id,
-           site_name           = EXCLUDED.site_name,
-           modality            = EXCLUDED.modality,
-           work_time_type      = EXCLUDED.work_time_type,
-           salary_category     = EXCLUDED.salary_category,
-           worked_days         = EXCLUDED.worked_days,
-           base_salary         = EXCLUDED.base_salary,
-           transport_allowance = EXCLUDED.transport_allowance,
-           other_earnings      = EXCLUDED.other_earnings,
-           total_devengado     = EXCLUDED.total_devengado,
-           total_deducciones   = EXCLUDED.total_deducciones,
-           neto_pagar          = EXCLUDED.neto_pagar,
-           calculation         = EXCLUDED.calculation,
-           updated_at          = NOW()
-         WHERE payroll_items.reviewed IS NOT TRUE`,
-        bulkRows.flat()
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       );
       const persistedItem = itemRows[0];
       if (persistedItem) {

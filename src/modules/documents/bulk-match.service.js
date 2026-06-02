@@ -39,10 +39,18 @@ function compactDocumentNumber(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function comparableDocumentNumber(value) {
+  const compact = compactDocumentNumber(value);
+  return compact.replace(/^0+/, "") || compact;
+}
+
 function parseDocumentFileName(fileName) {
-  const base = path.basename(String(fileName || ""), path.extname(String(fileName || "")));
+  const original = String(fileName || "");
+  const base = path.basename(original, path.extname(original));
   const normalizedBase = normalizeText(base);
   const tokens = normalizedBase.split(" ").filter(Boolean);
+  const leadingDoc = base.match(/^\s*([0-9][0-9.\s,_-]{3,}[0-9])[\s,_-]+(.+)$/);
+  const trailingDoc = base.match(/^(.+?)[\s,_-]+([0-9][0-9.\s,_-]{3,}[0-9])\s*$/);
 
   if (!tokens.length) {
     return {
@@ -52,6 +60,34 @@ function parseDocumentFileName(fileName) {
       normalizedName: "",
       documentNumber: "",
       format: "UNKNOWN",
+    };
+  }
+
+  if (leadingDoc) {
+    const rest = normalizeText(leadingDoc[2]);
+    const restTokens = rest.split(" ").filter(Boolean);
+    return {
+      originalFileName: fileName,
+      documentTypeCode: restTokens[0] || "",
+      rawName: restTokens.slice(1).join(" "),
+      normalizedName: normalizeText(restTokens.slice(1).join(" ")),
+      documentNumber: compactDocumentNumber(leadingDoc[1]),
+      comparableDocumentNumber: comparableDocumentNumber(leadingDoc[1]),
+      format: "DOCUMENT_NUMBER_PREFIX",
+    };
+  }
+
+  if (trailingDoc) {
+    const left = normalizeText(trailingDoc[1]);
+    const leftTokens = left.split(" ").filter(Boolean);
+    return {
+      originalFileName: fileName,
+      documentTypeCode: leftTokens[0] || "",
+      rawName: leftTokens.slice(1).join(" "),
+      normalizedName: normalizeText(leftTokens.slice(1).join(" ")),
+      documentNumber: compactDocumentNumber(trailingDoc[2]),
+      comparableDocumentNumber: comparableDocumentNumber(trailingDoc[2]),
+      format: "DOCUMENT_NUMBER_SUFFIX",
     };
   }
 
@@ -67,6 +103,7 @@ function parseDocumentFileName(fileName) {
       rawName: "",
       normalizedName: "",
       documentNumber: compactDocumentNumber(first),
+      comparableDocumentNumber: comparableDocumentNumber(first),
       format: "DOCUMENT_NUMBER_PREFIX",
     };
   }
@@ -78,6 +115,7 @@ function parseDocumentFileName(fileName) {
       rawName: tokens.slice(1, -1).join(" "),
       normalizedName: normalizeText(tokens.slice(1, -1).join(" ")),
       documentNumber: compactDocumentNumber(last),
+      comparableDocumentNumber: comparableDocumentNumber(last),
       format: "DOCUMENT_NUMBER_SUFFIX",
     };
   }
@@ -92,6 +130,7 @@ function parseDocumentFileName(fileName) {
     rawName,
     normalizedName: normalizeText(rawName),
     documentNumber: "",
+    comparableDocumentNumber: "",
     format: "TYPE_NAME",
   };
 }
@@ -127,7 +166,9 @@ function buildBulkReviewRow(file, employees, documentTypes) {
     null;
 
   const byDocument = parsed.documentNumber
-    ? employees.filter((employee) => compactDocumentNumber(employee.documentNumber) === parsed.documentNumber)
+    ? employees.filter((employee) =>
+        comparableDocumentNumber(employee.documentNumber) === parsed.comparableDocumentNumber
+      )
     : [];
 
   const exactMatches = parsed.normalizedName
@@ -161,6 +202,7 @@ function buildBulkReviewRow(file, employees, documentTypes) {
     extractedName: parsed.rawName,
     normalizedName: parsed.normalizedName,
     documentNumber: parsed.documentNumber,
+    comparableDocumentNumber: parsed.comparableDocumentNumber,
     format: parsed.format,
     employeeId: finalStatus === "MATCHED" ? detectedEmployee?.id || null : null,
     detectedEmployee,
@@ -173,6 +215,8 @@ function buildBulkReviewRow(file, employees, documentTypes) {
 
 module.exports = {
   normalizeText,
+  compactDocumentNumber,
+  comparableDocumentNumber,
   parseDocumentFileName,
   buildBulkReviewRow,
 };

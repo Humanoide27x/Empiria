@@ -1109,9 +1109,7 @@ function renderItemsTable(items) {
       const locked = groupLocked || isReviewed;
       const isSelected = selectedItemIds.has(item.id);
       const hasExtCover = extCoverItemIds.has(item.id);
-<<<<<<< HEAD
       const retiredInPeriod = item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada;
-=======
       const ssDays = item.ss_days != null ? item.ss_days : 30;
       const motivoMeta = item.retirement_reason ? MOTIVO_LABEL[item.retirement_reason] : null;
       const ssHtml = (() => {
@@ -1132,7 +1130,6 @@ function renderItemsTable(items) {
       const ssAlert = (item.requires_replacement === true && item.replacement_found === false)
         ? `<div class="nm-ss-alert" title="Retiro requiere reemplazo, pero no se encontró ingreso asociado para la misma sede.">⚠ Sin reemplazo</div>`
         : "";
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
       return `
       <tr class="${isReviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}">
         <td class="nm-sel-col">
@@ -1145,13 +1142,10 @@ function renderItemsTable(items) {
         <td>
           <b>${escapeHtml(item.employee_name)}</b><br>
           <small style="color:#64748B">${escapeHtml(item.document_number || "")}</small>
-<<<<<<< HEAD
           ${retiredInPeriod ? `<br><small style="color:#B45309;font-weight:700">Retirado en este periodo${item.fecha_retiro_aplicada ? ` · ${escapeHtml(String(item.fecha_retiro_aplicada).slice(0, 10))}` : ""}</small>` : ""}
           ${item.worked_days ? `<br><small style="color:#475569">Días laborados: ${Number(item.worked_days || 0)}</small>` : ""}
-=======
           ${consolidated ? `<br><small style="color:#7C3AED;font-weight:600">${escapeHtml(item.municipality_name || "")}</small>` : ""}
           ${ssAlert}
->>>>>>> 03d3100d9fea6178f36fc2e8b2bcbd241043fdde
         </td>
         <td>
           <small>${escapeHtml(item.institution_name || "-")}</small><br>
