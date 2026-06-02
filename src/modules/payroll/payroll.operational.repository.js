@@ -163,13 +163,25 @@ function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
 }
 
 // Tarifas externas fijas por categoría (NO usar salario interno / 30)
-const EXTERNAL_TURN_TARIFFS = {
-  CAARES1: 119600, CAARES3: 119600,
-  CAARES2: 71100,  CAARES4: 71100,
-  CAA1:    113200,
-  CAA2:    85000,
-  RI:      56700,
-};
+const TURN_TARIFFS_BY_OPERATIONAL_CATEGORY = Object.freeze({
+  CAARES_TC: 119600,
+  CAARES_MT: 71100,
+  CAA1:      113200,
+  CAA2:      85000,
+  RI:        56700,
+});
+
+const TURN_TARIFF_CATEGORY_ALIASES = Object.freeze({
+  CAARESTC: "CAARES_TC",
+  CAARESMT: "CAARES_MT",
+  CAARES1:  "CAARES_TC",
+  CAARES2:  "CAARES_MT",
+  CAARES3:  "CAARES_TC",
+  CAARES4:  "CAARES_MT",
+  CAA1:     "CAA1",
+  CAA2:     "CAA2",
+  RI:       "RI",
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TIPOS OFICIALES DE NOVEDAD (12 tipos canónicos de EMPIRIA)
@@ -301,6 +313,21 @@ function norm(value) {
     .toUpperCase();
 }
 
+function normalizeCategoryLabel(value) {
+  return norm(value)
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactCategoryLabel(value) {
+  return normalizeCategoryLabel(value).replace(/\s+/g, "");
+}
+
+function hasCategoryWord(value, word) {
+  return normalizeCategoryLabel(value).split(" ").filter(Boolean).includes(String(word || "").toUpperCase());
+}
+
 function isOperario(position) {
   return norm(position) === norm(OPERARIO_POSITION);
 }
@@ -312,9 +339,10 @@ function normalizeOperationalPayrollItem(item) {
   const totalDevengado = n(item.total_devengado);
   const deduccionSalud = calculatePayrollDeductionBase(baseSalary);
   const deduccionPension = calculatePayrollDeductionBase(baseSalary);
-  const totalDeducciones = deduccionSalud + deduccionPension;
-  const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
   const calc = item.calculation && typeof item.calculation === "object" ? item.calculation : {};
+  const turnCoverDiscount = n(calc.turn_cover_discount);
+  const totalDeducciones = deduccionSalud + deduccionPension + turnCoverDiscount;
+  const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
 
   // display_worked_days: si ya fue calculado y guardado en el snapshot de cálculo, usarlo.
   // Si no (items calculados antes de esta versión), derivarlo de worked_days - salary_discount_days.
@@ -326,6 +354,7 @@ function normalizeOperationalPayrollItem(item) {
     ...calc,
     deduccion_salud:     deduccionSalud,
     deduccion_pension:   deduccionPension,
+    turn_cover_discount: turnCoverDiscount,
     display_worked_days: displayWorkedDays,
   };
 
@@ -341,6 +370,66 @@ function normalizeOperationalPayrollItem(item) {
 function isMedicalIncapacity(code) {
   return MEDICAL_INCAPACITY_TYPES.has(text(code).toUpperCase());
 }
+
+function validateTurnTariffCatalog() {
+  const expected = {
+    CAARES_TC: 119600,
+    CAARES_MT: 71100,
+    CAA1:      113200,
+    CAA2:      85000,
+    RI:        56700,
+  };
+
+  for (const [category, amount] of Object.entries(expected)) {
+    if (TURN_TARIFFS_BY_OPERATIONAL_CATEGORY[category] !== amount) {
+      throw new Error(`Catalogo de tarifas de turnos invalido para ${category}`);
+    }
+  }
+
+  const seenAmounts = new Map();
+  for (const [category, amount] of Object.entries(TURN_TARIFFS_BY_OPERATIONAL_CATEGORY)) {
+    if (seenAmounts.has(amount)) {
+      throw new Error(`Tarifa duplicada entre categorias operativas: ${seenAmounts.get(amount)} y ${category}`);
+    }
+    seenAmounts.set(amount, category);
+  }
+}
+
+function resolveTurnTariffCategory(source = {}, { strict = false } = {}) {
+  const salaryCategory = text(source.salary_category || source.salaryCategory);
+  const modality = text(source.modality);
+  const workTimeType = text(source.work_time_type || source.workTimeType);
+
+  const directCategory = TURN_TARIFF_CATEGORY_ALIASES[compactCategoryLabel(salaryCategory)];
+  if (directCategory) return directCategory;
+
+  if (hasCategoryWord(salaryCategory, "RI") || hasCategoryWord(modality, "RI")) {
+    return "RI";
+  }
+
+  if (hasCategoryWord(salaryCategory, "CAARES") || hasCategoryWord(modality, "CAARES")) {
+    return workTimeKind(salaryCategory || workTimeType || modality) === "MT" ? "CAARES_MT" : "CAARES_TC";
+  }
+
+  if (hasCategoryWord(salaryCategory, "CAA") || hasCategoryWord(modality, "CAA")) {
+    return workTimeKind(salaryCategory || workTimeType || modality) === "MT" ? "CAA2" : "CAA1";
+  }
+
+  if (strict) {
+    throw new Error(
+      `No se pudo resolver la categoria operativa del turno desde salary_category="${salaryCategory}" modalidad="${modality}" jornada="${workTimeType}".`
+    );
+  }
+
+  return null;
+}
+
+function getTurnTariffDailyValue(source = {}, options = {}) {
+  const operationalCategory = resolveTurnTariffCategory(source, options);
+  return operationalCategory ? n(TURN_TARIFFS_BY_OPERATIONAL_CATEGORY[operationalCategory]) : 0;
+}
+
+validateTurnTariffCatalog();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RECORTE DE NOVEDADES AL PERÍODO (cross-period clipping)
@@ -388,16 +477,7 @@ function clipNoveltiesByPeriod(novelties, periodStart, periodEnd) {
 // Tarifas fijas diarias para turnos EXTERNOS por categoría salarial.
 // NO usar fórmula proporcional interna (salario/30) para externos.
 function getExternalCoverDailyValue(category) {
-  const RATES = {
-    CAARES1: 119600,
-    CAARES2:  71100,
-    CAARES3: 119600,
-    CAARES4:  71100,
-    CAA1:    113200,
-    CAA2:     85000,
-    RI:       56700,
-  };
-  return RATES[String(category || "").toUpperCase()] || 0;
+  return getTurnTariffDailyValue({ salary_category: category }, { strict: true });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -738,19 +818,19 @@ async function listSupportRows(filters = {}) {
  * Se usa site_id (no texto) para contar peers correctamente.
  */
 function classifySiteModality(employee, allPeriodEmployees) {
-  const mod  = norm(employee.modality);
+  const mod  = normalizeCategoryLabel(employee.modality);
   const wtk  = workTimeKind(employee.work_time_type);
   const siteId = employee.site_id;
 
-  if (mod === "RI") return "RI";
+  if (hasCategoryWord(mod, "RI")) return "RI";
 
-  if (mod === "CAARES" || mod.startsWith("CAARES")) {
+  if (hasCategoryWord(mod, "CAARES")) {
     // Contar TC en misma sede con modalidad CAARES (usando site_id)
     const peersCAARES = allPeriodEmployees.filter((p) => {
-      const pm = norm(p.modality);
+      const pm = normalizeCategoryLabel(p.modality);
       return (
         p.site_id === siteId &&
-        (pm === "CAARES" || pm.startsWith("CAARES"))
+        hasCategoryWord(pm, "CAARES")
       );
     });
     const tcCount = peersCAARES.filter((p) => workTimeKind(p.work_time_type) === "TC").length;
@@ -759,7 +839,7 @@ function classifySiteModality(employee, allPeriodEmployees) {
     return tcCount <= 1 ? "CAARES2" : "CAARES4";
   }
 
-  if (mod === "CAA" || mod.startsWith("CAA")) {
+  if (hasCategoryWord(mod, "CAA")) {
     return wtk === "TC" ? "CAA1" : "CAA2";
   }
 
@@ -1060,6 +1140,12 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
         String(c.internal_employee_id) === String(employee.employee_id)
     )
     .reduce((sum, c) => sum + n(c.days), 0);
+  const coveredTurnDiscount = covers
+    .filter((c) => String(c.affected_employee_id) === String(employee.employee_id))
+    .reduce((sum, c) => sum + n(c.total_value), 0);
+  const coveredTurnDiscountDays = covers
+    .filter((c) => String(c.affected_employee_id) === String(employee.employee_id))
+    .reduce((sum, c) => sum + n(c.days), 0);
 
   // ── Totales ───────────────────────────────────────────────────────────────
   const effectiveSalary    = Math.max(0, baseSalary    - salaryDiscount);
@@ -1071,7 +1157,7 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
   // Deducciones: misma fórmula que Calculadora de Salario — ceil al 100 sobre salario efectivo
   const deduccionSalud   = calculatePayrollDeductionBase(effectiveSalary);
   const deduccionPension = calculatePayrollDeductionBase(effectiveSalary);
-  const totalDeducciones = deduccionSalud + deduccionPension;
+  const totalDeducciones = deduccionSalud + deduccionPension + coveredTurnDiscount;
 
   const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
 
@@ -1108,6 +1194,8 @@ function calculateEmployeeAmounts(employee, salaryConfig, novelties = [], covers
       internal_cover_value:    internalCoverValue,
       replacement_amount:      internalCoverValue,
       replacement_days:        internalCoverDays,
+      turn_cover_discount:     coveredTurnDiscount,
+      turn_cover_discount_days: coveredTurnDiscountDays,
       deduccion_salud:         deduccionSalud,
       deduccion_pension:       deduccionPension,
     },
@@ -1192,6 +1280,12 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
   const internalCoverDays = covers
     .filter((c) => c.cover_type === "INTERNA" && String(c.internal_employee_id) === String(employee.employee_id))
     .reduce((sum, c) => sum + n(c.days), 0);
+  const coveredTurnDiscount = covers
+    .filter((c) => String(c.affected_employee_id) === String(employee.employee_id))
+    .reduce((sum, c) => sum + n(c.total_value), 0);
+  const coveredTurnDiscountDays = covers
+    .filter((c) => String(c.affected_employee_id) === String(employee.employee_id))
+    .reduce((sum, c) => sum + n(c.days), 0);
 
   // ── Efectivos ─────────────────────────────────────────────────────────────
   const totalBase   = Math.max(0, (baseOrig  + baseNew)  - salaryDiscount);
@@ -1201,7 +1295,7 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
 
   const deduccionSalud   = calculatePayrollDeductionBase(totalBase);
   const deduccionPension = calculatePayrollDeductionBase(totalBase);
-  const totalDeducciones = deduccionSalud + deduccionPension;
+  const totalDeducciones = deduccionSalud + deduccionPension + coveredTurnDiscount;
   const netoPagar = Math.max(0, totalDevengado - totalDeducciones);
 
   const displayWorkedDaysCambio = Math.max(0, 30 - salaryDiscountDays);
@@ -1235,6 +1329,8 @@ function calculateAmountsWithCambio(employee, salConfigOriginal, allNovelties, c
       internal_cover_value:    internalCoverValue,
       replacement_amount:      internalCoverValue,
       replacement_days:        internalCoverDays,
+      turn_cover_discount:     coveredTurnDiscount,
+      turn_cover_discount_days: coveredTurnDiscountDays,
       salary_discount:         salaryDiscount,
       salary_discount_days:    salaryDiscountDays,
       salary_novelties:        salaryNoveltyDetail,
@@ -1754,7 +1850,10 @@ async function calculatePayrollGroup(groupId) {
     noveltyPromise,
     // Solo coberturas INTERNAS — las externas no afectan ningún payroll_item
     pool.query(
-      `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
+      `SELECT ptc.*, pn.employee_id AS affected_employee_id
+         FROM payroll_turn_covers ptc
+         JOIN payroll_novelties pn ON pn.id = ptc.novelty_id
+        WHERE ptc.payroll_period_id = $1`,
       [group.period_id]
     ),
     // Fechas del período para recorte multi-período y salarios individuales
@@ -2146,6 +2245,7 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
               ptc.total_value AS replacement_amount,
               ptc.value_per_day AS replacement_value_per_day,
               pi.employee_id AS affected_employee_id,
+              pi.salary_category AS origin_salary_category,
               repl.full_name AS replacement_employee_name
          FROM payroll_novelties pn
          LEFT JOIN payroll_items pi          ON pi.id = pn.payroll_item_id
@@ -2162,7 +2262,10 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
     // municipality_id incorrecto en novelty_supports quedaran excluidos.
     listSupportRows({ periodId, groupId }),
     pool.query(
-      `SELECT * FROM payroll_turn_covers WHERE payroll_period_id = $1 AND cover_type = 'INTERNA'`,
+      `SELECT ptc.*, pn.employee_id AS affected_employee_id
+         FROM payroll_turn_covers ptc
+         JOIN payroll_novelties pn ON pn.id = ptc.novelty_id
+        WHERE ptc.payroll_period_id = $1`,
       [periodId]
     ),
     listGroupTurnCovers(groupId),
@@ -2246,6 +2349,7 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
     const calc = calcByItem.get(String(nov.payroll_item_id)) || {};
     const days = Math.min(n(nov.days), n(calc.worked_days) || 30);
     const code = text(nov.novelty_type);
+    const coverAmount = n(nov.replacement_amount);
     const salaryAmount = SALARY_AFFECTING.has(code) && code !== "FECHA_INGRESO" && code !== "FECHA_RETIRO"
       ? Math.round(n(calc.daily_salary || 0) * days)
       : 0;
@@ -2253,9 +2357,9 @@ async function getPayrollGroupDetail(periodId, groupId, filters = {}) {
       ? Math.round(n(calc.daily_transport || 0) * days)
       : 0;
     nov.affected_employee_id = nov.affected_employee_id || nov.employee_id;
-    nov.affected_amount = salaryAmount + transportAmount;
+    nov.affected_amount = coverAmount > 0 ? coverAmount : salaryAmount + transportAmount;
     nov.computed_impact = nov.affected_amount;
-    nov.impact_type = salaryAmount ? "salary" : transportAmount ? "transport" : null;
+    nov.impact_type = coverAmount > 0 ? "turn_cover" : salaryAmount ? "salary" : transportAmount ? "transport" : null;
   }
 
   // ── Calcular Días SS (lógica independiente de días laborados) ───────────────
@@ -2321,8 +2425,14 @@ async function recalculatePayrollItem(itemId) {
   );
   // Solo coberturas INTERNAS realizadas POR este empleado — externas no afectan su cálculo
   const { rows: covers } = await pool.query(
-    `SELECT * FROM payroll_turn_covers
-      WHERE payroll_period_id = $1 AND cover_type = 'INTERNA' AND internal_employee_id = $2`,
+    `SELECT ptc.*, pn.employee_id AS affected_employee_id
+       FROM payroll_turn_covers ptc
+       JOIN payroll_novelties pn ON pn.id = ptc.novelty_id
+      WHERE ptc.payroll_period_id = $1
+        AND (
+          (ptc.cover_type = 'INTERNA' AND ptc.internal_employee_id = $2)
+          OR pn.employee_id = $2
+        )`,
     [item.period_id, item.employee_id]
   );
 
@@ -3177,8 +3287,25 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
   }
 
   // Obtener valor_dia — lógica diferente para EXTERNA (tarifa fija) e INTERNA (proporcional)
-  let valuePerDay = n(payload.value_per_day || payload.valueDay || payload.valor_dia);
-  if (!valuePerDay) {
+  const { rows: originItemRows } = await pool.query(
+    `SELECT salary_category, modality, work_time_type
+       FROM payroll_items
+      WHERE id = $1`,
+    [novelty.payroll_item_id]
+  );
+  const originItem = originItemRows[0];
+  const turnTariffCategory = resolveTurnTariffCategory(originItem, { strict: true });
+  const resolvedValuePerDay = getExternalCoverDailyValue(originItem?.salary_category || turnTariffCategory);
+  const requestedValuePerDay = n(payload.value_per_day || payload.valueDay || payload.valor_dia);
+  if (requestedValuePerDay && requestedValuePerDay !== resolvedValuePerDay) {
+    throw new Error(
+      `La tarifa del turno para ${turnTariffCategory} es ${resolvedValuePerDay} y no puede modificarse manualmente.`
+    );
+  }
+  const valuePerDay = resolvedValuePerDay;
+  /* legacy manual/fallback valuation removed: tariff is resolved exclusively
+     from the operational category of the covered shift */
+  if (false) {
     const { rows: originItemRows } = await pool.query(
       `SELECT salary_category, modality FROM payroll_items WHERE id = $1`,
       [novelty.payroll_item_id]
@@ -3242,7 +3369,7 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
         text(payload.account_number || payload.cuenta),
         id(payload.municipality_id || novelty.municipality_id),
         id(payload.site_id         || novelty.site_id),
-        text(payload.modality      || payload.modalidad),
+        text(payload.modality      || payload.modalidad || originItem?.modality),
         valuePerDay,
       ]
     );
@@ -3328,7 +3455,7 @@ async function createTurnCover(noveltyId, payload = {}, userId) {
     external_worker_id: externalWorkerId,
     affected_employee_id: novelty.employee_id,
     replacement_employee_id: internalEmployeeId,
-    affected_amount: 0,
+    affected_amount: days * valuePerDay,
     replacement_amount: days * valuePerDay,
   };
 }
@@ -3661,7 +3788,7 @@ async function getItemPayslip(itemId) {
   if (!itemRows[0]) throw new Error("Item de nómina no encontrado");
   const item = itemRows[0];
 
-  const [{ rows: novRows }, { rows: myCovers }] = await Promise.all([
+  const [{ rows: novRows }, { rows: calcCovers }] = await Promise.all([
     pool.query(
       `SELECT pn.*, pnt.name AS novelty_name, pnt.affects_salary, pnt.affects_transport
          FROM payroll_novelties pn
@@ -3670,19 +3797,30 @@ async function getItemPayslip(itemId) {
         ORDER BY pn.created_at`,
       [itemId]
     ),
-    // Coberturas INTERNAS realizadas POR este empleado (suman a su devengado).
-    // Las coberturas EXTERNAS NO se incluyen en el desprendible del empleado origen.
     pool.query(
       `SELECT ptc.*,
+              pn.employee_id AS affected_employee_id,
               pn.days AS novelty_days,
-              pi_origin.employee_name AS covered_employee_name
+              pi_origin.employee_name AS covered_employee_name,
+              pi_origin.salary_category AS covered_salary_category
          FROM payroll_turn_covers ptc
          JOIN payroll_novelties pn        ON pn.id  = ptc.novelty_id
          JOIN payroll_items pi_origin     ON pi_origin.id = ptc.payroll_item_id
-        WHERE ptc.payroll_period_id = $1 AND ptc.cover_type = 'INTERNA' AND ptc.internal_employee_id = $2`,
+        WHERE ptc.payroll_period_id = $1
+          AND (
+            (ptc.cover_type = 'INTERNA' AND ptc.internal_employee_id = $2)
+            OR pn.employee_id = $2
+          )`,
       [item.period_id, item.employee_id]
     ),
   ]);
+
+  const myCovers = calcCovers.filter(
+    (cover) => cover.cover_type === "INTERNA" && String(cover.internal_employee_id) === String(item.employee_id)
+  );
+  const receivedCovers = calcCovers.filter(
+    (cover) => String(cover.affected_employee_id) === String(item.employee_id)
+  );
 
   // ── Configuración salarial canónica (igual que recalculatePayrollItem) ────
   const salaryCategories = await getSalaryCategories(item.contract_id);
@@ -3707,8 +3845,8 @@ async function getItemPayslip(itemId) {
   // ── Cálculo en vivo — misma lógica que la Calculadora de Salario ─────────
   const cambioNov = novRows.find((x) => x.novelty_type === "CAMBIO_OPERATIVO_COBERTURA");
   const liveAmounts = cambioNov
-    ? calculateAmountsWithCambio(emp, salConfig, novRows, myCovers, cambioNov, salaryCategories)
-    : calculateEmployeeAmounts(emp, salConfig, novRows, myCovers);
+    ? calculateAmountsWithCambio(emp, salConfig, novRows, calcCovers, cambioNov, salaryCategories)
+    : calculateEmployeeAmounts(emp, salConfig, novRows, calcCovers);
   const liveCalc = liveAmounts.calculation;
 
   // ── Tasas diarias para enriquecimiento de novedades individuales ─────────
@@ -3773,6 +3911,7 @@ async function getItemPayslip(itemId) {
     deductions: {
       salud:             n(liveCalc.deduccion_salud),
       pension:           n(liveCalc.deduccion_pension),
+      turn_cover_discount: n(liveCalc.turn_cover_discount),
       total_deducciones: liveAmounts.total_deducciones,
     },
     cambio_operativo: liveCalc.cambio_operativo ? {
@@ -3791,8 +3930,8 @@ async function getItemPayslip(itemId) {
     worked_days:     workedDays,
     salary_category: item.salary_category || "",
     novelties:        enrichedNovelties,
-    covers:           [],               // externos NO se muestran en desprendible del origen
-    performed_covers: myCovers,        // coberturas internas realizadas POR este empleado
+    covers:           receivedCovers,
+    performed_covers: myCovers,
     calculation:      liveCalc,
     payslip: {
       worked_days:               workedDays,
@@ -4167,6 +4306,7 @@ async function listGroupTurns(groupId) {
        pi.site_name,
        pi.modality,
        pi.work_time_type,
+       pi.salary_category        AS origin_category,
        repl.id                    AS internal_employee_id,
        repl.full_name             AS internal_employee_name,
        repl.document_number       AS internal_document,

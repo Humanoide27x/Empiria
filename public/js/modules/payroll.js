@@ -1261,7 +1261,13 @@ function renderNoveltiesGrouped(novelties) {
       const isLocked     = groupLocked || isReviewed || isItemLocked;
       const isCoverLocked= isReviewed || isItemLocked;
       const impactAmt    = Number(nov.affected_amount ?? nov.computed_impact ?? nov.value ?? 0);
-      const impactLabel  = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
+      const impactLabel  = nov.impact_type === "salary"
+        ? "↓ Sal."
+        : nov.impact_type === "transport"
+          ? "↓ Transp."
+          : nov.impact_type === "turn_cover"
+            ? "↓ Turno"
+            : "";
       const dateStr      = nov.original_end_date
         ? fmtDateRange(nov.original_start_date || nov.start_date, nov.original_end_date)
         : fmtDateRange(nov.start_date, nov.end_date) || fmtDateDMY(nov.novelty_date);
@@ -1379,9 +1385,15 @@ function renderNoveltiesTable(novelties) {
       // El botón "Cubrió" tiene lock propio: permite registrar coberturas externas aunque la nómina esté cerrada
       const isCoverLocked  = isReviewed || isItemLocked;
       const impactAmt      = Number(nov.affected_amount ?? nov.computed_impact ?? nov.value ?? 0);
-      const impactLabel    = nov.impact_type === "salary" ? "↓ Sal." : nov.impact_type === "transport" ? "↓ Transp." : "";
+      const impactLabel    = nov.impact_type === "salary"
+        ? "↓ Sal."
+        : nov.impact_type === "transport"
+          ? "↓ Transp."
+          : nov.impact_type === "turn_cover"
+            ? "↓ Turno"
+            : "";
       const replacementText = Number(nov.replacement_amount || 0)
-        ? `<br><small style="color:#047857">Reemplazo: ${escapeHtml(nov.replacement_employee_name || "interno")} · ${Number(nov.covered_days || 0)}d · +${fmtCOP(nov.replacement_amount)}</small>`
+        ? `<br><small style="color:#047857">Reemplazo: ${escapeHtml(nov.replacement_employee_name || "interno")} · ${escapeHtml(nov.origin_salary_category || "—")} · ${Number(nov.covered_days || 0)}d · ${fmtCOP(Number(nov.replacement_value_per_day || 0))}/d · +${fmtCOP(nov.replacement_amount)}</small>`
         : "";
       return `
       <tr class="${isReviewed ? "reviewed-row" : ""}">
@@ -1458,6 +1470,7 @@ function renderTurnsTable(covers) {
       <th>Municipio / Institución</th>
       <th>Cobertura</th>
       <th>Quien cubrió</th>
+      <th>Categoría</th>
       <th class="num">Días</th>
       <th class="num">Valor día</th>
       <th class="num">Total</th>
@@ -1494,6 +1507,7 @@ function renderTurnsTable(covers) {
           <b>${escapeHtml(coverName)}</b><br>
           <small style="color:#64748B">${escapeHtml(coverDoc)}</small>
         </td>
+        <td><small>${escapeHtml(c.origin_category || "—")}</small></td>
         <td class="num">${Number(c.days || 0)}</td>
         <td class="num">${fmtCOP(c.value_per_day)}</td>
         <td class="num"><b>${fmtCOP(c.total_value)}</b></td>
@@ -3560,6 +3574,8 @@ function openCoverModal(noveltyId, itemId) {
 
   // Empleados del grupo para cobertura interna
   const employees = activeGroupDetail?.items || [];
+  const originItem = employees.find((e) => Number(e.id) === Number(itemId));
+  const originCategory = novelty.origin_salary_category || originItem?.salary_category || "—";
   const internalOptions = employees
     .filter((e) => String(e.employee_id) !== String(novelty.employee_id))
     .map((e) => `<option value="${e.employee_id}" ${String(e.employee_id) === String(novelty.replacement_employee_id || "") ? "selected" : ""}>${escapeHtml(e.employee_name)} — ${escapeHtml(e.document_number || "")}</option>`)
@@ -3586,8 +3602,9 @@ function openCoverModal(noveltyId, itemId) {
         <input class="nm-pay-input" id="coverDays" type="number" min="1" max="${Number(novelty.days || 1)}" value="${Number(novelty.covered_days || novelty.days || 1)}">
       </div>
       <div class="nm-pay-field">
-        <label>Valor día <small style="color:#94A3B8;font-weight:400">(0 = automático)</small></label>
-        <input class="nm-pay-input" id="coverValueDay" type="number" min="0" value="${Number(novelty.replacement_value_per_day || 0)}">
+        <label>Valor día <small style="color:#94A3B8;font-weight:400">(calculado automáticamente)</small></label>
+        <input class="nm-pay-input" id="coverValueDay" type="text" value="${novelty.replacement_value_per_day ? fmtCOP(Number(novelty.replacement_value_per_day)) : "Se calculará al guardar"}" readonly>
+        <small style="color:#64748B">Categoría aplicada: <b>${escapeHtml(originCategory)}</b></small>
       </div>
     </div>
 
@@ -3661,13 +3678,12 @@ function openCoverModal(noveltyId, itemId) {
     try {
       const coverType = document.getElementById("coverType").value;
       const days      = Number(document.getElementById("coverDays").value) || 1;
-      const valueDia  = Number(document.getElementById("coverValueDay").value) || 0;
       if (days > Number(novelty.days || 0)) {
         showError("Los días cubiertos no pueden superar los días de incapacidad");
         return;
       }
 
-      const body = { cover_type: coverType, days, value_per_day: valueDia || undefined };
+      const body = { cover_type: coverType, days };
 
       if (coverType === "INTERNA") {
         body.internal_employee_id = document.getElementById("coverInternal").value;
@@ -3862,6 +3878,9 @@ function buildPayslipHtmlDoc(data, forPrint = false) {
   const performedCoverHtmlDoc = (performed_covers || []).map((c) =>
     `<div class="row"><span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span><b>+${fmt(c.total_value)}</b></div>`
   ).join("");
+  const coverDiscountHtmlDoc = (covers || []).map((c) =>
+    `<div class="row"><span>Turno cubierto — ${escapeHtml(c.cover_type || "")} · ${escapeHtml(c.covered_salary_category || c.origin_category || "—")} (${c.days}d)</span><b>-${fmt(c.total_value)}</b></div>`
+  ).join("");
 
   const printScript = forPrint ? `<script>window.onload=function(){window.print();}<\/script>` : "";
 
@@ -3928,6 +3947,7 @@ ${printScript}
     <div class="section-h">Deducciones</div>
     <div class="row"><span>Salud (4 %)</span><b>-${fmt(deductions.salud)}</b></div>
     <div class="row"><span>Pensión (4 %)</span><b>-${fmt(deductions.pension)}</b></div>
+    ${coverDiscountHtmlDoc}
     <div class="row total"><span>Total Deducciones</span><b>-${fmt(deductions.total_deducciones)}</b></div>
   </div>
 
@@ -4032,6 +4052,11 @@ async function openPayslipModal(itemId) {
         <span>Reemplazo — ${escapeHtml(c.covered_employee_name || "Empleado")} (${c.days}d)</span>
         <b>+${fmt(c.total_value)}</b>
       </div>`).join("");
+    const coverDiscountHtml = (data.covers || []).map((c) => `
+      <div class="nm-slip-row">
+        <span>Turno cubierto — ${escapeHtml(c.cover_type || "")} · ${escapeHtml(c.covered_salary_category || c.origin_category || "—")} (${c.days}d)</span>
+        <b>-${fmt(c.total_value)}</b>
+      </div>`).join("");
 
     const modal = document.getElementById("nmPayModal");
     modal.innerHTML = `
@@ -4057,6 +4082,7 @@ async function openPayslipModal(itemId) {
       <div class="nm-slip-section-h">Deducciones</div>
       <div class="nm-slip-row"><span>Salud (4 %)</span><b>-${fmt(deductions.salud)}</b></div>
       <div class="nm-slip-row"><span>Pensión (4 %)</span><b>-${fmt(deductions.pension)}</b></div>
+      ${coverDiscountHtml}
       <div class="nm-slip-row nm-slip-total"><span>Total Deducciones</span><b>-${fmt(deductions.total_deducciones)}</b></div>
     </div>
     <div class="nm-slip-section" style="border-color:#0F766E">
