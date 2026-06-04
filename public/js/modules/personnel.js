@@ -1,4 +1,4 @@
-import { state } from '../state.js';
+﻿import { state } from '../state.js';
 import { apiFetch } from '../api.js';
 import {
   escapeHtml, escapeAttr, printHtml, savePdf, exportToExcel, renderOptions,
@@ -15,6 +15,44 @@ import {
 } from '../constants.js';
 import { showError, showSuccess, showWarning } from '../toast.js';
 import { openModule } from '../nav.js';
+
+const DOC_TYPE_EQUIVALENTS = [
+  ["cedula", "cc", "cedula de ciudadania", "fotocopia del documento de identidad"],
+  ["hoja de vida", "hv"],
+  ["contrato", "contrato laboral"],
+  ["afiliacion eps", "eps", "certificado eps"],
+  ["afiliacion afp", "pension", "afp", "afiliacion pension"],
+  ["afiliacion caja de compensacion cofrem", "caja", "caja de compensacion"],
+  ["afiliacion arl", "arl"],
+  ["curso manipulacion de alimentos", "manipulacion", "manipulacion alimentos"],
+  ["examenes manipulacion de alimentos", "examen medico", "examenes"],
+  ["residencia expedida por alcaldia", "certificado residencia", "certificado de residencia"],
+  ["formato de dotacion", "dotacion", "soporte dotacion"],
+  ["rut"],
+  ["certificacion bancaria", "banco"],
+];
+
+function sameDocumentType(uploadedType, requiredType) {
+  const normalize = (value) => String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+  const aliasMap = sameDocumentType._aliasMap || (() => {
+    const map = new Map();
+    DOC_TYPE_EQUIVALENTS.forEach((group) => {
+      const canonical = normalize(group[0]);
+      group.forEach((label) => map.set(normalize(label), canonical));
+    });
+    sameDocumentType._aliasMap = map;
+    return map;
+  })();
+
+  const left = aliasMap.get(normalize(uploadedType)) || normalize(uploadedType);
+  const right = aliasMap.get(normalize(requiredType)) || normalize(requiredType);
+  return Boolean(left) && left === right;
+}
 
 // ── Local helpers ─────────────────────────────────────────────────────────────
 
@@ -224,7 +262,7 @@ function getPersonnelDocumentMetrics(employee, allDocuments = []) {
 
   requiredDocs.forEach((req) => {
     const latest = employeeDocs
-      .filter((doc) => _norm(doc.documentType) === _norm(req.name))
+      .filter((doc) => sameDocumentType(doc.documentType, req.name))
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
 
     if (!latest?.fileUrl) {
@@ -2681,7 +2719,7 @@ function getPersonnelHvStatusFull(employee, allDocuments = []) {
 
   for (const req of required) {
     const uploaded = employeeDocs
-      .filter((d) => _norm(d.documentType) === _norm(req.name))
+      .filter((d) => sameDocumentType(d.documentType, req.name))
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
 
     if (!uploaded?.fileUrl) { hasMissing = true; continue; }
@@ -2718,7 +2756,7 @@ function calculateDocumentAlertsFrontend(rows = [], allDocuments = []) {
     const empDocs = allDocuments.filter((d) => String(d.employeeId) === String(emp.id));
     for (const req of getRequiredDocumentsForEmployee(emp).filter((d) => d.required)) {
       const up = empDocs
-        .filter((d) => _norm(d.documentType) === _norm(req.name))
+        .filter((d) => sameDocumentType(d.documentType, req.name))
         .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
 
       if (!up?.fileUrl) continue;
@@ -3908,70 +3946,203 @@ async function openBulkDocumentUploadModal() {
       ? personnelPayload.personnel
       : [];
 
+  const statusMeta = {
+    READY: { label: "Listo para cargar", color: "#15803d", bg: "#f0fdf4" },
+    REQUIRES_REVIEW: { label: "Requiere revision", color: "#b45309", bg: "#fffbeb" },
+    NOT_FOUND: { label: "No encontrado", color: "#b91c1c", bg: "#fef2f2" },
+    TYPE_UNRECOGNIZED: { label: "Tipo no reconocido", color: "#1d4ed8", bg: "#eff6ff" },
+    ERROR: { label: "Error", color: "#991b1b", bg: "#fef2f2" },
+    OMITTED: { label: "Omitido", color: "#64748b", bg: "#f8fafc" },
+    DUPLICATE: { label: "Duplicado", color: "#7c3aed", bg: "#f5f3ff" },
+    PHYSICAL_WITHOUT_DB: { label: "Fisico sin BD", color: "#92400e", bg: "#fff7ed" },
+    EMPLOYEE_NOT_FOUND_OR_OTHER_COMPANY: { label: "Empleado invalido", color: "#b91c1c", bg: "#fef2f2" },
+    DOCUMENT_TYPE_NULL: { label: "Tipo faltante", color: "#b45309", bg: "#fffbeb" },
+    DOCUMENT_TYPE_NOT_FOUND: { label: "Tipo invalido", color: "#1d4ed8", bg: "#eff6ff" },
+    MATCHED: { label: "Asociado", color: "#15803d", bg: "#f0fdf4" },
+    NO_MATCH: { label: "Sin coincidencia", color: "#b91c1c", bg: "#fef2f2" },
+  };
+
   const modal = document.createElement("div");
   modal.id = "bulkDocumentModal";
   modal.className = "modal-overlay";
   modal.innerHTML = `
-    <div class="modal-card" style="max-width:1100px">
+    <div class="modal-card" style="max-width:1320px">
       <div class="modal-header">
-        <h3>Auditoria de carga documental masiva</h3>
+        <h3>Auditoria y carga documental masiva</h3>
         <button type="button" class="modal-close" id="closeBulkDocumentModal">x</button>
       </div>
       <div class="modal-body">
-        <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:.75rem;align-items:end;margin-bottom:1rem">
-          <label style="font-size:13px;font-weight:600">Archivos
-            <input id="bulkDocumentFiles" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
+        <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,280px) auto auto auto;gap:.75rem;align-items:end;margin-bottom:1rem">
+          <label style="font-size:13px;font-weight:600">Archivos PDF / JPG / PNG
+            <input id="bulkDocumentFiles" type="file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
           </label>
-          <button type="button" class="btn btn-secondary" id="previewBulkDocuments">Prevalidar</button>
+          <label style="font-size:13px;font-weight:600">Archivo ZIP
+            <input id="bulkDocumentZip" type="file" accept=".zip,application/zip" style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
+          </label>
+          <button type="button" class="btn btn-secondary" id="previewBulkDocuments">Analizar lote</button>
           <button type="button" class="btn btn-secondary" id="auditBulkDocuments">Auditar fisicos/BD</button>
           <button type="button" class="btn btn-secondary" id="repairBulkDocuments">Previsualizar reparacion</button>
         </div>
-        <div id="bulkDocumentSummary" style="margin-bottom:.75rem;font-size:13px;color:#475569"></div>
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:.75rem;flex-wrap:wrap">
+          <div id="bulkDocumentSummary" style="font-size:13px;color:#475569;line-height:1.7"></div>
+          <a id="bulkDocumentReportLink" href="#" download style="display:none;font-size:12px;font-weight:700;color:#1d4ed8;text-decoration:none">Descargar reporte CSV</a>
+        </div>
         <div style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead style="position:sticky;top:0;background:var(--panel);z-index:1">
               <tr>
                 <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Archivo</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Nombre extraido</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Empleado detectado</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo detectado</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Trabajador detectado</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Documento</th>
                 <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Estado</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Confianza</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Correccion</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Trabajador manual</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo manual</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Documento existente</th>
+                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Accion</th>
               </tr>
             </thead>
             <tbody id="bulkDocumentRows">
-              <tr><td colspan="7" style="padding:1rem;color:#64748b">Selecciona PDFs para validar coincidencias.</td></tr>
+              <tr><td colspan="9" style="padding:1rem;color:#64748b">Selecciona archivos sueltos o un ZIP para previsualizar la asociacion.</td></tr>
             </tbody>
           </table>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="downloadBulkAudit" disabled>Descargar Excel</button>
-        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Cargar y vincular</button>
+        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Confirmar carga</button>
         <button type="button" class="btn btn-primary" id="applyBulkRepair" disabled>Aplicar reparacion</button>
-        <button type="button" class="btn btn-secondary" id="cancelBulkDocumentModal">Cancelar</button>
+        <button type="button" class="btn btn-secondary" id="cancelBulkDocumentModal">Cerrar</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
 
   const fileInput = modal.querySelector("#bulkDocumentFiles");
+  const zipInput = modal.querySelector("#bulkDocumentZip");
   const rowsBody = modal.querySelector("#bulkDocumentRows");
   const summaryEl = modal.querySelector("#bulkDocumentSummary");
+  const reportLink = modal.querySelector("#bulkDocumentReportLink");
   const uploadBtn = modal.querySelector("#uploadBulkDocuments");
   const repairApplyBtn = modal.querySelector("#applyBulkRepair");
   const downloadBtn = modal.querySelector("#downloadBulkAudit");
   let reviewRows = [];
+  let documentTypes = [];
+  let lastCommitSummary = null;
   let mode = "upload";
 
   const close = () => modal.remove();
   modal.querySelector("#closeBulkDocumentModal")?.addEventListener("click", close);
   modal.querySelector("#cancelBulkDocumentModal")?.addEventListener("click", close);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) close();
+  });
+
+  const buildUploadFormData = (rowsPayload = null) => {
+    const formData = new FormData();
+    Array.from(fileInput?.files || []).forEach((file) => formData.append("documents", file));
+    const zipFile = zipInput?.files?.[0];
+    if (zipFile) formData.append("zipFile", zipFile);
+    if (rowsPayload) formData.append("rows", JSON.stringify(rowsPayload));
+    return formData;
+  };
+
+  const renderSummary = (summary, summaryMode = "preview") => {
+    if (!summaryEl) return;
+    if (!summary) {
+      summaryEl.textContent = "";
+      return;
+    }
+
+    if (summaryMode === "commit") {
+      summaryEl.innerHTML = `
+        <strong>Resultado final</strong><br>
+        Total recibidos: <b>${summary.totalReceived || 0}</b> ·
+        Asociados correctamente: <b>${summary.associatedCorrectly || 0}</b> ·
+        Pendientes por revision: <b>${summary.pendingReview || 0}</b> ·
+        No encontrados: <b>${summary.notFound || 0}</b> ·
+        Con error: <b>${summary.errors || 0}</b> ·
+        Omitidos: <b>${summary.omitted || 0}</b>
+      `;
+      return;
+    }
+
+    if (summaryMode === "audit") {
+      summaryEl.innerHTML = `
+        <strong>Auditoria documental</strong><br>
+        Total archivos fisicos: <b>${summary.totalPhysicalFiles || 0}</b> ·
+        Total registros documentos: <b>${summary.totalDocumentRecords || 0}</b> ·
+        Vinculados a empleados: <b>${summary.totalLinkedToEmployees || 0}</b> ·
+        Huerfanos: <b>${summary.totalOrphans || 0}</b> ·
+        Fisicos sin registro: <b>${summary.totalPhysicalWithoutDbRecord || 0}</b>
+      `;
+      return;
+    }
+
+    if (summary.statuses) {
+      summaryEl.innerHTML = `
+        <strong>Previsualizacion</strong><br>
+        Total: <b>${summary.total || 0}</b> ·
+        Listos: <b>${summary.statuses.READY || 0}</b> ·
+        Requieren revision: <b>${summary.statuses.REQUIRES_REVIEW || 0}</b> ·
+        No encontrados: <b>${summary.statuses.NOT_FOUND || 0}</b> ·
+        Tipo no reconocido: <b>${summary.statuses.TYPE_UNRECOGNIZED || 0}</b> ·
+        Con error: <b>${summary.statuses.ERROR || 0}</b> ·
+        Con documento previo: <b>${summary.withConflicts || 0}</b>
+      `;
+      return;
+    }
+
+    const processed = summary.processed ?? summary.total ?? 0;
+    const linked = summary.linked ?? summary.matched ?? 0;
+    const unmatched = summary.unmatched ?? summary.notFound ?? 0;
+    const duplicates = summary.duplicates ?? 0;
+    const errors = summary.errors ?? 0;
+    summaryEl.innerHTML =
+      `<strong>Revision</strong><br>` +
+      `Archivos procesados: <b>${processed}</b> · ` +
+      `Vinculados correctamente: <b>${linked}</b> · ` +
+      `Sin coincidencia: <b>${unmatched}</b> · ` +
+      `Duplicados: <b>${duplicates}</b> · ` +
+      `Errores: <b>${errors}</b>`;
+  };
+
+  const buildEmployeeOptions = (selectedId, detectedEmployee = null) => {
+    const options = [...employees];
+    if (detectedEmployee?.id && !options.some((emp) => String(emp.id) === String(detectedEmployee.id))) {
+      options.unshift({
+        id: detectedEmployee.id,
+        fullName: detectedEmployee.fullName,
+        documentNumber: detectedEmployee.documentNumber,
+      });
+    }
+
+    return [
+      `<option value="">Selecciona trabajador</option>`,
+      ...options.map((emp) => {
+        const id = String(emp.id);
+        const selected = id === String(selectedId || "") ? " selected" : "";
+        const label = `${getPersonnelFullName(emp)} - ${getPersonnelDocument(emp)}`;
+        return `<option value="${escapeAttr(id)}"${selected}>${escapeHtml(label)}</option>`;
+      }),
+    ].join("");
+  };
+
+  const buildTypeOptions = (selectedId) => {
+    return [
+      `<option value="">Selecciona tipo</option>`,
+      ...documentTypes.map((docType) => {
+        const id = String(docType.id);
+        const selected = id === String(selectedId || "") ? " selected" : "";
+        const label = docType.name || docType.code || `Tipo ${id}`;
+        return `<option value="${escapeAttr(id)}"${selected}>${escapeHtml(label)}</option>`;
+      }),
+    ].join("");
+  };
 
   const renderRows = () => {
     if (!reviewRows.length) {
-      rowsBody.innerHTML = `<tr><td colspan="7" style="padding:1rem;color:#64748b">Sin resultados.</td></tr>`;
+      rowsBody.innerHTML = `<tr><td colspan="9" style="padding:1rem;color:#64748b">Sin resultados.</td></tr>`;
       uploadBtn.disabled = true;
       repairApplyBtn.disabled = true;
       downloadBtn.disabled = true;
@@ -3979,58 +4150,81 @@ async function openBulkDocumentUploadModal() {
     }
 
     rowsBody.innerHTML = reviewRows.map((row, index) => {
-      const detected = row.detectedEmployee?.fullName || "";
-      const statusColor = row.status === "MATCHED" ? "#15803d"
-        : row.status === "NO_MATCH" ? "#dc2626"
-        : "#d97706";
-      const optionEmployees = [...employees];
-      if (row.detectedEmployee?.id && !optionEmployees.some((emp) => String(emp.id) === String(row.detectedEmployee.id))) {
-        optionEmployees.unshift({
-          id: row.detectedEmployee.id,
-          fullName: row.detectedEmployee.fullName,
-          documentNumber: row.detectedEmployee.documentNumber,
-        });
-      }
-      const options = `<option value="">No asignar</option>` + optionEmployees.map((emp) => {
-        const selected = String(row.employeeId || "") === String(emp.id) ? " selected" : "";
-        const label = `${getPersonnelFullName(emp)} - ${getPersonnelDocument(emp)}`;
-        return `<option value="${escapeAttr(String(emp.id))}"${selected}>${escapeHtml(label)}</option>`;
-      }).join("");
+      const meta = statusMeta[row.status] || statusMeta.REQUIRES_REVIEW;
+      const detectedEmployee = row.detectedEmployee || null;
+      const detectedName = detectedEmployee?.fullName || row.employeeName || "";
+      const detectedDoc = detectedEmployee?.documentNumber || row.documentNumber || row.employeeDocumentNumber || "";
+      const candidates = Array.isArray(row.candidates) ? row.candidates.slice(0, 3) : [];
+      const candidateHint = candidates.length
+        ? `<div style="margin-top:4px;color:#64748b;font-size:11px">Sugerencias: ${escapeHtml(candidates.map((candidate) => `${candidate.fullName} (${candidate.documentNumber || "sin doc"})`).join(" · "))}</div>`
+        : "";
+      const existingConflict = row.existingConflict && row.existingDocument
+        ? `
+          <div style="display:grid;gap:6px">
+            <div style="font-size:11px;color:#64748b">
+              Ya existe: <b>${escapeHtml(row.existingDocument.originalFileName || row.existingDocument.fileName || "Documento previo")}</b><br>
+              Version actual: <b>${Number(row.existingDocument.version || 1)}</b>
+            </div>
+            <select data-bulk-duplicate-strategy="${index}" style="width:180px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
+              <option value="keep_both"${String(row.duplicateStrategy || "") === "keep_both" ? " selected" : ""}>Conservar ambos</option>
+              <option value="replace"${String(row.duplicateStrategy || "") === "replace" ? " selected" : ""}>Reemplazar logico</option>
+              <option value="new_version"${String(row.duplicateStrategy || "") === "new_version" ? " selected" : ""}>Marcar nueva version</option>
+            </select>
+          </div>`
+        : `<span style="color:#94a3b8">No aplica</span>`;
 
       return `<tr data-bulk-row="${index}">
-        <td style="padding:.55rem;border-bottom:1px solid var(--border);max-width:220px;word-break:break-word">${escapeHtml(row.fileName || "")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.documentTypeName || row.documentTypeCode || "")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(row.extractedName || row.documentNumber || "")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(detected || "Pendiente")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border);font-weight:700;color:${statusColor}">${escapeHtml(row.status || "")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${Number(row.confidence || 0)}%</td>
         <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <select data-bulk-employee-select="${index}" style="width:230px;padding:.35rem;border:1px solid var(--border);border-radius:6px">${options}</select>
+          <div style="font-weight:600;color:#0f172a;max-width:220px;word-break:break-word">${escapeHtml(row.fileName || "")}</div>
+          <div style="margin-top:4px;font-size:11px;color:#64748b">${escapeHtml(row.archiveEntryName || row.extractedName || row.documentNumber || row.fileKey || "")}</div>
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <div>${escapeHtml(row.documentTypeName || row.documentTypeCode || "Sin detectar")}</div>
+          <div style="margin-top:4px;color:#64748b;font-size:11px">${escapeHtml(row.documentTypeCode || "")}</div>
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <div>${escapeHtml(detectedName || "Sin asociacion automatica")}</div>
+          <div style="margin-top:4px;color:#64748b;font-size:11px">${escapeHtml(detectedDoc || "—")}</div>
+          ${candidateHint}
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(detectedDoc || row.documentNumber || "—")}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;background:${meta.bg};color:${meta.color}">
+            ${escapeHtml(meta.label)}
+          </span>
+          ${row.errorMessage || row.error ? `<div style="margin-top:6px;font-size:11px;color:#991b1b">${escapeHtml(row.errorMessage || row.error)}</div>` : ""}
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <select data-bulk-employee-select="${index}" style="width:230px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
+            ${buildEmployeeOptions(row.employeeId, detectedEmployee)}
+          </select>
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <select data-bulk-type-select="${index}" style="width:220px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
+            ${buildTypeOptions(row.documentTypeId || row.documentType_id)}
+          </select>
+        </td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${existingConflict}</td>
+        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" data-bulk-omit="${index}" ${row.status === "ERROR" || row.status === "OMITTED" ? "checked" : ""}>
+            Omitir
+          </label>
         </td>
       </tr>`;
     }).join("");
+
     uploadBtn.disabled = mode !== "upload";
     repairApplyBtn.disabled = mode !== "repair";
-    downloadBtn.disabled = false;
-  };
-
-  const setSummary = (summary = {}) => {
-    const processed = summary.processed ?? summary.total ?? 0;
-    const linked = summary.linked ?? summary.matched ?? summary.MATCHED ?? 0;
-    const unmatched = summary.unmatched ?? summary.NO_MATCH ?? 0;
-    const duplicates = summary.duplicates ?? summary.DUPLICATE ?? 0;
-    const errors = summary.errors ?? summary.ERROR ?? 0;
-    summaryEl.innerHTML =
-      `<b>Archivos procesados:</b> ${processed} &nbsp; ` +
-      `<b>Vinculados correctamente:</b> ${linked} &nbsp; ` +
-      `<b>Sin coincidencia:</b> ${unmatched} &nbsp; ` +
-      `<b>Duplicados:</b> ${duplicates} &nbsp; ` +
-      `<b>Errores:</b> ${errors}`;
+    downloadBtn.disabled = reviewRows.length === 0;
   };
 
   const selectedRows = () => reviewRows.map((row, index) => ({
     ...row,
     employeeId: modal.querySelector(`[data-bulk-employee-select="${index}"]`)?.value || "",
+    documentTypeId: modal.querySelector(`[data-bulk-type-select="${index}"]`)?.value || row.documentTypeId || row.documentType_id || "",
+    duplicateStrategy: modal.querySelector(`[data-bulk-duplicate-strategy="${index}"]`)?.value || row.duplicateStrategy || "keep_both",
+    omit: modal.querySelector(`[data-bulk-omit="${index}"]`)?.checked || false,
   }));
 
   const downloadRows = (rows, name) => {
@@ -4041,7 +4235,7 @@ async function openBulkDocumentUploadModal() {
       ],
       rows.map((row) => [
         row.fileName || "",
-        row.fileKey || "",
+        row.fileKey || row.sourceKey || "",
         row.documentTypeName || row.documentTypeCode || "",
         row.documentNumber || row.extractedName || "",
         row.detectedEmployee?.fullName || row.employeeName || row.employeeId || "",
@@ -4049,7 +4243,7 @@ async function openBulkDocumentUploadModal() {
         row.confidence || 0,
         row.stored ? "SI" : "",
         row.linked ? "SI" : "",
-        row.error || "",
+        row.error || row.errorMessage || "",
       ]),
       name
     );
@@ -4057,15 +4251,24 @@ async function openBulkDocumentUploadModal() {
 
   modal.querySelector("#previewBulkDocuments")?.addEventListener("click", async () => {
     const files = Array.from(fileInput?.files || []);
-    if (!files.length) { showWarning("Selecciona al menos un archivo."); return; }
+    const zipFile = zipInput?.files?.[0] || null;
+    if (!files.length && !zipFile) {
+      showWarning("Selecciona archivos sueltos o un ZIP.");
+      return;
+    }
     try {
       mode = "upload";
-      const res = await apiFetch("/documents/bulk-preview", {
+      lastCommitSummary = null;
+      uploadBtn.disabled = true;
+      reportLink.style.display = "none";
+      reportLink.removeAttribute("href");
+      const res = await apiFetch("/documents/bulk/preview", {
         method: "POST",
-        body: JSON.stringify({ files: files.map((file) => file.name) }),
+        body: buildUploadFormData(),
       });
       reviewRows = res.data?.rows || [];
-      setSummary(res.data?.summary || {});
+      documentTypes = Array.isArray(res.data?.documentTypes) ? res.data.documentTypes : [];
+      renderSummary(res.data?.summary || null, "preview");
       renderRows();
     } catch (err) {
       showError(err.message);
@@ -4075,15 +4278,11 @@ async function openBulkDocumentUploadModal() {
   modal.querySelector("#auditBulkDocuments")?.addEventListener("click", async () => {
     try {
       mode = "audit";
+      reportLink.style.display = "none";
+      reportLink.removeAttribute("href");
       const res = await apiFetch("/documents/bulk-audit", { skipDedupe: true });
       const data = res.data || {};
       const summary = data.summary || {};
-      summaryEl.innerHTML =
-        `<b>Total archivos fisicos:</b> ${summary.totalPhysicalFiles || 0} &nbsp; ` +
-        `<b>Total registros documentos:</b> ${summary.totalDocumentRecords || 0} &nbsp; ` +
-        `<b>Vinculados a empleados:</b> ${summary.totalLinkedToEmployees || 0} &nbsp; ` +
-        `<b>Huerfanos:</b> ${summary.totalOrphans || 0} &nbsp; ` +
-        `<b>Fisicos sin registro:</b> ${summary.totalPhysicalWithoutDbRecord || 0}`;
       const missing = data.physical?.missingDbRows || [];
       const relations = data.relations || [];
       reviewRows = [
@@ -4097,11 +4296,14 @@ async function openBulkDocumentUploadModal() {
         ...relations.map((row) => ({
           fileName: row.file_name,
           fileKey: row.file_url,
+          employeeId: row.employee_id || "",
+          documentTypeId: row.document_type_id || "",
           status: row.relation_status,
           confidence: 0,
           error: row.relation_status,
         })),
       ];
+      renderSummary(summary, "audit");
       renderRows();
     } catch (err) {
       showError(err.message);
@@ -4111,6 +4313,8 @@ async function openBulkDocumentUploadModal() {
   modal.querySelector("#repairBulkDocuments")?.addEventListener("click", async () => {
     try {
       mode = "repair";
+      reportLink.style.display = "none";
+      reportLink.removeAttribute("href");
       const files = Array.from(fileInput?.files || []);
       const body = files.length
         ? { files: files.map((file) => ({ fileName: file.name, fileKey: `documents/${file.name}` })) }
@@ -4120,7 +4324,8 @@ async function openBulkDocumentUploadModal() {
         body: JSON.stringify(body),
       });
       reviewRows = res.data?.rows || [];
-      setSummary(res.data?.summary || {});
+      documentTypes = Array.isArray(res.data?.documentTypes) ? res.data.documentTypes : documentTypes;
+      renderSummary(res.data?.summary || {}, "repair");
       renderRows();
     } catch (err) {
       showError(err.message);
@@ -4132,56 +4337,83 @@ async function openBulkDocumentUploadModal() {
   });
 
   uploadBtn.addEventListener("click", async () => {
-    const files = Array.from(fileInput?.files || []);
-    const byName = new Map(files.map((file) => [file.name, file]));
-    const rowsToUpload = selectedRows().filter((row) => row.employeeId);
-
-    if (!rowsToUpload.length) {
-      showWarning("Selecciona al menos un empleado para cargar.");
+    if (!reviewRows.length) {
+      showWarning("Primero analiza el lote.");
       return;
     }
 
-    const formData = new FormData();
-    const assignments = {};
-    for (const row of rowsToUpload) {
-      const file = byName.get(row.fileName);
-      if (!file) continue;
-      formData.append("files", file);
-      assignments[row.fileName] = {
-        employeeId: row.employeeId,
-        documentTypeId: row.documentTypeId || null,
-      };
-    }
-    formData.append("assignments", JSON.stringify(assignments));
+    const rowsPayload = selectedRows().map((row) => ({
+      sourceKey: row.sourceKey,
+      fileName: row.fileName,
+      status: row.status,
+      documentTypeName: row.documentTypeName,
+      employeeId: row.employeeId,
+      documentTypeId: row.documentTypeId,
+      duplicateStrategy: row.duplicateStrategy || "keep_both",
+      omit: row.omit === true,
+    }));
 
-    const res = await apiFetch("/documents/bulk-upload", { method: "POST", body: formData });
-    reviewRows = res.data?.rows || [];
-    setSummary(res.data?.summary || {});
-    renderRows();
-    downloadRows(reviewRows, `resultado_carga_documentos_${new Date().toISOString().slice(0, 10)}`);
-    showSuccess(res.message || "Carga masiva procesada.");
+    if (!rowsPayload.some((row) => !row.omit)) {
+      showWarning("No hay archivos marcados para cargar.");
+      return;
+    }
+
+    try {
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = "Procesando...";
+      const res = await apiFetch("/documents/bulk/commit", {
+        method: "POST",
+        body: buildUploadFormData(rowsPayload),
+      });
+      lastCommitSummary = res.data?.summary || null;
+      renderSummary(lastCommitSummary, "commit");
+      if (res.data?.reportCsvBase64) {
+        reportLink.href = res.data.reportCsvBase64;
+        reportLink.download = `reporte_carga_masiva_documentos_${new Date().toISOString().slice(0, 10)}.csv`;
+        reportLink.style.display = "";
+      }
+      reviewRows = (res.data?.rows || []).map((row, index) => ({
+        ...reviewRows[index],
+        status: row.result === "CARGADO" ? "READY" : row.status,
+        error: row.message || "",
+      }));
+      renderRows();
+      showSuccess("Carga masiva procesada.");
+      uploadBtn.textContent = "Carga procesada";
+      modal.querySelector("#cancelBulkDocumentModal").textContent = "Cerrar y recargar";
+      modal.querySelector("#cancelBulkDocumentModal").onclick = async () => {
+        close();
+        await openModule("gestion_personal");
+      };
+    } catch (err) {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "Confirmar carga";
+      showError(err.message);
+    }
   });
 
   repairApplyBtn.addEventListener("click", async () => {
     const rows = selectedRows()
-      .filter((row) => row.employeeId && row.fileKey && (row.documentTypeId || row.documentType_id))
+      .filter((row) => row.employeeId && row.fileKey && row.documentTypeId && !row.omit)
       .map((row) => ({
         fileName: row.fileName,
         fileKey: row.fileKey,
         employeeId: row.employeeId,
-        documentTypeId: row.documentTypeId || row.documentType_id,
+        documentTypeId: row.documentTypeId,
       }));
+
     if (!rows.length) {
       showWarning("Selecciona empleados y tipos validos para reparar.");
       return;
     }
+
     try {
       const res = await apiFetch("/documents/bulk-repair/apply", {
         method: "POST",
         body: JSON.stringify({ rows }),
       });
       reviewRows = res.data?.rows || [];
-      setSummary(res.data?.summary || {});
+      renderSummary(res.data?.summary || {}, "repair");
       renderRows();
       downloadRows(reviewRows, `resultado_reparacion_documentos_${new Date().toISOString().slice(0, 10)}`);
       showSuccess("Reparacion documental procesada.");
@@ -4214,7 +4446,7 @@ export async function loadEmployeeDocumentsModule() {
 
   const findUploaded = (req) =>
     documents
-      .filter((d) => norm(d.documentType) === norm(req.name))
+      .filter((d) => sameDocumentType(d.documentType, req.name))
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
 
   const getStatus = (req) => {
@@ -4470,7 +4702,7 @@ export async function loadEmployeeDocumentsModule() {
             <p>${escapeHtml(getPersonnelFullName(employee))}</p>
           </div>
           <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">
-            <button id="openBulkDocumentUpload" class="btn btn-primary">Carga masiva</button>
+            <button id="openBulkDocumentUpload" class="btn btn-primary">Carga masiva de documentos</button>
             <button id="backToPersonnel" class="btn btn-secondary">Volver</button>
           </div>
         </section>

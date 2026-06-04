@@ -1,14 +1,9 @@
 const pool = require("./pool");
 const { normalizeText } = require("../utils/text");
 
-// ─── Mapper ───────────────────────────────────────────────────────────────────
-// Columnas reales de employee_documents:
-//   id, employee_id, document_type_id, employee_contract_id,
-//   file_url, file_name, status, uploaded_at, expiration_date,
-//   validated, validated_by_user_id, validated_at, observations, created_at,
-//   uploaded_by
-//
-// company_id no existe en la tabla — se obtiene via JOIN con employees.
+const USER_DISPLAY_NAME_SQL = "COALESCE(%ALIAS%.full_name, %ALIAS%.username, %ALIAS%.email)";
+const UPLOADED_BY_NAME_SQL = `${USER_DISPLAY_NAME_SQL.replace(/%ALIAS%/g, "uu")}, 'Sistema'`;
+const VALIDATED_BY_NAME_SQL = USER_DISPLAY_NAME_SQL.replace(/%ALIAS%/g, "vu");
 
 function mapDocument(row) {
   return {
@@ -16,17 +11,20 @@ function mapDocument(row) {
     employeeId: row.employee_id,
     employeeName: row.employee_name || null,
     docTypeId: row.document_type_id,
+    docTypeCode: row.doc_type_code || null,
     docTypeName: row.doc_type_name || null,
     companyId: row.company_id || null,
     status: row.status || "pendiente",
-    // fileKey: clave interna (R2 key o ruta local) — NO exponer en respuestas
     fileKey: row.file_url,
     fileName: row.file_name,
-    uploadedBy: row.uploaded_by || null,
-    uploadedByName: row.uploaded_by_name || "Sistema",
+    originalFileName: row.original_file_name || row.file_name || null,
+    version: Number(row.version || 1),
     validated: Boolean(row.validated),
     validatedByUserId: row.validated_by_user_id || null,
+    validatedByName: row.validated_by_name || null,
     validatedBy: row.validated_by_name || null,
+    uploadedBy: row.uploaded_by || null,
+    uploadedByName: row.uploaded_by_name || "Sistema",
     validatedAt: row.validated_at || null,
     observations: row.observations || null,
     expiryDate: row.expiration_date || null,
@@ -35,13 +33,10 @@ function mapDocument(row) {
   };
 }
 
-// ─── Helper: resolver PG id de empleado ──────────────────────────────────────
-
 async function resolveEmployeePgId(employeeId) {
   const numId = Number(employeeId);
   if (!Number.isFinite(numId) || numId <= 0) return null;
 
-  // legacy_json_id supera el rango INTEGER
   if (numId > 2147483647) {
     const r = await pool.query(
       "SELECT id FROM employees WHERE legacy_json_id = $1 LIMIT 1",
@@ -52,24 +47,21 @@ async function resolveEmployeePgId(employeeId) {
   return numId;
 }
 
-// ─── SELECT base ──────────────────────────────────────────────────────────────
-
 const BASE_SELECT = `
   SELECT
     ed.*,
+    dt.code      AS doc_type_code,
     dt.name      AS doc_type_name,
     e.full_name  AS employee_name,
     e.company_id AS company_id,
-    COALESCE(vu.full_name, vu.username, vu.email, 'Sistema') AS uploaded_by_name,
-    COALESCE(rv.full_name, rv.username, rv.email) AS validated_by_name
+    ${VALIDATED_BY_NAME_SQL} AS validated_by_name,
+    COALESCE(${UPLOADED_BY_NAME_SQL}) AS uploaded_by_name
   FROM employee_documents ed
-  LEFT JOIN document_types dt ON dt.id  = ed.document_type_id
-  JOIN  employees          e  ON e.id   = ed.employee_id
-  LEFT JOIN users          vu ON vu.id  = ed.uploaded_by
-  LEFT JOIN users          rv ON rv.id  = ed.validated_by_user_id
+  LEFT JOIN document_types dt ON dt.id = ed.document_type_id
+  JOIN employees e ON e.id = ed.employee_id
+  LEFT JOIN users vu ON vu.id = ed.validated_by_user_id
+  LEFT JOIN users uu ON uu.id = ed.uploaded_by
 `;
-
-// ─── Funciones públicas ───────────────────────────────────────────────────────
 
 async function getDocumentsByEmployee(employeeId, companyId) {
   const pgId = await resolveEmployeePgId(employeeId);
@@ -78,8 +70,25 @@ async function getDocumentsByEmployee(employeeId, companyId) {
   const result = await pool.query(
     `${BASE_SELECT}
      WHERE ed.employee_id = $1 AND e.company_id = $2
-     ORDER BY ed.created_at DESC`,
+     ORDER BY COALESCE(ed.version, 1) DESC, ed.uploaded_at DESC NULLS LAST, ed.id DESC`,
     [pgId, companyId]
+  );
+  return result.rows.map(mapDocument);
+}
+
+async function getDocumentsByEmployees(employeeIds, companyId) {
+  const ids = Array.isArray(employeeIds) ? employeeIds : [];
+  if (!ids.length) return [];
+
+  const resolved = await Promise.all(ids.map((employeeId) => resolveEmployeePgId(employeeId)));
+  const numericIds = [...new Set(resolved.filter(Boolean))];
+  if (!numericIds.length) return [];
+
+  const result = await pool.query(
+    `${BASE_SELECT}
+     WHERE ed.employee_id = ANY($1::int[]) AND e.company_id = $2
+     ORDER BY ed.employee_id, COALESCE(ed.version, 1) DESC, ed.uploaded_at DESC NULLS LAST, ed.id DESC`,
+    [numericIds, companyId]
   );
   return result.rows.map(mapDocument);
 }
@@ -98,13 +107,15 @@ async function createDocument({
   companyId,
   fileKey,
   fileName,
+  originalFileName,
   uploadedBy,
   expiryDate,
+  version,
+  status = "pendiente",
 }) {
   const pgEmployeeId = await resolveEmployeePgId(employeeId);
   if (!pgEmployeeId) throw new Error("Empleado no encontrado");
 
-  // Verificar que el empleado pertenece a la empresa
   if (companyId) {
     const check = await pool.query(
       "SELECT id FROM employees WHERE id = $1 AND company_id = $2",
@@ -115,21 +126,23 @@ async function createDocument({
 
   const result = await pool.query(
     `INSERT INTO employee_documents (
-       employee_id, document_type_id, file_url, file_name, status,
-       expiration_date, validated, uploaded_at, uploaded_by
-     ) VALUES ($1,$2,$3,$4,'pendiente',$5,false,CURRENT_TIMESTAMP,$6)
-     RETURNING *`,
+       employee_id, document_type_id, file_url, file_name, original_file_name,
+       status, expiration_date, validated, uploaded_at, uploaded_by, version
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,CURRENT_TIMESTAMP,$8,$9)
+     RETURNING id`,
     [
       pgEmployeeId,
       docTypeId ?? null,
       fileKey,
       fileName,
+      originalFileName || fileName,
+      status,
       expiryDate ?? null,
       uploadedBy ?? null,
+      Number(version) > 0 ? Number(version) : 1,
     ]
   );
 
-  // Re-query con JOINs para devolver el mapDocument completo
   return getDocumentById(result.rows[0].id, companyId);
 }
 
@@ -208,7 +221,7 @@ async function getExistingDocumentFileKeys(companyId) {
 
 async function updateDocumentStatus(id, companyId, { status, reviewedBy, reviewNotes }) {
   const valid = ["pendiente", "cargado", "aprobado", "rechazado", "vencido"];
-  if (!valid.includes(status)) throw new Error(`Estado inválido: "${status}"`);
+  if (!valid.includes(status)) throw new Error(`Estado invalido: "${status}"`);
 
   const isApproved = status === "aprobado";
 
@@ -228,10 +241,50 @@ async function updateDocumentStatus(id, companyId, { status, reviewedBy, reviewN
   return result.rows[0] ? getDocumentById(id, companyId) : null;
 }
 
-/**
- * Elimina el registro PG y devuelve el documento (con fileKey)
- * para que el llamador pueda borrar el archivo de R2.
- */
+async function appendDocumentObservation(id, companyId, note) {
+  if (!note) return null;
+  const result = await pool.query(
+    `UPDATE employee_documents
+     SET observations = CASE
+       WHEN observations IS NULL OR BTRIM(observations) = '' THEN $3
+       ELSE observations || E'\n' || $3
+     END
+     WHERE id = $1
+       AND employee_id IN (SELECT id FROM employees WHERE company_id = $2)
+     RETURNING id`,
+    [id, companyId, note]
+  );
+  return result.rows[0] ? getDocumentById(id, companyId) : null;
+}
+
+async function getLatestDocumentsIndex(companyId) {
+  const result = await pool.query(
+    `SELECT DISTINCT ON (ed.employee_id, ed.document_type_id)
+       ed.*,
+       dt.code      AS doc_type_code,
+       dt.name      AS doc_type_name,
+       e.full_name  AS employee_name,
+       e.company_id AS company_id,
+       ${VALIDATED_BY_NAME_SQL} AS validated_by_name,
+       COALESCE(${UPLOADED_BY_NAME_SQL}) AS uploaded_by_name
+     FROM employee_documents ed
+     JOIN employees e ON e.id = ed.employee_id
+     LEFT JOIN document_types dt ON dt.id = ed.document_type_id
+     LEFT JOIN users vu ON vu.id = ed.validated_by_user_id
+     LEFT JOIN users uu ON uu.id = ed.uploaded_by
+     WHERE e.company_id = $1
+     ORDER BY ed.employee_id, ed.document_type_id, COALESCE(ed.version, 1) DESC,
+              ed.uploaded_at DESC NULLS LAST, ed.id DESC`,
+    [companyId]
+  );
+
+  const index = new Map();
+  result.rows.forEach((row) => {
+    index.set(`${row.employee_id}:${row.document_type_id}`, mapDocument(row));
+  });
+  return index;
+}
+
 async function deleteDocument(id, companyId) {
   const doc = await getDocumentById(id, companyId);
   if (!doc) return null;
@@ -245,10 +298,6 @@ async function deleteDocument(id, companyId) {
   return doc;
 }
 
-/**
- * Documentos vencidos o por vencer en los próximos daysAhead días.
- * Filtra por company_id via JOIN con employees.
- */
 async function getDocumentAlerts(companyId, daysAhead = 30) {
   const result = await pool.query(
     `${BASE_SELECT}
@@ -312,6 +361,7 @@ async function getEmployeesForDocumentMatching(companyId) {
     id: row.id,
     fullName: row.full_name || "",
     normalizedFullName: row.normalized_full_name || normalizeText(row.full_name),
+    normalizedTokenName: normalizeText(row.full_name).split(" ").filter(Boolean).sort().join(" "),
     documentType: row.document_type || "",
     documentNumber: row.document_number || "",
   }));
@@ -319,6 +369,7 @@ async function getEmployeesForDocumentMatching(companyId) {
 
 module.exports = {
   getDocumentsByEmployee,
+  getDocumentsByEmployees,
   getDocumentById,
   createDocument,
   documentExistsByFileKey,
@@ -326,6 +377,8 @@ module.exports = {
   getInvalidDocumentRelations,
   getExistingDocumentFileKeys,
   updateDocumentStatus,
+  appendDocumentObservation,
+  getLatestDocumentsIndex,
   deleteDocument,
   getDocumentAlerts,
   getDocumentTypes,

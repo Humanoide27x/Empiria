@@ -1,4 +1,9 @@
-const { S3Client, DeleteObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+} = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 function isR2Configured() {
@@ -65,10 +70,25 @@ async function deleteFile(key) {
   return true;
 }
 
+async function putFile(key, body, contentType = "application/octet-stream") {
+  if (!s3Client || !key) return false;
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    })
+  );
+  return true;
+}
+
 module.exports = {
   s3Client,
   isR2Configured,
   getPublicUrl,
   getPrivateUrl,
   deleteFile,
+  putFile,
 };

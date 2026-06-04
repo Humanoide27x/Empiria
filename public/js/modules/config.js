@@ -474,10 +474,9 @@ export function wireConfigEvents() {
   setTimeout(() => {
     document.getElementById("cfgClientSearch")?.addEventListener("input", async e => {
       state.cfgClientSearch = e.target.value;
-      const mod  = await import('./config.js');
-      const html = await mod.loadClientesModule();
+      const html = await loadClientesModule();
       const wrap = document.querySelector(".submodule-content");
-      if (wrap) { wrap.innerHTML = html; mod.wireConfigEvents(); }
+      if (wrap) { wrap.innerHTML = html; wireConfigEvents(); }
     });
 
     document.getElementById("cfgBtnNewClient")?.addEventListener("click", () => openClientModal());
