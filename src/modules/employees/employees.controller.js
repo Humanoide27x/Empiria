@@ -15,6 +15,12 @@ const {
   hardDeleteEmployee,
   logEmployeeDeletion,
 } = require("../../db/employees.repository");
+const { getEmployeeDossier } = require("./employee-dossier.service");
+const {
+  buildBulkUpdateTemplate,
+  previewBulkUpdate,
+  applyBulkUpdate,
+} = require("./employee-bulk-update.service");
 const {
   resolveMunicipalityRecord,
   listMunicipalities,
@@ -48,6 +54,23 @@ function splitAssignedMunicipalities(value) {
     .split(/[|,;\n\r]+/g)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function isEmployeeWithinResourceScope(employee, resource) {
+  if (!employee) return false;
+  if (resource?.companyId && Number(employee.companyId || employee.company_id) !== Number(resource.companyId)) {
+    return false;
+  }
+  if (resource?.contractId && Number(employee.contractId || employee.contract_id) !== Number(resource.contractId)) {
+    return false;
+  }
+  if (Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0) {
+    const municipalityId = employee.municipalityId || employee.municipality_id;
+    if (!resource.municipalityIds.map(String).includes(String(municipalityId))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function listScopedManagers({
@@ -441,6 +464,66 @@ async function handleContractPositions(req, res, contractId) {
 }
 
 function handlePersonnel(req, res) {
+  const requestUrl = new URL(req.url, "http://localhost");
+
+  if (req.method === "GET" && requestUrl.pathname === "/personnel/bulk-update/template") {
+    return withModuleProtection(
+      "gestion_personal",
+      "view",
+      async (innerReq, innerRes, url, user, resource) => {
+        const result = await buildBulkUpdateTemplate({ resource });
+        innerRes.writeHead(200, {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${result.fileName}"`,
+        });
+        innerRes.end(result.buffer);
+      }
+    )(req, res, requestUrl);
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/personnel/bulk-update/preview") {
+    return withModuleProtection(
+      "gestion_personal",
+      "update",
+      async (innerReq, innerRes, url, user, resource) => {
+        const body = await readJsonBody(innerReq);
+        if (!body.fileBase64) {
+          return sendJson(innerRes, 400, { ok: false, message: "Debes enviar el archivo Excel." });
+        }
+        const result = await previewBulkUpdate({
+          fileBase64: body.fileBase64,
+          allowOverwriteEmpty: Boolean(body.allowOverwriteEmpty),
+          confirmSensitiveChanges: Boolean(body.confirmSensitiveChanges),
+          resource,
+        });
+        return sendJson(innerRes, 200, { ok: true, data: result });
+      }
+    )(req, res, requestUrl);
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/personnel/bulk-update/apply") {
+    return withModuleProtection(
+      "gestion_personal",
+      "update",
+      async (innerReq, innerRes, url, user, resource) => {
+        const body = await readJsonBody(innerReq);
+        if (!body.fileBase64) {
+          return sendJson(innerRes, 400, { ok: false, message: "Debes enviar el archivo Excel." });
+        }
+        const result = await applyBulkUpdate({
+          fileBase64: body.fileBase64,
+          fileName: body.fileName || "actualizacion_expediente.xlsx",
+          allowOverwriteEmpty: Boolean(body.allowOverwriteEmpty),
+          confirmSensitiveChanges: Boolean(body.confirmSensitiveChanges),
+          resource,
+          user,
+        });
+        try { clearCoverageSummaryCache(); } catch (_) {}
+        return sendJson(innerRes, 200, { ok: true, data: result });
+      }
+    )(req, res, requestUrl);
+  }
+
   // ==============================
   // IMPORTAR PERSONAL
   // ==============================
@@ -492,7 +575,6 @@ function handlePersonnel(req, res) {
   // GET PERSONAL
   // ==============================
   if (req.method === "GET") {
-    const requestUrl = new URL(req.url, 'http://localhost');
     return withModuleProtection(
       "gestion_personal",
       "view",
@@ -564,23 +646,21 @@ function handlePersonnel(req, res) {
           });
         }
 
+        const dossierMatch = parsedUrl.pathname.match(/^\/personnel\/(\d+)\/dossier$/);
+        if (dossierMatch) {
+          const employee = await measureEndpoint("GET /personnel/:id/dossier getEmployeeById", () => getEmployeeById(Number(dossierMatch[1])));
+          if (!employee || !isEmployeeWithinResourceScope(employee, resource)) {
+            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
+          }
+          const dossier = await measureEndpoint("GET /personnel/:id/dossier getEmployeeDossier", () => getEmployeeDossier(Number(dossierMatch[1])));
+          return sendJson(res, 200, { ok: true, data: dossier });
+        }
+
         const detailMatch = parsedUrl.pathname.match(/^\/personnel\/(\d+)$/);
         if (detailMatch) {
           const employee = await measureEndpoint("GET /personnel/:id getEmployeeById", () => getEmployeeById(Number(detailMatch[1])));
-          if (!employee) {
+          if (!employee || !isEmployeeWithinResourceScope(employee, resource)) {
             return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
-          }
-          if (resource?.companyId && Number(employee.companyId || employee.company_id) !== Number(resource.companyId)) {
-            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
-          }
-          if (resource?.contractId && Number(employee.contractId || employee.contract_id) !== Number(resource.contractId)) {
-            return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
-          }
-          if (Array.isArray(resource?.municipalityIds) && resource.municipalityIds.length > 0) {
-            const allowedMunicipality = resource.municipalityIds.map(String).includes(String(employee.municipalityId || employee.municipality_id));
-            if (!allowedMunicipality) {
-              return sendJson(res, 404, { ok: false, message: "Empleado no encontrado" });
-            }
           }
           return sendJson(res, 200, { ok: true, data: employee });
         }
@@ -827,7 +907,10 @@ function handlePersonnel(req, res) {
 
         let updated;
         try {
-          updated = await updateEmployee(id, body);
+          updated = await updateEmployee(id, body, {
+            userId: user?.id,
+            userName: user?.fullName || user?.name || user?.username || "",
+          });
         } catch (err) {
           console.error("[PUT /personnel] Error en updateEmployee:", err.message, "\nBody keys:", Object.keys(body));
           const msg = err.message || "";

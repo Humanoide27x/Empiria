@@ -1297,7 +1297,7 @@ function buildGroupXlsx(options) {
   // ── Hoja 1: Nómina ──────────────────────────────────────────────────────
   const nomHdr = [
     "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
-    "Modalidad", "Jornada", "Categoría", "Días lab.", "Días SS",
+    "Modalidad", "Jornada", "Categoría salarial", "Días lab.", "Días SS",
     "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
     "Salud (4%)", "Pensión (4%)", "Desc. turnos cubiertos", "Total deducciones",
     "Novedades", "Desc. salario", "Desc. transporte",
@@ -2189,7 +2189,7 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
   // ── Nómina (misma estructura que buildGroupXlsx, todos los municipios) ────
   const nomHdr = [
     "Documento", "Empleado", "Cargo", "Municipio", "Institución", "Sede",
-    "Modalidad", "Jornada", "Categoría", "Días",
+    "Modalidad", "Jornada", "Categoría salarial", "Días",
     "Salario base", "Aux. transporte", "Otros recargos", "Reemplazo incapacidad", "Total devengado",
     "Salud (4%)", "Pensión (4%)", "Total deducciones",
     "Novedades", "Desc. salario", "Desc. transporte",

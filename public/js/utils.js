@@ -379,21 +379,29 @@ export function syncEmployeeHeaderFromDraft() {
   const employeeHeaderName     = document.getElementById("employeeHeaderName");
   const employeeHeaderDocument = document.getElementById("employeeHeaderDocument");
 
+  const directFullName =
+    state.personnelDraft.fullName ||
+    state.personnelDraft.full_name ||
+    state.personnelDraft.nombre_completo ||
+    state.personnelDraft.nombreCompleto ||
+    state.personnelDraft.nombre ||
+    state.personnelDraft.name ||
+    "";
   const fullNameParts = [
-    state.personnelDraft.firstName || "",
-    state.personnelDraft.secondName || "",
-    state.personnelDraft.firstLastName || "",
-    state.personnelDraft.secondLastName || "",
+    state.personnelDraft.firstName || state.personnelDraft.first_name || state.personnelDraft.primer_nombre || "",
+    state.personnelDraft.secondName || state.personnelDraft.second_name || state.personnelDraft.segundo_nombre || "",
+    state.personnelDraft.firstLastName || state.personnelDraft.first_last_name || state.personnelDraft.primer_apellido || state.personnelDraft.lastName || "",
+    state.personnelDraft.secondLastName || state.personnelDraft.second_last_name || state.personnelDraft.segundo_apellido || "",
   ].filter(Boolean);
 
   const fullName = fullNameParts.length
     ? fullNameParts.join(" ").toUpperCase()
-    : "NOMBRE COMPLETO DE LA PERSONA";
+    : String(directFullName || "").trim().toUpperCase() || "NOMBRE COMPLETO DE LA PERSONA";
 
   if (employeeHeaderName) employeeHeaderName.textContent = fullName;
 
-  const docType   = state.personnelDraft.documentType || "";
-  const docNumber = state.personnelDraft.documentNumber || "";
+  const docType   = state.personnelDraft.documentType || state.personnelDraft.document_type || state.personnelDraft.tipo_documento || "";
+  const docNumber = state.personnelDraft.documentNumber || state.personnelDraft.document_number || state.personnelDraft.numero_documento || "";
   const docLabel  = DOC_TYPE_LABELS[docType] || docType || "Tipo de documento";
 
   if (employeeHeaderDocument) {

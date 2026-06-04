@@ -102,6 +102,95 @@ function buildFullName(data = {}) {
   );
 }
 
+function stringifyAuditValue(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "boolean") return value ? "SI" : "NO";
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return String(value).trim();
+}
+
+function collectEmployeeFieldChanges(before = {}, after = {}) {
+  const fieldConfig = [
+    { scope: "fixed", fieldName: "documentType", label: "Tipo documento" },
+    { scope: "fixed", fieldName: "documentNumber", label: "Numero documento" },
+    { scope: "fixed", fieldName: "firstName", label: "Nombres" },
+    { scope: "fixed", fieldName: "secondName", label: "Segundo nombre" },
+    { scope: "fixed", fieldName: "firstLastName", label: "Primer apellido" },
+    { scope: "fixed", fieldName: "secondLastName", label: "Segundo apellido" },
+    { scope: "fixed", fieldName: "birthDay", label: "Dia nacimiento" },
+    { scope: "fixed", fieldName: "birthMonth", label: "Mes nacimiento" },
+    { scope: "fixed", fieldName: "birthYear", label: "Ano nacimiento" },
+    { scope: "fixed", fieldName: "birthMunicipality", label: "Lugar nacimiento" },
+    { scope: "fixed", fieldName: "birthDepartment", label: "Departamento nacimiento" },
+    { scope: "fixed", fieldName: "birthCountry", label: "Pais nacimiento" },
+    { scope: "fixed", fieldName: "biologicalSex", label: "Sexo" },
+    { scope: "profile", fieldName: "phone", label: "Telefono" },
+    { scope: "profile", fieldName: "email", label: "Correo" },
+    { scope: "profile", fieldName: "address", label: "Direccion" },
+    { scope: "profile", fieldName: "neighborhood", label: "Barrio" },
+    { scope: "profile", fieldName: "residenceMunicipality", label: "Municipio residencia" },
+    { scope: "profile", fieldName: "residenceZone", label: "Zona residencia" },
+    { scope: "profile", fieldName: "civilStatus", label: "Estado civil" },
+    { scope: "profile", fieldName: "eps", label: "EPS" },
+    { scope: "profile", fieldName: "pensionFund", label: "Pension" },
+    { scope: "profile", fieldName: "arl", label: "ARL" },
+    { scope: "profile", fieldName: "compensationBox", label: "Caja compensacion" },
+    { scope: "profile", fieldName: "shirtSize", label: "Talla camisa" },
+    { scope: "profile", fieldName: "pantsSize", label: "Talla pantalon" },
+    { scope: "profile", fieldName: "shoeSize", label: "Talla calzado" },
+    { scope: "profile", fieldName: "accountType", label: "Tipo cuenta" },
+    { scope: "profile", fieldName: "bankName", label: "Banco" },
+    { scope: "profile", fieldName: "accountNumber", label: "Numero cuenta" },
+  ];
+
+  return fieldConfig
+    .map((field) => {
+      const previousValue = stringifyAuditValue(before[field.fieldName]);
+      const newValue = stringifyAuditValue(after[field.fieldName]);
+      if (previousValue === newValue) return null;
+      return {
+        scope: field.scope,
+        fieldName: field.fieldName,
+        fieldLabel: field.label,
+        previousValue,
+        newValue,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function logEmployeeFieldChanges(employeeId, before, after, auditMeta = {}) {
+  const changes = collectEmployeeFieldChanges(before, after);
+  if (!changes.length) return;
+
+  const userId = toNumberOrNull(auditMeta.userId || auditMeta.id);
+  const userName = cleanText(auditMeta.userName || auditMeta.fullName || auditMeta.name || auditMeta.username);
+
+  await Promise.all(
+    changes.map((change) =>
+      pool.query(
+        `INSERT INTO audit_logs (module, entity_type, entity_id, action, user_id, user_name, payload)
+         VALUES ('personnel', 'employee', $1, $2, $3, $4, $5)`,
+        [
+          String(employeeId),
+          change.scope === "fixed" ? "FIXED_FIELD_CHANGE" : "PROFILE_FIELD_CHANGE",
+          userId,
+          userName || null,
+          JSON.stringify({
+            scope: change.scope,
+            fieldName: change.fieldName,
+            fieldLabel: change.fieldLabel,
+            previousValue: change.previousValue,
+            newValue: change.newValue,
+            affects: ["Personal"],
+          }),
+        ]
+      )
+    )
+  );
+}
+
 async function resolveInstitutionId(name, municipalityId = null) {
   if (!name || !String(name).trim()) return null;
   if (!(await tableExists("institutions"))) {
@@ -902,7 +991,7 @@ async function createEmployee(data) {
   return mapEmployee(result.rows[0]);
 }
 
-async function updateEmployee(id, data) {
+async function updateEmployee(id, data, auditMeta = {}) {
   console.log("[updateEmployee] modality received:", {
     id,
     educationalModality: data.educationalModality,
@@ -1132,7 +1221,16 @@ async function updateEmployee(id, data) {
     );
   }
 
-  return result.rows[0] ? getEmployeeById(result.rows[0].id) : null;
+  const updatedEmployee = result.rows[0] ? await getEmployeeById(result.rows[0].id) : null;
+  if (updatedEmployee) {
+    try {
+      await logEmployeeFieldChanges(result.rows[0].id, existing, updatedEmployee, auditMeta);
+    } catch (error) {
+      console.warn("[updateEmployee] No se pudo registrar auditoria:", error.message);
+    }
+  }
+
+  return updatedEmployee;
 }
 
 async function updateEmployeeStatus(id, status) {

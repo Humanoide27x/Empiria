@@ -15,5 +15,39 @@
     "rejectionReason": "",
     "createdAt": "2026-05-17T20:39:09.345Z",
     "updatedAt": "2026-05-17T20:40:06.205Z"
+  },
+  {
+    "id": 1780534176538,
+    "employeeId": 309,
+    "documentType": "CEDULA",
+    "issueDate": "",
+    "expirationDate": "",
+    "fileName": "CC_ABELINA_TAPIERO_CONDE.pdf",
+    "storedFileName": "employee_309_1780534176537_CC_ABELINA_TAPIERO_CONDE.pdf",
+    "fileUrl": "/uploads/documents/employee_309_1780534176537_CC_ABELINA_TAPIERO_CONDE.pdf",
+    "validationStatus": "VALIDADO",
+    "uploadedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedAt": "2026-06-04T00:49:41.805Z",
+    "rejectionReason": "",
+    "createdAt": "2026-06-04T00:49:36.538Z",
+    "updatedAt": "2026-06-04T00:49:41.805Z"
+  },
+  {
+    "id": 1780534266940,
+    "employeeId": 309,
+    "documentType": "EXPERIENCIA LABORAL",
+    "issueDate": "",
+    "expirationDate": "",
+    "fileName": "EXP_ABELINA_TAPIERO.pdf",
+    "storedFileName": "employee_309_1780534266939_EXP_ABELINA_TAPIERO.pdf",
+    "fileUrl": "/uploads/documents/employee_309_1780534266939_EXP_ABELINA_TAPIERO.pdf",
+    "validationStatus": "VALIDADO",
+    "uploadedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedAt": "2026-06-04T00:51:12.298Z",
+    "rejectionReason": "",
+    "createdAt": "2026-06-04T00:51:06.940Z",
+    "updatedAt": "2026-06-04T00:51:12.298Z"
   }
 ]

@@ -2,6 +2,18 @@ import { state } from "../state.js";
 import { apiFetch } from "../api.js";
 import { escapeHtml } from "../utils.js";
 import { showSuccess, showError } from "../toast.js";
+import {
+  OPERARIO_DIVISION_LABEL,
+  MINIMUM_TEAM_DIVISION_LABEL,
+  TEAM_AREA_ALL,
+  TEAM_MINIMUM_AREA_ORDER,
+  classifyPayrollArea,
+  classifyPayrollDivision,
+  dedupePayrollItems,
+  buildTeamAreaBuckets,
+  resolvePayrollScopeGroupIds,
+  summarizePayrollItems,
+} from "./payroll-segmentation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TIPOS OFICIALES DE NOVEDAD (13 — sincronizados con payroll_novelty_types)
@@ -199,6 +211,88 @@ function noveltyImpactBadges(noveltyOrCode) {
 function currentPositionData() {
   return groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0] || null;
 }
+function isOperarioPosition(position) {
+  return normalized(position) === normalized(OPERARIO_DIVISION_LABEL);
+}
+function divisionKeyForPosition(position) {
+  return isOperarioPosition(position) ? "OPERARIO" : "EQUIPO_MINIMO";
+}
+function divisionLabelForKey(key) {
+  return key === "OPERARIO" ? OPERARIO_DIVISION_LABEL : MINIMUM_TEAM_DIVISION_LABEL;
+}
+function payrollAreaLabelFromPosition(position) {
+  if (!position) return "OTROS";
+  return classifyPayrollDivision(position) === "OPERARIO"
+    ? OPERARIO_DIVISION_LABEL
+    : classifyPayrollArea(position);
+}
+function divisionMetaList() {
+  const buckets = new Map([
+    ["OPERARIO", {
+      key: "OPERARIO",
+      label: OPERARIO_DIVISION_LABEL,
+      positions: [],
+      employees: 0,
+      novelties: 0,
+      items_reviewed: 0,
+      pending_supports: 0,
+      total_devengado: 0,
+      neto: 0,
+    }],
+    ["EQUIPO_MINIMO", {
+      key: "EQUIPO_MINIMO",
+      label: MINIMUM_TEAM_DIVISION_LABEL,
+      positions: [],
+      employees: 0,
+      novelties: 0,
+      items_reviewed: 0,
+      pending_supports: 0,
+      total_devengado: 0,
+      neto: 0,
+    }],
+  ]);
+  for (const position of groupsState.positions || []) {
+    const bucket = buckets.get(divisionKeyForPosition(position.position));
+    if (!bucket) continue;
+    bucket.positions.push(position);
+    bucket.employees += Number(position.employees || 0);
+    bucket.novelties += Number(position.novelties || 0);
+    bucket.items_reviewed += Number(position.items_reviewed || 0);
+    bucket.pending_supports += Number(position.pending_supports || 0);
+    bucket.total_devengado += Number(position.total_devengado || 0);
+    bucket.neto += Number(position.neto || 0);
+  }
+  return Array.from(buckets.values()).filter((bucket) => bucket.positions.length);
+}
+function currentDivisionKey() {
+  return divisionKeyForPosition(activePosition || currentPositionData()?.position || "");
+}
+function currentDivisionMeta() {
+  const currentKey = currentDivisionKey();
+  return divisionMetaList().find((division) => division.key === currentKey) || divisionMetaList()[0] || null;
+}
+function divisionPositions(key) {
+  return (currentDivisionMeta()?.key === key ? currentDivisionMeta()?.positions : null)
+    || divisionMetaList().find((division) => division.key === key)?.positions
+    || [];
+}
+function currentInternalPositionLabel() {
+  return currentPositionData()?.position || "";
+}
+function currentDivisionSummaryLabel() {
+  const division = currentDivisionMeta();
+  const internalPosition = currentInternalPositionLabel();
+  if (!division) return "General";
+  if (division.key === "OPERARIO") return division.label;
+  return internalPosition ? `${division.label} · ${internalPosition}` : division.label;
+}
+function applyDefaultGroupSelection(position) {
+  const selected = groupsState.positions.find((p) => p.position === position);
+  const municipalities = selected?.municipalities || [];
+  if (municipalities.length === 1 && municipalities[0].is_consolidated) {
+    activeGroupId = municipalities[0].id;
+  }
+}
 function noveltyImpactText(noveltyOrCode) {
   const meta = typeof noveltyOrCode === "string" ? noveltyByCode(noveltyOrCode) : noveltyOrCode;
   if (!meta) return "Sin impacto economico";
@@ -367,17 +461,74 @@ function shell() {
 .nm-pay-impact-note{display:flex;flex-direction:column;gap:4px}
 .nm-pay-impact-badges{display:flex;flex-wrap:wrap;gap:4px}
 .nm-pay-impact-text{font-size:12px;color:#64748B}
-.nm-slip-section{border:1px solid #E2E8F0;border-radius:6px;overflow:hidden;margin-bottom:10px}
-.nm-slip-section-h{padding:7px 12px;background:#F8FAFC;font-size:12px;font-weight:800;color:#334155;text-transform:uppercase;border-bottom:1px solid #E2E8F0}
-.nm-slip-row{display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #F1F5F9;font-size:13px}
-.nm-slip-row:last-child{border-bottom:0}
-.nm-slip-row b{color:#0F172A}
-.nm-slip-total{background:#F0FDF4;font-weight:700}
-.nm-slip-nov-h{padding:5px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #F1F5F9}
-.nm-slip-nov-h--sal{background:#FFF1F2;color:#BE123C;border-left:3px solid #F43F5E}
-.nm-slip-nov-h--tra{background:#FFFBEB;color:#B45309;border-left:3px solid #F59E0B}
-.nm-slip-nov-item{display:flex;justify-content:space-between;padding:4px 12px 4px 16px;font-size:12px;color:#475569;border-bottom:1px solid #F1F5F9}
-.nm-slip-nov-item:last-child{border-bottom:0}
+.nm-pay-dialog--payslip{width:min(1080px,100%)}
+.nm-pay-dialog-b--payslip{padding:0;background:linear-gradient(180deg,#f4f8fc 0%,#edf3f8 100%)}
+.nm-slip-shell{display:grid;gap:14px;padding:18px}
+.nm-slip-hero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;padding:22px;border-radius:22px;background:linear-gradient(135deg,#10233F 0%,#1D4ED8 100%);color:#fff;box-shadow:0 20px 40px rgba(15,23,42,.16)}
+.nm-slip-hero__eyebrow{display:inline-block;margin-bottom:8px;font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.72)}
+.nm-slip-hero h2{margin:0;font-size:28px;line-height:1.04;font-weight:900;letter-spacing:-.03em}
+.nm-slip-hero p{margin:8px 0 0;font-size:13px;color:rgba(255,255,255,.78)}
+.nm-slip-hero__net{display:grid;gap:4px;min-width:220px;padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(10px)}
+.nm-slip-hero__net span{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.74)}
+.nm-slip-hero__net b{font-size:28px;line-height:1;font-weight:900;letter-spacing:-.03em}
+.nm-slip-hero__net small{font-size:12px;color:rgba(255,255,255,.72)}
+.nm-slip-profile{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.9fr);gap:14px}
+.nm-slip-card{background:#fff;border:1px solid #DBE4EE;border-radius:20px;padding:16px 18px;box-shadow:0 12px 30px rgba(15,23,42,.06)}
+.nm-slip-card--full{grid-column:1/-1}
+.nm-slip-card__head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.nm-slip-card__head h3{margin:0;font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#0F172A}
+.nm-slip-card__head p{margin:4px 0 0;font-size:12px;color:#64748B}
+.nm-slip-id{display:grid;gap:12px}
+.nm-slip-id__name{display:grid;gap:4px}
+.nm-slip-id__name strong{font-size:23px;line-height:1.05;font-weight:900;color:#10233F}
+.nm-slip-id__name span{font-size:13px;font-weight:600;color:#475569}
+.nm-slip-badge{display:inline-flex;align-items:center;justify-content:center;padding:6px 11px;border-radius:999px;background:#EEF4FF;border:1px solid #BFDBFE;color:#1D4ED8;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.nm-slip-meta-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.nm-slip-meta-item{padding:11px 12px;border-radius:14px;background:#F8FAFC;border:1px solid #E2E8F0}
+.nm-slip-meta-item span{display:block;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#94A3B8}
+.nm-slip-meta-item b{display:block;margin-top:5px;font-size:13px;line-height:1.35;color:#0F172A}
+.nm-slip-stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.nm-slip-stat{padding:14px;border-radius:16px;border:1px solid #E2E8F0;background:linear-gradient(180deg,#FFFFFF 0%,#F8FAFC 100%)}
+.nm-slip-stat span{display:block;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748B}
+.nm-slip-stat b{display:block;margin-top:7px;font-size:20px;line-height:1.05;font-weight:900;color:#10233F}
+.nm-slip-stat small{display:block;margin-top:5px;font-size:12px;color:#64748B}
+.nm-slip-stat--success{background:linear-gradient(180deg,#ECFDF5 0%,#F0FDF4 100%);border-color:#BBF7D0}
+.nm-slip-stat--success b{color:#047857}
+.nm-slip-stat--accent{background:linear-gradient(180deg,#EEF2FF 0%,#F5F3FF 100%);border-color:#C7D2FE}
+.nm-slip-stat--accent b{color:#4338CA}
+.nm-slip-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.nm-slip-banner{padding:12px 14px;margin-bottom:12px;border-radius:16px;background:#F5F3FF;border:1px solid #DDD6FE;color:#5B21B6}
+.nm-slip-banner b{display:block;font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.nm-slip-banner span{display:block;margin-top:4px;font-size:12px;line-height:1.5;color:#6D28D9}
+.nm-slip-lines{display:grid}
+.nm-slip-line{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #EEF2F7}
+.nm-slip-line:last-child{border-bottom:0}
+.nm-slip-line__copy{display:grid;gap:4px;min-width:0}
+.nm-slip-line__label{font-size:13px;font-weight:700;color:#10233F}
+.nm-slip-line__meta{font-size:12px;line-height:1.4;color:#64748B}
+.nm-slip-line__value{font-size:14px;font-weight:900;white-space:nowrap;color:#0F172A}
+.nm-slip-line--positive .nm-slip-line__value{color:#047857}
+.nm-slip-line--negative .nm-slip-line__value{color:#B91C1C}
+.nm-slip-line--accent .nm-slip-line__value{color:#5B21B6}
+.nm-slip-total{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;padding:14px 16px;border-radius:16px;background:#F8FAFC;border:1px solid #E2E8F0}
+.nm-slip-total span{font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#475569}
+.nm-slip-total b{font-size:20px;line-height:1;font-weight:900;color:#0F172A}
+.nm-slip-total--negative{background:#FEF2F2;border-color:#FECACA}
+.nm-slip-total--negative b{color:#B91C1C}
+.nm-slip-total--success{background:#ECFDF5;border-color:#BBF7D0}
+.nm-slip-total--success b{color:#047857}
+.nm-slip-nov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.nm-slip-nov-card{padding:14px;border-radius:18px;border:1px solid #E2E8F0;background:linear-gradient(180deg,#FFFFFF 0%,#F8FAFC 100%)}
+.nm-slip-nov-card strong{display:block;font-size:14px;line-height:1.3;color:#10233F}
+.nm-slip-nov-meta{margin-top:8px;font-size:12px;line-height:1.45;color:#64748B}
+.nm-slip-chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.nm-slip-chip{display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:999px;background:#EFF6FF;border:1px solid #DBEAFE;font-size:11px;font-weight:800;color:#1D4ED8}
+.nm-slip-chip--warn{background:#FFF7ED;border-color:#FED7AA;color:#C2410C}
+.nm-slip-chip--danger{background:#FEF2F2;border-color:#FECACA;color:#B91C1C}
+.nm-slip-empty{padding:16px;border-radius:16px;border:1px dashed #CBD5E1;background:#F8FAFC;font-size:13px;color:#64748B}
+.nm-slip-foot{padding:4px 2px 0;font-size:12px;line-height:1.5;color:#64748B}
+@media (max-width:840px){.nm-slip-profile,.nm-slip-grid{grid-template-columns:1fr}.nm-slip-meta-list,.nm-slip-stat-grid{grid-template-columns:1fr}.nm-slip-hero__net{width:100%}}
+@media (max-width:560px){.nm-slip-shell{padding:14px}.nm-slip-hero{padding:18px;border-radius:18px}.nm-slip-hero h2{font-size:24px}.nm-slip-card{padding:15px}.nm-slip-line,.nm-slip-total{align-items:flex-start}.nm-slip-line__value,.nm-slip-total b{font-size:18px}}
 
 /* ── Revisada: fila opaca (novedad) ─────────────────────────────────── */
 .nm-pay-table tr.reviewed-row td{opacity:.6}
@@ -562,6 +713,145 @@ function shell() {
 .nm-sup-inline-doc{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #F1F5F9;flex-wrap:wrap}
 .nm-sup-inline-doc:last-child{border-bottom:0}
 .nm-sup-inline-doc-label{font-size:12px;color:#334155;flex:1 1 160px}
+
+/* Dashboard refresh */
+.nm-pay-card-main{background:linear-gradient(180deg,#f8fbff 0%,#eef4f7 100%);border:0;border-radius:22px;box-shadow:0 18px 44px rgba(15,23,42,.08)}
+.nm-pay-head--dashboard{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;padding:18px 22px 16px;background:linear-gradient(135deg,#0f172a 0%,#12324a 48%,#0f766e 100%);border-bottom:0;height:auto;flex:0 0 auto;overflow:visible}
+.nm-pay-head-copy{display:flex;flex-direction:column;gap:4px;min-width:240px}
+.nm-pay-overline{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.68)}
+.nm-pay-head--dashboard .nm-pay-title{font-size:28px;line-height:1;color:#fff;letter-spacing:-.03em}
+.nm-pay-head-caption{font-size:13px;color:rgba(255,255,255,.78)}
+.nm-pay-head-controls{display:flex;align-items:end;justify-content:flex-end;gap:12px;flex-wrap:wrap}
+.nm-pay-topfield{display:flex;flex-direction:column;gap:5px;min-width:150px}
+.nm-pay-topfield span{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.72)}
+.nm-pay-head--dashboard .nm-pay-input,.nm-pay-head--dashboard .nm-pay-select{height:38px;padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.96);font-size:13px}
+.nm-pay-head--dashboard .nm-pay-btn--primary{height:38px;padding:0 16px;border-radius:12px;background:#f8fafc;color:#0f172a;border-color:#f8fafc}
+.nm-pay-cargo-tabs--dashboard{padding:16px 18px 10px;background:transparent;border-bottom:0;gap:10px}
+.nm-pay-tab{display:grid;grid-template-columns:1fr auto;grid-template-areas:"eyebrow count" "title count" "meta count";gap:2px 12px;min-width:260px;padding:14px 16px;border:1px solid rgba(148,163,184,.35);border-radius:18px;background:rgba(255,255,255,.86);box-shadow:0 10px 20px rgba(148,163,184,.12);backdrop-filter:blur(8px)}
+.nm-pay-tab:hover{border-color:#0f766e;background:#fff}
+.nm-pay-tab.active{border-color:#0f766e;background:linear-gradient(135deg,#ecfeff 0%,#f0fdfa 100%);color:#0f172a;box-shadow:0 14px 28px rgba(15,118,110,.15)}
+.nm-pay-tab-eyebrow{grid-area:eyebrow;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#64748b}
+.nm-pay-tab-title{grid-area:title;font-size:15px;font-weight:800;color:#0f172a}
+.nm-pay-tab-meta{grid-area:meta;font-size:12px;color:#64748b}
+.nm-pay-tab .nm-pay-count{grid-area:count;align-self:center;justify-self:end;min-width:36px;height:36px;font-size:12px;background:#e2e8f0;color:#0f172a}
+.nm-pay-tab.active .nm-pay-count{background:#0f766e;color:#fff}
+.nm-pay-subtabs{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 18px 14px}
+.nm-pay-subtabs-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b}
+.nm-pay-subtab{display:inline-flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid #dbe4ee;border-radius:999px;background:#fff;color:#334155;font-size:12px;font-weight:600}
+.nm-pay-subtab b{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:999px;background:#f1f5f9;color:#0f172a;font-size:11px}
+.nm-pay-subtab.active{border-color:#0f766e;background:#ecfdf5;color:#0f766e}
+.nm-pay-subtab.active b{background:#0f766e;color:#fff}
+.nm-pay-kpis--premium{display:grid;grid-template-columns:1.4fr repeat(5,minmax(0,1fr));gap:12px;padding:0 18px 16px;background:transparent;border-bottom:0}
+.nm-pay-kpi-card{display:flex;flex-direction:column;gap:8px;padding:18px;border-radius:20px;background:rgba(255,255,255,.9);border:1px solid rgba(226,232,240,.9);box-shadow:0 12px 28px rgba(15,23,42,.06)}
+.nm-pay-kpi-card--hero{background:linear-gradient(140deg,#0f172a 0%,#11314a 55%,#115e59 100%);border-color:transparent}
+.nm-pay-kpi-card__eyebrow{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#94a3b8}
+.nm-pay-kpi-card--hero .nm-pay-kpi-card__eyebrow{color:rgba(255,255,255,.64)}
+.nm-pay-kpi-card__value{font-size:26px;line-height:1.05;color:#0f172a;letter-spacing:-.04em}
+.nm-pay-kpi-card--hero .nm-pay-kpi-card__value{color:#fff}
+.nm-pay-kpi-card__meta{font-size:12px;color:#64748b}
+.nm-pay-kpi-card--hero .nm-pay-kpi-card__meta{color:rgba(255,255,255,.76)}
+.nm-pay-workspace{padding:0 18px 18px;gap:16px;background:transparent}
+.nm-pay-municipality-panel{width:270px;flex:0 0 270px;border:1px solid rgba(226,232,240,.9);border-radius:20px;background:rgba(255,255,255,.92);box-shadow:0 14px 28px rgba(15,23,42,.05)}
+.nm-pay-mun-head{padding:14px 14px 12px;border-bottom:1px solid #e2e8f0}
+.nm-pay-mun-title{font-size:11px;letter-spacing:.12em;color:#64748b;margin-bottom:8px}
+.nm-pay-mun-search{height:38px;border-radius:12px;padding:8px 12px}
+.nm-pay-mun-list{padding:8px}
+.nm-pay-mun-wrap{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.nm-pay-mun{padding:10px 12px;border-radius:14px;background:#f8fafc}
+.nm-pay-mun.active{background:#ecfdf5;box-shadow:inset 3px 0 0 #0f766e}
+.nm-pay-content{border:1px solid rgba(226,232,240,.9);border-radius:22px;background:rgba(255,255,255,.94);box-shadow:0 14px 28px rgba(15,23,42,.05)}
+.nm-pay-content--full{width:100%}
+.nm-pay-toolbar{padding:18px 20px 14px;border-bottom:1px solid #e2e8f0;background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%)}
+.nm-pay-section-title{font-size:22px;letter-spacing:-.03em}
+.nm-pay-section-meta{font-size:12px}
+.nm-pay-actions{gap:8px}
+.nm-pay-actions .nm-pay-btn{height:36px;padding:0 13px;border-radius:11px}
+.nm-pay-actions #nmPayExport{background:#0f172a;color:#fff;border-color:#0f172a}
+.nm-pay-scope-tabs{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:0 18px 16px}
+.nm-pay-scope-tabs__copy{display:flex;flex-direction:column;gap:5px;min-width:220px}
+.nm-pay-scope-tabs__eyebrow{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748b}
+.nm-pay-scope-tabs__list{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.nm-pay-scope-tab{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid #dbe4ee;border-radius:999px;background:#fff;color:#334155;font-size:12px;font-weight:700;box-shadow:0 10px 18px rgba(148,163,184,.08)}
+.nm-pay-scope-tab b{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:999px;background:#f1f5f9;color:#0f172a;font-size:11px}
+.nm-pay-scope-tab.active{border-color:#0f766e;background:#ecfdf5;color:#0f766e}
+.nm-pay-scope-tab.active b{background:#0f766e;color:#fff}
+.nm-pay-filterbar{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:0 18px 16px}
+.nm-pay-filterbar__grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;flex:1 1 780px}
+.nm-pay-filterbar__actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nm-pay-filter{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:16px;background:linear-gradient(180deg,#fff 0%,#f8fbfd 100%)}
+.nm-pay-filter span{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b}
+.nm-pay-filter .nm-pay-input,.nm-pay-filter .nm-pay-select{height:36px;border-radius:10px}
+.nm-pay-scroll-body{padding:16px 18px 18px}
+.nm-detail-tabs{margin-bottom:14px;padding:4px;background:#f1f5f9;border:0;border-radius:16px}
+.nm-detail-tab{padding:10px 16px;border-radius:12px;border-bottom:0;margin-bottom:0;color:#475569}
+.nm-detail-tab.active{background:#fff;color:#0f172a;box-shadow:0 8px 16px rgba(15,23,42,.06)}
+.nm-items-fbar{display:flex;flex-direction:column;gap:12px;padding:14px 16px;margin-bottom:12px;border:1px solid #e2e8f0;border-radius:18px;background:linear-gradient(180deg,#ffffff 0%,#f8fbfd 100%)}
+.nm-items-fbar__heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.nm-items-fbar__title{display:block;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#0f172a}
+.nm-items-fbar__subtitle{display:block;margin-top:4px;font-size:12px;color:#64748b}
+.nm-items-fbar__status{display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;border-radius:999px;background:#ecfdf5;color:#0f766e;font-size:12px;font-weight:700}
+.nm-items-fbar__controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nm-items-fbar .nm-pay-select,.nm-items-fbar .nm-pay-input,.nm-items-fbar .nm-pay-btn{height:34px;border-radius:10px}
+.nm-pay-table-wrap--dashboard{border:1px solid #dbe4ee;border-radius:18px;max-height:calc(100vh - 430px);background:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+.nm-pay-table{font-size:12px}
+.nm-pay-table thead th{padding:12px 10px;background:#f8fafc;color:#475569;text-transform:uppercase;font-size:10.5px;letter-spacing:.08em}
+.nm-pay-table td{padding:11px 10px}
+.nm-pay-table tbody tr:hover td{background:#f8fbff}
+.nm-pay-table tr.item-reviewed-row td{background:#f0fdf4}
+.nm-item-selected-row td{background:#eff6ff !important}
+.nm-pay-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 4px 0;color:#64748b;font-size:12px}
+.nm-pay-pagination__actions{display:flex;align-items:center;gap:8px}
+.nm-pay-dialog{border-radius:18px;box-shadow:0 24px 48px rgba(15,23,42,.2)}
+@media (max-width:1200px){.nm-pay-kpis--premium{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-kpi-card--hero{grid-column:1/-1}.nm-pay-filterbar__grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:900px){.nm-pay-head--dashboard{align-items:flex-start}.nm-pay-head-controls{justify-content:flex-start}.nm-pay-workspace{flex-direction:column}.nm-pay-municipality-panel{width:auto;flex:0 0 auto}.nm-pay-filterbar__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-table-wrap--dashboard{max-height:unset}}
+@media (max-width:640px){.nm-pay-head--dashboard{padding:16px}.nm-pay-head--dashboard .nm-pay-title{font-size:24px}.nm-pay-kpis--premium{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 16px 14px}.nm-pay-kpi-card--hero{grid-column:1/-1}.nm-pay-cargo-tabs--dashboard,.nm-pay-subtabs,.nm-pay-scope-tabs,.nm-pay-filterbar,.nm-pay-workspace,.nm-pay-scroll-body{padding-left:16px;padding-right:16px}.nm-pay-filterbar__grid{grid-template-columns:1fr}.nm-pay-filterbar__actions{width:100%}.nm-pay-filterbar__actions .nm-pay-btn{flex:1 1 0}.nm-items-fbar__status{width:100%;justify-content:flex-start}}
+
+/* Operational refactor */
+.nm-pay-card-main--operational{height:calc(100vh - 78px);background:#fff;border:1px solid #E2E8F0;border-radius:18px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
+.nm-pay-operational-head{padding:12px 14px 10px;border-bottom:1px solid #E2E8F0;background:#fff}
+.nm-pay-operational-head__row{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+.nm-pay-cargo-tabs--operational{padding:0;border:0;background:transparent;gap:8px;min-height:auto;flex:1 1 420px}
+.nm-pay-tab--operational{display:inline-flex;align-items:center;gap:8px;min-width:auto;padding:8px 12px;border-radius:999px;background:#F8FAFC;box-shadow:none}
+.nm-pay-tab--operational .nm-pay-tab-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.nm-pay-tab--operational .nm-pay-count{min-width:22px;height:22px;margin-left:0}
+.nm-pay-operational-period{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nm-pay-operational-period__label{font-size:12px;font-weight:700;color:#475569}
+.nm-pay-operational-period .nm-pay-input,.nm-pay-operational-period .nm-pay-select,.nm-pay-operational-period .nm-pay-btn{height:34px;border-radius:10px}
+.nm-pay-scope-tabs--operational{padding:10px 14px 0}
+.nm-pay-scope-tabs--operational .nm-pay-scope-tabs__list{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.nm-pay-scope-tabs--operational .nm-pay-scope-tab{padding:7px 12px;box-shadow:none}
+.nm-pay-kpis--operational{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:10px 14px 0;border-bottom:0;background:transparent}
+.nm-pay-kpis--operational .nm-pay-kpi-card{gap:4px;padding:10px 12px;border-radius:14px;background:#fff;border:1px solid #E2E8F0;box-shadow:none}
+.nm-pay-kpis--operational .nm-pay-kpi-card__eyebrow{font-size:10px;color:#64748B}
+.nm-pay-kpis--operational .nm-pay-kpi-card__value{font-size:18px;letter-spacing:-.02em}
+.nm-pay-alert-strip{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px 0}
+.nm-pay-alert-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border-radius:12px;border:1px solid #FDE68A;background:#FFFBEB;color:#92400E;font-size:12px;font-weight:700}
+.nm-pay-alert-pill--support{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
+.nm-pay-alert-pill--retirement{border-color:#BFDBFE;background:#EFF6FF;color:#1D4ED8}
+.nm-pay-filterbar--operational{padding:10px 14px;gap:10px}
+.nm-pay-filterbar__grid--main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;flex:1 1 100%}
+.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}
+.nm-pay-filterbar__grid--advanced{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;flex:1 1 100%}
+.nm-pay-filterbar__grid--advanced.is-hidden{display:none}
+.nm-pay-filterbar__actions--operational{width:100%;justify-content:flex-end}
+.nm-pay-filterbar--operational .nm-pay-filter{gap:4px;padding:8px 10px;border-radius:12px;background:#fff}
+.nm-pay-filterbar--operational .nm-pay-filter span{font-size:9.5px}
+.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-input,.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-select{height:32px;border-radius:8px}
+.nm-pay-workspace{padding:8px 14px 14px;gap:0;background:transparent}
+.nm-pay-content--full{border:1px solid #E2E8F0;border-radius:16px;background:#fff;box-shadow:none}
+.nm-pay-scroll-body--operational{padding:10px 12px 12px}
+.nm-pay-inline-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#64748B}
+.nm-detail-tabs--operational{margin-bottom:8px;padding:0;background:transparent;border-bottom:1px solid #E2E8F0;border-radius:0}
+.nm-detail-tabs--operational .nm-detail-tab{padding:8px 12px;border-radius:10px 10px 0 0}
+.nm-pay-table-wrap--dashboard{border:1px solid #E2E8F0;border-radius:14px;max-height:calc(100vh - 360px);box-shadow:none}
+.nm-pay-table thead th{padding:9px 8px;font-size:10px}
+.nm-pay-table td{padding:8px 8px}
+.nm-pay-pagination{padding:10px 2px 0}
+.nm-pay-footer-actions{display:flex;gap:8px;flex-wrap:wrap;padding-top:10px}
+.nm-pay-footer-actions .nm-pay-btn{height:36px;padding:0 14px;border-radius:10px}
+@media (max-width:1200px){.nm-pay-kpis--operational{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--advanced{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-kpis--operational{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-table-wrap--dashboard{max-height:none}}
+@media (max-width:640px){.nm-pay-operational-head__row{align-items:flex-start}.nm-pay-operational-period{width:100%}.nm-pay-operational-period .nm-pay-input,.nm-pay-operational-period .nm-pay-select,.nm-pay-operational-period .nm-pay-btn{flex:1 1 150px}.nm-pay-filterbar__grid--main,.nm-pay-filterbar__grid--advanced{grid-template-columns:1fr}.nm-pay-footer-actions .nm-pay-btn{flex:1 1 100%}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -584,7 +874,9 @@ async function loadGroups() {
   if (!activePeriod) { groupsState = { positions: [], groups: [] }; return; }
   const response = await apiFetch(`/payroll/${activePeriod.id}/groups`);
   groupsState = response.data || { positions: [], groups: [] };
-  if (!activePosition && groupsState.positions.length) activePosition = groupsState.positions[0].position;
+  if ((!activePosition || !groupsState.positions.some((p) => p.position === activePosition)) && groupsState.positions.length) {
+    activePosition = groupsState.positions[0].position;
+  }
   const currentPosition = groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0];
   const available = Array.isArray(currentPosition?.municipalities) ? currentPosition.municipalities : [];
   if (activeGroupId && !available.some((m) => Number(m.id) === Number(activeGroupId))) activeGroupId = null;
@@ -681,19 +973,19 @@ function municipalityTotals() {
       neto:              Number(t.neto || 0),
     };
   }
-  // Sin municipio → usar datos del cargo activo
-  const pos = currentPositionData();
-  if (pos) {
+  // Sin municipio → usar datos agregados de la division visible
+  const division = currentDivisionMeta();
+  if (division) {
     return {
-      employees:         Number(pos.employees || 0),
-      novelties:         Number(pos.novelties || 0),
-      reviewed:          Number(pos.reviewed || 0),
-      items_reviewed:    Number(pos.items_reviewed || 0),
-      items_pending:     Number(pos.employees || 0) - Number(pos.items_reviewed || 0),
-      pending_supports:  Number(pos.pending_supports || 0),
-      total_devengado:   Number(pos.total_devengado || 0),
-      total_deducciones: Number(pos.total_deducciones || 0),
-      neto:              Number(pos.neto || 0),
+      employees:         Number(division.employees || 0),
+      novelties:         Number(division.novelties || 0),
+      reviewed:          Number(division.reviewed || 0),
+      items_reviewed:    Number(division.items_reviewed || 0),
+      items_pending:     Number(division.employees || 0) - Number(division.items_reviewed || 0),
+      pending_supports:  Number(division.pending_supports || 0),
+      total_devengado:   Number(division.total_devengado || 0),
+      total_deducciones: 0,
+      neto:              Number(division.neto || 0),
     };
   }
   return { employees: 0, novelties: 0, reviewed: 0, items_reviewed: 0, items_pending: 0, pending_supports: 0, total_devengado: 0, total_deducciones: 0, neto: 0 };
@@ -704,20 +996,36 @@ function kpiContextLabel() {
   if (activeGroupId && activeGroupDetail) {
     return currentMunicipalityData()?.municipality_name || "Municipio";
   }
-  const pos = currentPositionData()?.position || "";
-  return pos.length > 18 ? pos.split(" ").slice(0, 2).join(" ") : pos || "General";
+  return currentDivisionSummaryLabel();
 }
 
-// Barra de pestañas de cargos (fila propia, debajo del encabezado)
+// Barra principal de divisiones visibles
 function renderCargoTabsBar() {
   if (!activePeriod || !groupsState.positions.length) return "";
-  const current = groupsState.positions.find((p) => p.position === activePosition) || groupsState.positions[0];
-  return `<div class="nm-pay-cargo-tabs">
-    ${groupsState.positions.map((pos) => `
-      <button class="nm-pay-tab ${pos.position === current?.position ? "active" : ""}" data-position="${escapeHtml(pos.position)}">
-        ${escapeHtml(pos.position)}<span class="nm-pay-count">${pos.employees}</span>
+  const divisions = divisionMetaList();
+  const currentKey = currentDivisionKey();
+  const currentDivision = currentDivisionMeta();
+  const internalPositions = currentDivision?.positions || [];
+  const showInternalSelector = currentDivision?.key === "EQUIPO_MINIMO" && internalPositions.length > 1;
+  return `
+  <div class="nm-pay-cargo-tabs nm-pay-cargo-tabs--dashboard">
+    ${divisions.map((division) => `
+      <button class="nm-pay-tab ${division.key === currentKey ? "active" : ""}" data-division-key="${division.key}">
+        <span class="nm-pay-tab-eyebrow">Division visible</span>
+        <span class="nm-pay-tab-title">${escapeHtml(division.label)}</span>
+        <span class="nm-pay-tab-meta">${division.positions.length} base${division.positions.length !== 1 ? "s" : ""} · ${division.novelties} nov.</span>
+        <span class="nm-pay-count">${division.employees}</span>
       </button>`).join("")}
-  </div>`;
+  </div>
+  ${showInternalSelector ? `
+  <div class="nm-pay-subtabs">
+    <span class="nm-pay-subtabs-label">Categoria interna del equipo minimo</span>
+    ${internalPositions.map((position) => `
+      <button class="nm-pay-subtab ${position.position === activePosition ? "active" : ""}" data-position="${escapeHtml(position.position)}">
+        <span>${escapeHtml(position.position)}</span>
+        <b>${Number(position.employees || 0)}</b>
+      </button>`).join("")}
+  </div>` : ""}`;
 }
 
 function render() {
@@ -779,6 +1087,80 @@ function renderOperationalBody() {
   <div class="nm-pay-content">${renderGroupDetail()}</div>
 </div>`;
 }
+
+render = function renderPremium() {
+  const root = document.getElementById("nmPayRoot");
+  if (!root) return;
+  root.innerHTML = `
+<div class="nm-pay-card-main">
+  <div class="nm-pay-head nm-pay-head--dashboard">
+    <div class="nm-pay-head-copy">
+      <span class="nm-pay-overline">Empiria</span>
+      <span class="nm-pay-title">Nomina operativa</span>
+      <small class="nm-pay-head-caption">Vista ejecutiva por division, municipio y categoria salarial.</small>
+    </div>
+    <div class="nm-pay-head-controls">
+      <label class="nm-pay-topfield">
+        <span>Mes base</span>
+        <input class="nm-pay-input nm-pay-input--sm" type="month" id="nmPayMonth" value="${escapeHtml(periodMonth)}">
+      </label>
+      <label class="nm-pay-topfield">
+        <span>Periodo</span>
+        <select class="nm-pay-select nm-pay-input--sm" id="nmPayPeriod">
+          ${periodOptions() || `<option value="">Sin periodos</option>`}
+        </select>
+      </label>
+      ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCreate">Crear periodo</button>` : ""}
+    </div>
+  </div>
+  ${renderNominaPanel()}
+</div>
+`;
+  wireStaticEvents();
+};
+
+renderNominaPanel = function renderNominaPanelPremium() {
+  const totals = municipalityTotals();
+  const ctx = kpiContextLabel();
+  const division = currentDivisionMeta();
+  const periodLabel = activePeriod?.label || "Sin periodo";
+  const internalPosition = currentInternalPositionLabel();
+  return `
+${renderCargoTabsBar()}
+<div class="nm-pay-kpis nm-pay-kpis--premium">
+  <article class="nm-pay-kpi-card nm-pay-kpi-card--hero">
+    <span class="nm-pay-kpi-card__eyebrow">${activeGroupId ? "Municipio activo" : "Division activa"}</span>
+    <b class="nm-pay-kpi-card__value">${escapeHtml(ctx)}</b>
+    <small class="nm-pay-kpi-card__meta">${escapeHtml(periodLabel)}${division?.key === "EQUIPO_MINIMO" && internalPosition ? ` · Base interna: ${escapeHtml(internalPosition)}` : ""}</small>
+  </article>
+  <article class="nm-pay-kpi-card">
+    <span class="nm-pay-kpi-card__eyebrow">Empleados</span>
+    <b class="nm-pay-kpi-card__value">${totals.employees}</b>
+    <small class="nm-pay-kpi-card__meta">${division ? escapeHtml(division.label) : "Sin division"}</small>
+  </article>
+  <article class="nm-pay-kpi-card">
+    <span class="nm-pay-kpi-card__eyebrow">Revision</span>
+    <b class="nm-pay-kpi-card__value">${totals.items_reviewed}/${totals.employees}</b>
+    <small class="nm-pay-kpi-card__meta">${totals.items_pending} pendiente(s)</small>
+  </article>
+  <article class="nm-pay-kpi-card">
+    <span class="nm-pay-kpi-card__eyebrow">Novedades</span>
+    <b class="nm-pay-kpi-card__value">${totals.novelties}</b>
+    <small class="nm-pay-kpi-card__meta">${totals.pending_supports} soporte(s) pendiente(s)</small>
+  </article>
+  <article class="nm-pay-kpi-card">
+    <span class="nm-pay-kpi-card__eyebrow">Devengado</span>
+    <b class="nm-pay-kpi-card__value">${fmtCOP(totals.total_devengado)}</b>
+    <small class="nm-pay-kpi-card__meta">Total visible del panel</small>
+  </article>
+  <article class="nm-pay-kpi-card">
+    <span class="nm-pay-kpi-card__eyebrow">Neto</span>
+    <b class="nm-pay-kpi-card__value">${fmtCOP(totals.neto)}</b>
+    <small class="nm-pay-kpi-card__meta">Cierre estimado del periodo</small>
+  </article>
+</div>
+${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nomina.</div></div>`}`;
+};
 
 function munStatusChip(status) {
   const s = String(status || "");
@@ -3829,9 +4211,13 @@ function openBankEditModal(coverId, currentBank, currentAccountType, currentAcco
 // MODAL: DESPRENDIBLE DE PAGO (por empleado/item)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildPayslipHtmlDoc(data, forPrint = false) {
+function buildPayslipHtmlDocLegacyUnused(data, forPrint = false) {
   const { employee, earnings, deductions, net, worked_days, covers, period, cambio_operativo, payslip, performed_covers } = data;
   const fmt = fmtCOP;
+  const employeeArea = payrollAreaLabelFromPosition(employee?.position);
+  const salaryCategoryLine = data.salary_category
+    ? ` &nbsp;·&nbsp; Categoría salarial: <b style="color:#6D28D9">${escapeHtml(data.salary_category)}</b>`
+    : "";
 
   // ── REPORTE DE NOVEDADES ─────────────────────────────────────────────────
   // CORRECCION_SEGURIDAD_SOCIAL es un ajuste técnico interno — no se muestra al empleado
@@ -3925,7 +4311,8 @@ ${printScript}
   <div class="slip-info">
     <strong>${escapeHtml(employee.name)}</strong><br>
     <small>CC ${escapeHtml(employee.document)} &nbsp;·&nbsp; ${escapeHtml(employee.municipality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.institution || "")} &nbsp;·&nbsp; ${escapeHtml(employee.site || "")}</small><br>
-    <small>${escapeHtml(employee.modality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.work_time || "")} &nbsp;·&nbsp; Período: <b>${escapeHtml(period.label || "")}</b>${data.salary_category ? ` &nbsp;·&nbsp; <b style="color:#6D28D9">${escapeHtml(data.salary_category)}</b>` : ""}</small>
+    <small>Cargo: <b>${escapeHtml(employee.position || "-")}</b> &nbsp;·&nbsp; Área: <b>${escapeHtml(employeeArea)}</b> &nbsp;·&nbsp; ${escapeHtml(employee.modality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.work_time || "")}</small><br>
+    <small>Período: <b>${escapeHtml(period.label || "")}</b>${salaryCategoryLine}</small>
   </div>
 
   ${novSectionHtml}
@@ -3978,7 +4365,7 @@ function downloadPayslipPdf(data) {
   w.focus();
 }
 
-async function openPayslipModal(itemId) {
+async function openPayslipModalLegacyUnused(itemId) {
   try {
     const response = await apiFetch(`/payroll/items/${itemId}/slip`);
     const data = response.data;
@@ -3986,13 +4373,18 @@ async function openPayslipModal(itemId) {
 
     const { employee, earnings, deductions, net, worked_days, period, cambio_operativo, payslip } = data;
     const fmt = fmtCOP;
+    const employeeArea = payrollAreaLabelFromPosition(employee?.position);
+    const salaryCategoryLine = data.salary_category
+      ? ` &nbsp;·&nbsp; Categoría salarial: ${salaryCategoryBadge(data.salary_category)}`
+      : "";
 
     // ── Cabecera del empleado ──────────────────────────────────────────────
     const headerHtml = `
 <div style="font-size:13px;color:#334155;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:10px;margin-bottom:10px">
   <b>${escapeHtml(employee.name)}</b> — CC ${escapeHtml(employee.document)}<br>
   <span style="color:#64748B">${escapeHtml(employee.municipality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.institution || "")} &nbsp;·&nbsp; ${escapeHtml(employee.site || "")}</span><br>
-  <span style="color:#64748B">${escapeHtml(employee.modality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.work_time || "")} &nbsp;·&nbsp; Período: <b>${escapeHtml(period.label || "")}</b>${data.salary_category ? ` &nbsp;·&nbsp; ${salaryCategoryBadge(data.salary_category)}` : ""}</span>
+  <span style="color:#64748B">Cargo real: <b>${escapeHtml(employee.position || "-")}</b> &nbsp;·&nbsp; Área: <b>${escapeHtml(employeeArea)}</b> &nbsp;·&nbsp; ${escapeHtml(employee.modality || "")} &nbsp;·&nbsp; ${escapeHtml(employee.work_time || "")}</span><br>
+  <span style="color:#64748B">Período: <b>${escapeHtml(period.label || "")}</b>${salaryCategoryLine}</span>
 </div>`;
 
     // ── REPORTE DE NOVEDADES (modal) ─────────────────────────────────────────
@@ -4100,6 +4492,655 @@ async function openPayslipModal(itemId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE MODAL INTERNO (reemplazan prompt/confirm nativos)
 // ─────────────────────────────────────────────────────────────────────────────
+const INTERNAL_PAYSLIP_NOVELTY_TYPES = new Set(["CAMBIO_OPERATIVO_COBERTURA", "CORRECCION_SEGURIDAD_SOCIAL"]);
+const PAYSLIP_COMPANY_NAME = "INGENIERIA Y ALIMENTOS S.A.S.";
+
+function payslipDaysLabel(days) {
+  const value = Number(days || 0);
+  return `${value} dia${value === 1 ? "" : "s"}`;
+}
+
+function payslipMoney(value) {
+  return fmtCOP(Math.abs(Number(value || 0)));
+}
+
+function payslipDocSequence(itemId, employeeDocument = "") {
+  const numericId = Number(itemId);
+  if (Number.isFinite(numericId) && numericId > 0) {
+    return `DSP-${String(Math.trunc(numericId)).padStart(6, "0")}`;
+  }
+  const docDigits = String(employeeDocument || "").replace(/\D/g, "").slice(-6) || "000000";
+  return `DSP-${docDigits.padStart(6, "0")}`;
+}
+
+function payslipVerificationCode(sequence, document, period) {
+  const docSuffix = String(document || "").replace(/\D/g, "").slice(-4) || "0000";
+  const periodToken = String(period.period_end || period.period_start || "")
+    .replace(/\D/g, "")
+    .slice(-8) || "00000000";
+  return `${sequence.replace(/[^A-Z0-9]/g, "")}-${docSuffix}-${periodToken}`;
+}
+
+function buildPayslipDocumentCss() {
+  return `
+@page { size: Letter portrait; margin: 0.35in; }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#E8EEF4;color:#10233F;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.ep-slip-root{font-family:"Plus Jakarta Sans","Inter","Segoe UI",Arial,sans-serif;padding:12px;color:#10233F}
+.ep-slip-sheet{width:100%;max-width:7.86in;margin:0 auto;background:#fff;border:1px solid #D5DFEA;box-shadow:0 20px 44px rgba(15,23,42,.12)}
+.ep-slip-accent{height:5px;background:linear-gradient(90deg,#10233F 0%,#0F766E 62%,#20A4B8 100%)}
+.ep-slip-body{padding:12px 14px 10px;display:grid;gap:8px}
+.ep-slip-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;padding-bottom:6px;border-bottom:1px solid #D8E3EE}
+.ep-slip-company{min-width:0}
+.ep-slip-company__name{margin:0;font-size:11px;line-height:1;font-weight:700;text-transform:uppercase;letter-spacing:-.02em;color:#10233F;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.ep-slip-company__subline{margin-top:2px;font-size:10px;line-height:1.25;font-weight:800;text-transform:uppercase;color:#1E3A5F;white-space:normal;overflow-wrap:anywhere}
+.ep-slip-company__nit{margin-top:2px;font-size:8px;line-height:1;font-weight:500;color:#5B6B7F}
+.ep-slip-title{margin:0;text-align:center;font-size:18px;line-height:1.04;font-weight:900;text-transform:uppercase;letter-spacing:.01em;color:#10233F}
+.ep-slip-header__spacer{min-height:1px}
+.ep-slip-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ep-slip-meta__item{padding:5px 7px;border:1px solid #DCE6EF;background:#F8FBFD}
+.ep-slip-meta__item span{display:block;font-size:8px;line-height:1.15;font-weight:800;text-transform:uppercase;color:#607086}
+.ep-slip-meta__item strong{display:block;margin-top:2px;font-size:9px;line-height:1.25;font-weight:800;color:#10233F;overflow-wrap:anywhere}
+.ep-slip-worker{display:grid;gap:7px;padding:8px 9px;border:1px solid #DCE6EF;background:linear-gradient(180deg,#FFFFFF 0%,#FBFCFE 100%)}
+.ep-slip-worker__identity{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ep-slip-worker__identity small{display:block;font-size:8px;line-height:1.15;font-weight:800;text-transform:uppercase;color:#0F766E}
+.ep-slip-worker__identity h3{margin:2px 0 0;font-size:18px;line-height:1.02;font-weight:900;letter-spacing:-.02em;color:#10233F}
+.ep-slip-worker__identity p{margin:2px 0 0;font-size:9px;line-height:1.22;font-weight:700;color:#475569}
+.ep-slip-chip{display:inline-flex;align-items:center;padding:3px 7px;border:1px solid #B7D8D2;background:#F1FBF8;color:#0F766E;font-size:8px;line-height:1.05;font-weight:800;text-transform:uppercase}
+.ep-slip-worker__grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+.ep-slip-field{padding:6px 7px;border:1px solid #E3EBF3;background:#fff}
+.ep-slip-field span{display:block;font-size:8px;line-height:1.15;font-weight:800;text-transform:uppercase;color:#7A8A9C}
+.ep-slip-field strong{display:block;margin-top:2px;font-size:9px;line-height:1.2;font-weight:700;color:#10233F;overflow-wrap:anywhere}
+.ep-slip-field--wide{grid-column:span 2}
+.ep-slip-tables{display:grid;grid-template-columns:1fr 1fr;gap:7px;align-items:stretch}
+.ep-slip-card{display:flex;flex-direction:column;border:1px solid #DCE6EF;background:#fff;break-inside:avoid;page-break-inside:avoid}
+.ep-slip-card__head{padding:6px 8px;border-bottom:1px solid #E4ECF3;background:#F7FAFC}
+.ep-slip-card__head h4{margin:0;font-size:9px;line-height:1.1;font-weight:900;text-transform:uppercase;color:#10233F}
+.ep-slip-table{width:100%;border-collapse:collapse}
+.ep-slip-table thead th{padding:5px 7px;border-bottom:1px solid #E4ECF3;text-align:left;font-size:7px;line-height:1.1;font-weight:900;text-transform:uppercase;color:#66768B;background:#FBFCFD}
+.ep-slip-table tbody td{padding:4px 7px;border-bottom:1px solid #EDF2F7;font-size:8px;line-height:1.2;color:#10233F;vertical-align:top;overflow-wrap:anywhere}
+.ep-slip-table tbody tr:last-child td{border-bottom:0}
+.ep-slip-table td.is-number,.ep-slip-table th.is-number{text-align:right;white-space:nowrap}
+.ep-slip-table td.is-center,.ep-slip-table th.is-center{text-align:center;white-space:nowrap}
+.ep-slip-table tfoot td{padding:5px 7px;border-top:2px solid #D4DEE8;background:#F7FAFC;font-size:7px;line-height:1.1;font-weight:900;text-transform:uppercase;color:#10233F}
+.ep-slip-table tfoot td:last-child{text-align:right;font-size:9px}
+.ep-slip-table--deductions tfoot td:last-child{color:#9F1239}
+.ep-slip-table__empty{padding:7px;font-size:8px;line-height:1.18;color:#64748B}
+.ep-slip-net{display:grid;grid-template-columns:1.15fr auto auto;gap:6px;align-items:stretch;padding:8px 9px;border:1px solid #DCE6EF;background:linear-gradient(90deg,#10233F 0%,#123052 55%,#0F766E 100%);color:#fff;break-inside:avoid;page-break-inside:avoid}
+.ep-slip-net__main{display:grid;align-content:space-between}
+.ep-slip-net__main span{font-size:9px;line-height:1.1;font-weight:800;text-transform:uppercase;color:rgba(255,255,255,.78)}
+.ep-slip-net__main strong{display:block;margin-top:3px;font-size:34px;line-height:.95;font-weight:900;letter-spacing:-.03em;color:#fff}
+.ep-slip-net__meta{display:grid;gap:5px;min-width:108px}
+.ep-slip-total-box{padding:6px 7px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08)}
+.ep-slip-total-box span{display:block;font-size:7px;line-height:1.1;font-weight:800;text-transform:uppercase;color:rgba(255,255,255,.7)}
+.ep-slip-total-box strong{display:block;margin-top:2px;font-size:10px;line-height:1.15;font-weight:800;color:#fff;overflow-wrap:anywhere}
+.ep-slip-total-box--negative{background:rgba(127,29,29,.2);border-color:rgba(254,202,202,.24)}
+.ep-slip-sections{display:grid;grid-template-columns:1.18fr .82fr;gap:7px}
+.ep-slip-section{border:1px solid #DCE6EF;background:#fff;break-inside:avoid;page-break-inside:avoid}
+.ep-slip-section__head{padding:6px 8px;border-bottom:1px solid #E4ECF3;background:#F7FAFC}
+.ep-slip-section__head h4{margin:0;font-size:9px;line-height:1.1;font-weight:900;text-transform:uppercase;color:#10233F}
+.ep-slip-section__body{padding:6px 8px}
+.ep-slip-novelties,.ep-slip-observations{display:grid;gap:4px}
+.ep-slip-novelty,.ep-slip-observation{font-size:8px;line-height:1.18;color:#334155;overflow-wrap:anywhere}
+.ep-slip-novelty{padding-bottom:4px;border-bottom:1px solid #EEF3F7}
+.ep-slip-novelty:last-child{padding-bottom:0;border-bottom:0}
+.ep-slip-novelty strong,.ep-slip-observation strong{font-weight:800;color:#10233F}
+.ep-slip-empty{font-size:8px;line-height:1.18;color:#64748B}
+.ep-slip-validation-bar{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center;padding:6px 8px;border:1px solid #DCE6EF;background:#F8FBFD;break-inside:avoid;page-break-inside:avoid}
+.ep-slip-validation-bar__status{display:inline-flex;align-items:center;justify-content:center;padding:4px 7px;border:1px solid #B7D8D2;background:#F1FBF8;color:#0F766E;font-size:7px;line-height:1.05;font-weight:900;text-transform:uppercase;white-space:nowrap}
+.ep-slip-validation-bar__item span{display:block;font-size:7px;line-height:1.1;font-weight:800;text-transform:uppercase;color:#7A8A9C}
+.ep-slip-validation-bar__item strong{display:block;margin-top:2px;font-size:8px;line-height:1.18;font-weight:800;color:#10233F;overflow-wrap:anywhere}
+.ep-slip-footer{display:grid;gap:1px;padding-top:2px;border-top:1px solid #DCE6EF}
+.ep-slip-footer p{margin:0;font-size:8px;line-height:1.2;color:#5B6B7F}
+.ep-slip-footer p:last-child{font-weight:700;color:#475569}
+@media (max-width:920px){
+  .ep-slip-root{padding:8px}
+  .ep-slip-header,.ep-slip-meta,.ep-slip-worker__grid,.ep-slip-tables,.ep-slip-sections,.ep-slip-validation-bar{grid-template-columns:1fr}
+  .ep-slip-title{text-align:left}
+  .ep-slip-header__spacer{display:none}
+  .ep-slip-net{grid-template-columns:1fr}
+  .ep-slip-net__meta{min-width:0}
+}
+@media (max-width:640px){
+  .ep-slip-worker__identity h3{font-size:18px}
+  .ep-slip-net__main strong{font-size:32px}
+}
+@media print{
+  html,body{
+    width:8.5in;
+    min-height:11in;
+    margin:0;
+    padding:0;
+    background:#fff !important;
+    overflow:visible !important;
+  }
+  body *{
+    visibility:hidden;
+  }
+  .payslip-document,
+  .payslip-document *{
+    visibility:visible;
+  }
+  #nmPayModal,
+  .nm-pay-dialog,
+  .nm-pay-dialog--payslip,
+  .nm-pay-dialog-b,
+  .nm-pay-dialog-b--payslip,
+  .ep-slip-root{
+    position:static !important;
+    inset:auto !important;
+    margin:0 !important;
+    padding:0 !important;
+    width:auto !important;
+    max-width:none !important;
+    min-width:0 !important;
+    background:transparent !important;
+    border:0 !important;
+    box-shadow:none !important;
+    overflow:visible !important;
+  }
+  .nm-pay-dialog-h,
+  .nm-pay-btn,
+  [data-close-modal]{
+    display:none !important;
+  }
+  .payslip-document{
+    position:absolute !important;
+    left:0;
+    right:0;
+    top:0;
+    width:7.8in !important;
+    max-width:7.8in !important;
+    margin:0 auto !important;
+    box-shadow:none !important;
+    transform:none !important;
+    page-break-inside:avoid;
+    break-inside:avoid;
+    overflow:visible !important;
+    border:1px solid #D5DFEA;
+  }
+  .ep-slip-body{
+    padding:10px 12px 9px;
+    gap:6px;
+  }
+  .ep-slip-root{
+    font-size:initial;
+  }
+  .ep-slip-sheet{
+    width:7.8in !important;
+    max-width:7.8in !important;
+    box-shadow:none !important;
+    overflow:visible !important;
+  }
+  .ep-slip-company__name{font-size:11px}
+  .ep-slip-company__nit{font-size:8px}
+  .ep-slip-title{font-size:17px}
+  .ep-slip-meta__item{padding:4px 6px}
+  .ep-slip-meta__item span{font-size:7px}
+  .ep-slip-meta__item strong{font-size:8px}
+  .ep-slip-worker{padding:7px 8px;gap:6px}
+  .ep-slip-worker__identity h3{font-size:17px}
+  .ep-slip-worker__identity p{font-size:8px}
+  .ep-slip-chip{font-size:7px}
+  .ep-slip-field{padding:5px 6px}
+  .ep-slip-field strong{font-size:8px}
+  .ep-slip-card__head{padding:5px 7px}
+  .ep-slip-card__head h4{font-size:8px}
+  .ep-slip-table thead th{padding:4px 6px;font-size:6px}
+  .ep-slip-table tbody td{padding:3px 6px;font-size:7px}
+  .ep-slip-table tfoot td{padding:4px 6px;font-size:6px}
+  .ep-slip-table tfoot td:last-child{font-size:8px}
+  .ep-slip-net{padding:7px 8px;gap:5px}
+  .ep-slip-net__main span{font-size:8px}
+  .ep-slip-net__main strong{font-size:31px}
+  .ep-slip-total-box{padding:5px 6px}
+  .ep-slip-total-box strong{font-size:9px}
+  .ep-slip-section__head{padding:5px 7px}
+  .ep-slip-section__head h4{font-size:8px}
+  .ep-slip-section__body{padding:5px 7px}
+  .ep-slip-novelty,.ep-slip-observation,.ep-slip-empty{font-size:7px}
+  .ep-slip-validation-bar{padding:5px 7px}
+  .ep-slip-validation-bar__status{font-size:6px}
+  .ep-slip-validation-bar__item span{font-size:6px}
+  .ep-slip-validation-bar__item strong{font-size:7px}
+  .ep-slip-footer p{font-size:7px}
+  .payslip-money-grid,
+  .ep-slip-tables{
+    display:grid !important;
+    grid-template-columns:1fr 1fr !important;
+  }
+  .payslip-bottom-grid,
+  .ep-slip-sections{
+    display:grid !important;
+    grid-template-columns:1fr 1fr !important;
+  }
+}
+`;
+}
+
+function buildPayslipViewModel(data) {
+  const item = data.item || {};
+  const employee = data.employee || {};
+  const earnings = data.earnings || {};
+  const deductions = data.deductions || {};
+  const period = data.period || {};
+  const payslip = data.payslip || {};
+  const cambioOperativo = data.cambio_operativo || null;
+  const workedDays = payslip.worked_days != null ? payslip.worked_days : Number(data.worked_days || 0);
+  const salaryPaidDays = payslip.salary_paid_days != null ? payslip.salary_paid_days : workedDays;
+  const transportPaidDays = payslip.transport_paid_days != null ? payslip.transport_paid_days : workedDays;
+  const performedCovers = Array.isArray(data.performed_covers) ? data.performed_covers : [];
+  const covers = Array.isArray(data.covers) ? data.covers : [];
+  const periodRange = (period.period_start || period.period_end)
+    ? fmtDateRange(period.period_start, period.period_end)
+    : "";
+  const documentSequence = payslipDocSequence(item.id, employee.document);
+  const verificationCode = payslipVerificationCode(documentSequence, employee.document, period);
+  const companyPrimaryLine = String(
+    data.subcompany_name ||
+    data.active_company_name ||
+    data.contract_company_name ||
+    data.company?.active_company_name ||
+    data.company?.subcompany_name ||
+    data.company?.name ||
+    item.subcompany_name ||
+    item.active_company_name ||
+    item.contract_company_name ||
+    item.company_name ||
+    data.company_name ||
+    data.nombre_empresa ||
+    data.empresa_activa ||
+    state.currentUser?.activeCompanyName ||
+    state.currentUser?.companyName ||
+    state.currentUser?.company_name ||
+    PAYSLIP_COMPANY_NAME
+  ).trim() || PAYSLIP_COMPANY_NAME;
+  const companyNit = String(
+    data.nit ||
+    data.company_nit ||
+    data.active_company_nit ||
+    data.company?.nit ||
+    item.company_nit ||
+    item.active_company_nit ||
+    state.currentUser?.companyNit ||
+    state.currentUser?.company_nit ||
+    ""
+  ).trim();
+  const qrValue = String(data.qr || data.qr_url || data.qrUrl || data.validation_qr || "").trim();
+  const novelties = (Array.isArray(data.novelties) ? data.novelties : [])
+    .filter((novelty) => !INTERNAL_PAYSLIP_NOVELTY_TYPES.has(novelty.novelty_type))
+    .map((novelty) => {
+      const rawDate = String(novelty.start_date || novelty.novelty_date || novelty.end_date || "");
+      return {
+        name: novelty.novelty_name || novelty.novelty_type || "Novedad",
+        dateLabel: (novelty.start_date || novelty.end_date || novelty.novelty_date)
+          ? (fmtDateRange(novelty.start_date, novelty.end_date) || fmtDateDMY(novelty.novelty_date))
+          : "",
+        description: novelty.description || novelty.observations || "",
+        sortKey: rawDate ? rawDate.slice(0, 10) : "9999-12-31",
+      };
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  const earningsRows = [];
+  if (cambioOperativo) {
+    earningsRows.push(
+      {
+        concept: `Liquidacion categoria ${cambioOperativo.original_category || "original"}`,
+        quantity: payslipDaysLabel(cambioOperativo.days_original),
+        value: payslipMoney(
+          Number(cambioOperativo.base_original || 0) +
+          Number(cambioOperativo.transport_original || 0) +
+          Number(cambioOperativo.other_original || 0)
+        ),
+      },
+      {
+        concept: `Liquidacion categoria ${cambioOperativo.new_category || "aplicada"}`,
+        quantity: payslipDaysLabel(cambioOperativo.days_new),
+        value: payslipMoney(
+          Number(cambioOperativo.base_new || 0) +
+          Number(cambioOperativo.transport_new || 0) +
+          Number(cambioOperativo.other_new || 0)
+        ),
+      }
+    );
+  } else {
+    earningsRows.push(
+      {
+        concept: "Salario basico",
+        quantity: `${salaryPaidDays}/${workedDays} dias`,
+        value: payslipMoney(earnings.base_salary),
+      },
+      {
+        concept: "Auxilio de transporte",
+        quantity: `${transportPaidDays}/${workedDays} dias`,
+        value: payslipMoney(earnings.transport_allowance),
+      }
+    );
+    if (Number(earnings.other_recargos_value || 0)) {
+      earningsRows.push({
+        concept: "Otros recargos",
+        quantity: "Periodo",
+        value: payslipMoney(earnings.other_recargos_value),
+      });
+    }
+  }
+
+  performedCovers.forEach((cover) => {
+    earningsRows.push({
+      concept: "Turno cubierto",
+      quantity: payslipDaysLabel(cover.days),
+      value: payslipMoney(cover.total_value),
+    });
+  });
+
+  const deductionRows = [];
+  if (Number(deductions.salud || 0)) {
+    deductionRows.push({ concept: "Salud 4%", value: payslipMoney(deductions.salud) });
+  }
+  if (Number(deductions.pension || 0)) {
+    deductionRows.push({ concept: "Pension 4%", value: payslipMoney(deductions.pension) });
+  }
+
+  covers.forEach((cover) => {
+    deductionRows.push({
+      concept: `Turno cubierto (${payslipDaysLabel(cover.days)})`,
+      value: payslipMoney(cover.total_value),
+    });
+  });
+
+  if (!covers.length && Number(deductions.turn_cover_discount || 0)) {
+    deductionRows.push({
+      concept: "Otras deducciones",
+      value: payslipMoney(deductions.turn_cover_discount),
+    });
+  }
+
+  const observations = [
+    data.salary_category ? `Categoria salarial aplicada: ${data.salary_category}.` : "",
+    novelties.length
+      ? "Liquidacion calculada segun novedades registradas en el periodo."
+      : "No se registraron novedades para este periodo.",
+    cambioOperativo ? "La liquidacion incluye ajuste por cambio operativo de cobertura." : "",
+    "Documento generado electronicamente.",
+  ].filter(Boolean);
+
+  return {
+    item,
+    employee,
+    earnings,
+    deductions,
+    period,
+    companyName: companyPrimaryLine,
+    companyLine2: "",
+    companyNit,
+    qrValue,
+    net: Number(data.net || 0),
+    salaryCategory: data.salary_category || "",
+    workedDays,
+    periodRange,
+    novelties,
+    earningsRows,
+    deductionRows,
+    observations,
+    documentSequence,
+    verificationCode,
+    generatedAt: new Date().toLocaleDateString("es-CO"),
+  };
+}
+
+function renderPayslipEarningsTable(view) {
+  const rows = view.earningsRows
+    .filter((row) => Number(String(row.value || "").replace(/[^\d-]/g, "")) > 0 || row.value === fmtCOP(0));
+  const body = rows.length
+    ? rows.map((row) => `
+        <tr>
+          <td>${escapeHtml(row.concept || "")}</td>
+          <td class="is-center">${row.quantity ? escapeHtml(row.quantity) : "&mdash;"}</td>
+          <td class="is-number">${escapeHtml(row.value || payslipMoney(0))}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="3" class="ep-slip-table__empty">No se registran conceptos devengados adicionales para este periodo.</td></tr>`;
+  return `
+    <table class="ep-slip-table">
+      <thead>
+        <tr>
+          <th>Concepto</th>
+          <th class="is-center">Cantidad</th>
+          <th class="is-number">Valor</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">Total devengado</td>
+          <td>${escapeHtml(payslipMoney(view.earnings.total_devengado || 0))}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function renderPayslipDeductionsTable(view) {
+  const rows = view.deductionRows;
+  const body = rows.length
+    ? rows.map((row) => `
+        <tr>
+          <td>${escapeHtml(row.concept || "")}</td>
+          <td class="is-number">${escapeHtml(row.value || payslipMoney(0))}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="2" class="ep-slip-table__empty">No se registraron deducciones para este periodo.</td></tr>`;
+  return `
+    <table class="ep-slip-table">
+      <thead>
+        <tr>
+          <th>Concepto</th>
+          <th class="is-number">Valor</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+      <tfoot>
+        <tr>
+          <td>Total deducciones</td>
+          <td>${escapeHtml(payslipMoney(view.deductions.total_deducciones || 0))}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function renderPayslipNovelties(view) {
+  if (!view.novelties.length) {
+    return `<div class="ep-slip-empty">No se registraron novedades para este periodo.</div>`;
+  }
+  return `<div class="ep-slip-novelties">${view.novelties.map((novelty) => `
+    <div class="ep-slip-novelty">
+      <strong>${escapeHtml(novelty.name)}</strong>${novelty.dateLabel ? ` &mdash; ${escapeHtml(novelty.dateLabel)}` : ""}
+      ${novelty.description ? `<div>${escapeHtml(novelty.description)}</div>` : ""}
+    </div>`).join("")}</div>`;
+}
+
+function renderPayslipObservations(view) {
+  return `<div class="ep-slip-observations">${view.observations.map((item) => `<div class="ep-slip-observation"><strong>&bull;</strong> ${escapeHtml(item)}</div>`).join("")}</div>`;
+}
+
+function renderPayslipValidationBar(view) {
+  const qrBlock = view.qrValue
+    ? `<div class="ep-slip-validation-bar__item"><span>QR</span><strong>${escapeHtml(view.qrValue)}</strong></div>`
+    : "";
+  return `
+    <section class="ep-slip-validation-bar">
+      <div class="ep-slip-validation-bar__status">Documento valido</div>
+      <div class="ep-slip-validation-bar__item">
+        <span>Consecutivo</span>
+        <strong>${escapeHtml(view.documentSequence)}</strong>
+      </div>
+      <div class="ep-slip-validation-bar__item">
+        <span>Codigo de verificacion</span>
+        <strong>${escapeHtml(view.verificationCode)}</strong>
+      </div>
+      ${qrBlock}
+    </section>`;
+}
+
+function renderPayslipContent(data) {
+  const view = buildPayslipViewModel(data);
+  return `
+<div class="ep-slip-root">
+  <article class="ep-slip-sheet payslip-document">
+    <div class="ep-slip-accent"></div>
+    <div class="ep-slip-body">
+      <header class="ep-slip-header">
+        <div class="ep-slip-company">
+          <h1 class="ep-slip-company__name">${escapeHtml(view.companyName)}</h1>
+          ${view.companyNit ? `<div class="ep-slip-company__nit">${escapeHtml(/^nit\b/i.test(view.companyNit) ? view.companyNit : `NIT ${view.companyNit}`)}</div>` : ""}
+        </div>
+        <h2 class="ep-slip-title">Desprendible de pago</h2>
+        <div class="ep-slip-header__spacer" aria-hidden="true"></div>
+      </header>
+
+      <section class="ep-slip-meta">
+        <div class="ep-slip-meta__item">
+          <span>Periodo</span>
+          <strong>${escapeHtml(view.period.label || "Periodo sin etiqueta")}${view.periodRange ? ` &middot; ${escapeHtml(view.periodRange)}` : ""}</strong>
+        </div>
+        <div class="ep-slip-meta__item">
+          <span>Fecha de generacion</span>
+          <strong>${escapeHtml(view.generatedAt)}</strong>
+        </div>
+        <div class="ep-slip-meta__item">
+          <span>Consecutivo</span>
+          <strong>${escapeHtml(view.documentSequence)}</strong>
+        </div>
+      </section>
+
+      <section class="ep-slip-worker">
+        <div class="ep-slip-worker__identity">
+          <div>
+            <small>Trabajador</small>
+            <h3>${escapeHtml(view.employee.name || "Empleado")}</h3>
+            <p>CC ${escapeHtml(view.employee.document || "-")}</p>
+          </div>
+          ${view.salaryCategory ? `<span class="ep-slip-chip">${escapeHtml(view.salaryCategory)}</span>` : ""}
+        </div>
+        <div class="ep-slip-worker__grid">
+          <div class="ep-slip-field"><span>Cargo</span><strong>${escapeHtml(view.employee.position || "-")}</strong></div>
+          <div class="ep-slip-field"><span>Categoria salarial</span><strong>${escapeHtml(view.salaryCategory || "-")}</strong></div>
+          <div class="ep-slip-field"><span>Municipio</span><strong>${escapeHtml(view.employee.municipality || "-")}</strong></div>
+          <div class="ep-slip-field ep-slip-field--wide"><span>Institucion</span><strong>${escapeHtml(view.employee.institution || "-")}</strong></div>
+          <div class="ep-slip-field"><span>Sede</span><strong>${escapeHtml(view.employee.site || "-")}</strong></div>
+        </div>
+      </section>
+
+      <section class="ep-slip-tables payslip-money-grid">
+        <section class="ep-slip-card">
+          <div class="ep-slip-card__head">
+            <h4>Devengados</h4>
+          </div>
+          ${renderPayslipEarningsTable(view)}
+        </section>
+        <section class="ep-slip-card">
+          <div class="ep-slip-card__head">
+            <h4>Deducciones</h4>
+          </div>
+          ${renderPayslipDeductionsTable(view).replace('class="ep-slip-table"', 'class="ep-slip-table ep-slip-table--deductions"')}
+        </section>
+      </section>
+
+      <section class="ep-slip-net">
+        <div class="ep-slip-net__main">
+          <span>Neto a pagar</span>
+          <strong>${escapeHtml(payslipMoney(view.net))}</strong>
+        </div>
+        <div class="ep-slip-net__meta">
+          <div class="ep-slip-total-box">
+            <span>Total devengado</span>
+            <strong>${escapeHtml(payslipMoney(view.earnings.total_devengado || 0))}</strong>
+          </div>
+        </div>
+        <div class="ep-slip-net__meta">
+          <div class="ep-slip-total-box ep-slip-total-box--negative">
+            <span>Total deducciones</span>
+            <strong>${escapeHtml(payslipMoney(view.deductions.total_deducciones || 0))}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="ep-slip-sections payslip-bottom-grid">
+        <section class="ep-slip-section">
+          <div class="ep-slip-section__head">
+            <h4>Novedades del periodo</h4>
+          </div>
+          <div class="ep-slip-section__body">
+            ${renderPayslipNovelties(view)}
+          </div>
+        </section>
+        <section class="ep-slip-section">
+          <div class="ep-slip-section__head">
+            <h4>Observaciones</h4>
+          </div>
+          <div class="ep-slip-section__body">
+            ${renderPayslipObservations(view)}
+          </div>
+        </section>
+      </section>
+
+      ${renderPayslipValidationBar(view)}
+
+      <footer class="ep-slip-footer">
+        <p>Desprendible de pago generado por software de gesti&oacute;n integral de talento humano Empiria.</p>
+        <p>Documento generado electr&oacute;nicamente y no requiere firma.</p>
+      </footer>
+    </div>
+  </article>
+</div>`;
+}
+
+function buildPayslipHtmlDoc(data, forPrint = false) {
+  const employee = data.employee || {};
+  const period = data.period || {};
+  const printScript = forPrint ? `<script>window.onload=function(){window.print();}<\/script>` : "";
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Desprendible - ${escapeHtml(employee.document || "")} - ${escapeHtml(period.label || "")}</title>
+<style>${buildPayslipDocumentCss()}</style>
+${printScript}
+</head>
+<body>${renderPayslipContent(data)}</body>
+</html>`;
+}
+
+async function openPayslipModal(itemId) {
+  try {
+    const response = await apiFetch(`/payroll/items/${itemId}/slip`);
+    const data = response.data;
+    if (!data) { showError("No se pudo cargar el desprendible"); return; }
+
+    const modal = document.getElementById("nmPayModal");
+    modal.innerHTML = `
+<div class="nm-pay-dialog nm-pay-dialog--payslip">
+  <div class="nm-pay-dialog-h">
+    <b>Desprendible de pago</b>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipPrint">Imprimir</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipPdf">Descargar PDF</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+    </div>
+  </div>
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--payslip">
+    <style>${buildPayslipDocumentCss()}</style>
+    ${renderPayslipContent(data)}
+  </div>
+</div>`;
+    modal.hidden = false;
+    wireModalClose();
+    document.getElementById("nmSlipPrint")?.addEventListener("click", () => printPayslip(data));
+    document.getElementById("nmSlipPdf")?.addEventListener("click",   () => downloadPayslipPdf(data));
+  } catch (err) {
+    showError(err.message || "Error cargando desprendible");
+  }
+}
+
 function showConfirmModal(title, bodyHtml, onConfirm, { confirmLabel = "Confirmar", danger = false } = {}) {
   const modal = document.getElementById("nmPayModal");
   const btnCls = danger ? "nm-pay-btn nm-pay-btn--danger" : "nm-pay-btn nm-pay-btn--primary";
@@ -5304,9 +6345,1131 @@ function closeModal() {
   if (modal) { modal.hidden = true; modal.innerHTML = ""; }
 }
 
+renderNominaItemsFilterBar = function renderNominaItemsFilterBarPremium(itemCount) {
+  const f = itemsFilter;
+  const active = isFilterActive();
+  const selClass = (val) => val ? "nm-pay-select nm-pay-input--sm nm-fbar-active" : "nm-pay-select nm-pay-input--sm";
+  return `
+<div class="nm-items-fbar">
+  <div class="nm-items-fbar__heading">
+    <div>
+      <span class="nm-items-fbar__title">Filtros de nomina</span>
+      <span class="nm-items-fbar__subtitle">La categoria salarial se mantiene para calculo y auditoria.</span>
+    </div>
+    <div class="nm-items-fbar__status">${active ? `${itemCount} resultado(s)` : "Vista completa"}</div>
+  </div>
+  <div class="nm-items-fbar__controls">
+    ${groupFilterCatalog.institutions.length ? `
+    <select class="${selClass(f.institution_id)}" id="fltInstitution">
+      <option value="">Institucion</option>
+      ${groupFilterCatalog.institutions.map((item) => `<option value="${item.id}" ${String(f.institution_id) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
+    </select>` : ""}
+    ${groupFilterCatalog.sites.length ? `
+    <select class="${selClass(f.site_id)}" id="fltSite">
+      <option value="">Sede</option>
+      ${groupFilterCatalog.sites.map((item) => `<option value="${item.id}" ${String(f.site_id) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
+    </select>` : ""}
+    ${groupFilterCatalog.modalities.length ? `
+    <select class="${selClass(f.modality)}" id="fltModality">
+      <option value="">Modalidad</option>
+      ${groupFilterCatalog.modalities.map((item) => `<option value="${escapeHtml(item)}" ${f.modality === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+    </select>` : ""}
+    ${groupFilterCatalog.cargos.length ? `
+    <select class="${selClass(f.cargo)}" id="fltCargo">
+      <option value="">Cargo interno</option>
+      ${groupFilterCatalog.cargos.map((item) => `<option value="${escapeHtml(item)}" ${f.cargo === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+    </select>` : ""}
+    <select class="${selClass(f.has_novelties)}" id="fltNovedades">
+      <option value="">Novedades</option>
+      <option value="true" ${f.has_novelties === "true" ? "selected" : ""}>Con novedades</option>
+      <option value="false" ${f.has_novelties === "false" ? "selected" : ""}>Sin novedades</option>
+    </select>
+    <select class="${selClass(f.reviewed)}" id="fltReviewed">
+      <option value="">Revision</option>
+      <option value="true" ${f.reviewed === "true" ? "selected" : ""}>Revisados</option>
+      <option value="false" ${f.reviewed === "false" ? "selected" : ""}>Pendientes</option>
+    </select>
+    <select class="${selClass(f.support_status)}" id="fltSupports">
+      <option value="">Soportes</option>
+      <option value="pending" ${f.support_status === "pending" ? "selected" : ""}>Pendientes</option>
+      <option value="complete" ${f.support_status === "complete" ? "selected" : ""}>Completos</option>
+    </select>
+    <select class="nm-pay-select nm-pay-input--sm" id="fltSortBy">
+      <option value="">Orden: nombre</option>
+      <option value="documento" ${f.sort_by === "documento" ? "selected" : ""}>Documento</option>
+      <option value="institucion" ${f.sort_by === "institucion" ? "selected" : ""}>Institucion</option>
+      <option value="sede" ${f.sort_by === "sede" ? "selected" : ""}>Sede</option>
+      <option value="modalidad" ${f.sort_by === "modalidad" ? "selected" : ""}>Modalidad</option>
+      <option value="cargo" ${f.sort_by === "cargo" ? "selected" : ""}>Cargo</option>
+      <option value="devengado" ${f.sort_by === "devengado" ? "selected" : ""}>Devengado</option>
+      <option value="neto" ${f.sort_by === "neto" ? "selected" : ""}>Neto</option>
+      <option value="novedades" ${f.sort_by === "novedades" ? "selected" : ""}>No. novedades</option>
+    </select>
+    <select class="nm-pay-select nm-pay-input--sm" id="fltSortDir">
+      <option value="asc" ${f.sort_dir !== "desc" ? "selected" : ""}>Asc</option>
+      <option value="desc" ${f.sort_dir === "desc" ? "selected" : ""}>Desc</option>
+    </select>
+    ${active ? `<button class="nm-pay-btn nm-pay-btn--sm" id="fltClear">Limpiar filtros</button>` : ""}
+  </div>
+</div>`;
+};
+
+renderItemsTable = function renderItemsTablePremium(items) {
+  const groupLocked = !isGroupEditable(activeGroupDetail?.group);
+  const consolidated = isConsolidatedView();
+  const canCfgSalary = consolidated && isCurrentUserAdmin();
+  const extCoverItemIds = new Set(
+    ((activeGroupDetail?.covers) || [])
+      .filter((cover) => cover.cover_type === "EXTERNA")
+      .map((cover) => cover.payroll_item_id)
+  );
+  const MOTIVO_LABEL = {
+    disminucion_cupos: { label: "Disminucion de cupos", cls: "nm-ss-reason--cupos" },
+    renuncia: { label: "Renuncia", cls: "nm-ss-reason--renuncia" },
+    terminacion_contrato: { label: "Terminacion contrato", cls: "nm-ss-reason--terminacion" },
+  };
+  const allIds = items.map((item) => item.id);
+  const allCount = allIds.length;
+  const allSelected = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
+  const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
+
+  return `
+<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard">
+  <table class="nm-pay-table">
+    <thead>
+      <tr>
+        ${!groupLocked && allCount > 0 ? `
+        <th class="nm-sel-col" title="Seleccionar o deseleccionar todos">
+          <input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}>
+        </th>` : `<th class="nm-sel-col"></th>`}
+        <th>Empleado</th>
+        <th>Institucion · Sede</th>
+        <th>Modalidad · Jornada</th>
+        <th>Categoria salarial</th>
+        <th class="num">Devengado</th>
+        <th class="num">Deducciones</th>
+        <th class="num">Neto</th>
+        <th class="num">Dias lab.</th>
+        <th class="num">Dias SS</th>
+        <th>Nov.</th>
+        <th>Acciones</th>
+        <th>Revisada</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${items.map((item) => {
+        const isReviewed = Boolean(item.reviewed);
+        const locked = groupLocked || isReviewed;
+        const isSelected = selectedItemIds.has(item.id);
+        const hasExtCover = extCoverItemIds.has(item.id);
+        const retiredInPeriod = item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada;
+        const ssDays = item.ss_days != null ? item.ss_days : 30;
+        const motivoMeta = item.retirement_reason ? MOTIVO_LABEL[item.retirement_reason] : null;
+        const ssHtml = (() => {
+          if (!item.retirement_reason && item.ss_days == null) return `<span class="nm-ss-val">30</span>`;
+          const parts = [`<span class="nm-ss-val">${ssDays}</span>`];
+          if (motivoMeta) parts.push(`<span class="nm-ss-reason ${motivoMeta.cls}">${motivoMeta.label}</span>`);
+          if (item.requires_replacement === true) {
+            if (item.replacement_found === true && item.replacement_employee_name) parts.push(`<span class="nm-ss-repl">↪ ${escapeHtml(item.replacement_employee_name)}</span>`);
+            else if (item.replacement_found === false) parts.push(`<span class="nm-ss-norepl">Sin reemplazo</span>`);
+          } else if (item.requires_replacement === false) {
+            parts.push(`<span style="font-size:10px;color:#64748B">Sin reemplazo</span>`);
+          }
+          return parts.join("");
+        })();
+        const ssAlert = (item.requires_replacement === true && item.replacement_found === false)
+          ? `<div class="nm-ss-alert" title="Retiro requiere reemplazo, pero no se encontro ingreso asociado para la misma sede.">Sin reemplazo</div>`
+          : "";
+        return `
+        <tr class="${isReviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}">
+          <td class="nm-sel-col">
+            ${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}
+          </td>
+          <td>
+            <b>${escapeHtml(item.employee_name)}</b><br>
+            <small style="color:#64748B">${escapeHtml(item.document_number || "")}</small>
+            ${retiredInPeriod ? `<br><small style="color:#B45309;font-weight:700">Retirado en este periodo${item.fecha_retiro_aplicada ? ` · ${escapeHtml(String(item.fecha_retiro_aplicada).slice(0, 10))}` : ""}</small>` : ""}
+            ${item.worked_days ? `<br><small style="color:#475569">Dias laborados: ${Number(item.worked_days || 0)}</small>` : ""}
+            ${consolidated ? `<br><small style="color:#7C3AED;font-weight:600">${escapeHtml(item.municipality_name || "")}</small>` : ""}
+            ${ssAlert}
+          </td>
+          <td>
+            <b>${escapeHtml(item.institution_name || "-")}</b><br>
+            <small>${escapeHtml(item.site_name || "-")}</small>
+          </td>
+          <td>
+            <b>${escapeHtml(item.modality || "-")}</b><br>
+            <small>${escapeHtml(item.work_time_type || "-")}</small>
+          </td>
+          <td>
+            ${salaryCategoryBadge(item.salary_category)}
+            <br><small style="color:#64748B">${escapeHtml(item.operational_position || currentDivisionMeta()?.label || "")}</small>
+          </td>
+          <td class="num">
+            ${fmtCOP(item.total_devengado)}
+            ${hasExtCover ? `<br><small style="color:#92400E;font-size:10px;font-weight:600">Turno externo registrado</small>` : ""}
+          </td>
+          <td class="num">${fmtCOP(item.total_deducciones)}</td>
+          <td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td>
+          <td class="num">${item.display_worked_days ?? item.worked_days ?? 30}</td>
+          <td class="num"><div class="nm-ss-cell">${ssHtml}</div></td>
+          <td>${(() => {
+            const total = Number(item.novelty_count || 0);
+            const reviewed = Number(item.reviewed_count || 0);
+            const pending = total - reviewed;
+            if (!total) return "—";
+            return pending > 0
+              ? `<span style="font-size:11px;white-space:nowrap">${total} nov. · <span style="color:#B91C1C;font-weight:600">${pending} pend.</span></span>`
+              : `<span style="font-size:11px;white-space:nowrap">${total} nov. · <span style="color:#047857">${reviewed} rev.</span></span>`;
+          })()}</td>
+          <td>
+            ${groupLocked
+              ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                 ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}
+                 <span style="display:block;margin-top:3px;font-size:10px;color:#94A3B8">Bloqueado por cierre</span>`
+              : locked
+                ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                   ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}
+                   <span style="display:block;margin-top:3px;font-size:10px;color:#64748B">Bloqueado</span>`
+                : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button>
+                   <button class="nm-pay-btn nm-pay-btn--sm" data-cambio-operativo="${item.id}" title="Registrar cambio temporal o definitivo de modalidad, sede o jornada">Cambio op.</button>
+                   <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>
+                   ${canCfgSalary ? `<button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}`}
+          </td>
+          <td>
+            <label class="nm-item-review-label" title="${isReviewed ? "Revisado · Para editar quite la marca" : "Marcar como revisado y bloquear"}">
+              <input type="checkbox" class="nm-item-review-cb" data-item-reviewed="${item.id}" ${isReviewed ? "checked" : ""} ${groupLocked ? "disabled" : ""}>
+              ${isReviewed ? `<span class="nm-item-reviewed-badge">✓ Revisada</span>` : `<span style="font-size:11px;color:#94A3B8">Pendiente</span>`}
+            </label>
+          </td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+</div>`;
+};
+
+wireStaticEvents = function wireStaticEventsPremium() {
+  document.getElementById("nmPayMonth")?.addEventListener("change", (e) => { periodMonth = e.target.value; });
+  document.getElementById("nmPayPeriod")?.addEventListener("change", async (e) => {
+    activePeriod = periods.find((period) => String(period.id) === String(e.target.value)) || null;
+    activePosition = "";
+    activeGroupId = null;
+    municipalitySearch = "";
+    activeDetailTab = "nomina";
+    resetItemsFilter();
+    await reloadWorkArea();
+  });
+  document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
+  document.getElementById("nmPayMunSearch")?.addEventListener("input", (e) => {
+    municipalitySearch = e.target.value || "";
+    render();
+    document.getElementById("nmPayMunSearch")?.focus();
+  });
+  document.querySelectorAll(".nm-pay-tab[data-division-key]").forEach((btn) => btn.addEventListener("click", async () => {
+    const divisionKey = btn.dataset.divisionKey || "OPERARIO";
+    const positions = divisionPositions(divisionKey);
+    if (!positions.length) return;
+    activePosition = positions.some((position) => position.position === activePosition) ? activePosition : positions[0].position;
+    activeGroupId = null;
+    municipalitySearch = "";
+    noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" };
+    activeDetailTab = "nomina";
+    selectedItemIds.clear();
+    resetItemsFilter();
+    applyDefaultGroupSelection(activePosition);
+    await reloadDetailOnly();
+  }));
+  document.querySelectorAll(".nm-pay-subtab[data-position]").forEach((btn) => btn.addEventListener("click", async () => {
+    activePosition = btn.dataset.position || "";
+    activeGroupId = null;
+    municipalitySearch = "";
+    noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" };
+    activeDetailTab = "nomina";
+    selectedItemIds.clear();
+    resetItemsFilter();
+    applyDefaultGroupSelection(activePosition);
+    await reloadDetailOnly();
+  }));
+  document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+    activeDetailTab = btn.dataset.detailTab || "nomina";
+    if (activeDetailTab === "turnos" && activeGroupTurns === null && activeGroupId) await loadGroupTurns();
+    render();
+  }));
+  document.querySelectorAll(".nm-pay-mun").forEach((btn) => btn.addEventListener("click", async () => {
+    activeGroupId = Number(btn.dataset.groupId);
+    activeDetailTab = "nomina";
+    noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" };
+    selectedItemIds.clear();
+    resetItemsFilter();
+    await reloadDetailOnly();
+  }));
+  document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
+  document.getElementById("nmPayExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayTemplateDownload")?.addEventListener("click", downloadNoveltiesTemplate);
+  document.getElementById("nmPayTemplateImport")?.addEventListener("click", openImportNoveltiesModal);
+  document.getElementById("nmPayClose")?.addEventListener("click", closeAndSendGroup);
+  document.getElementById("nmPayReopen")?.addEventListener("click", openReopenModal);
+  document.getElementById("nmPayHistory")?.addEventListener("click", openHistoryModal);
+  document.querySelectorAll("[data-new-novelty]").forEach((btn) => btn.addEventListener("click", () => openNoveltyModal(Number(btn.dataset.newNovelty))));
+  document.querySelectorAll("[data-cambio-operativo]").forEach((btn) => btn.addEventListener("click", () => openCambioOperativoModal(Number(btn.dataset.cambioOperativo))));
+  document.querySelectorAll("[data-payslip]").forEach((btn) => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
+  document.querySelectorAll("[data-edit-novelty]").forEach((btn) => btn.addEventListener("click", () => openEditNoveltyModal(Number(btn.dataset.editNovelty))));
+  document.querySelectorAll("[data-cover-novelty]").forEach((btn) => btn.addEventListener("click", () => openCoverModal(Number(btn.dataset.coverNovelty), Number(btn.dataset.coverItem))));
+  document.querySelectorAll("[data-remove-cover]").forEach((btn) => btn.addEventListener("click", () => removeCover(Number(btn.dataset.removeCover))));
+  document.querySelectorAll("[data-charge-account]").forEach((btn) => btn.addEventListener("click", () => openChargeAccount(Number(btn.dataset.chargeAccount))));
+  document.querySelectorAll("[data-dl-charge]").forEach((btn) => btn.addEventListener("click", () => {
+    const periodLabel = activePeriod?.label || "";
+    downloadChargeAccount(Number(btn.dataset.dlCharge), btn.dataset.extDoc, periodLabel);
+  }));
+  document.querySelectorAll("[data-edit-bank]").forEach((btn) => btn.addEventListener("click", () => {
+    openBankEditModal(
+      Number(btn.dataset.editBank),
+      btn.dataset.bank || "",
+      btn.dataset.accountType || "AHORROS",
+      btn.dataset.accountNumber || "",
+    );
+  }));
+  document.querySelectorAll("[data-salary-cfg]").forEach((btn) => btn.addEventListener("click", () => {
+    openSalaryConfigModal(Number(btn.dataset.salaryCfg), btn.dataset.salaryName || "", btn.dataset.salaryDoc || "");
+  }));
+  document.querySelectorAll("[data-reviewed]").forEach((input) => input.addEventListener("change", () => toggleReviewed(Number(input.dataset.reviewed), input.checked, input)));
+  document.querySelectorAll("[data-item-reviewed]").forEach((input) => input.addEventListener("change", () => toggleItemReviewed(Number(input.dataset.itemReviewed), input.checked, input)));
+  document.querySelectorAll(".nm-item-sel-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = Number(cb.dataset.selItem);
+      if (cb.checked) selectedItemIds.add(id);
+      else selectedItemIds.delete(id);
+      const bar = document.getElementById("nmBulkBar");
+      if (bar) {
+        const items = activeGroupDetail?.items || [];
+        bar.outerHTML = renderBulkActionBar(items);
+        wireStaticBulkEvents();
+      }
+      const selAll = document.getElementById("nmSelAll");
+      if (selAll) {
+        const allItemIds = (activeGroupDetail?.items || []).map((item) => item.id);
+        const allSel = allItemIds.length > 0 && allItemIds.every((itemId) => selectedItemIds.has(itemId));
+        const someSel = !allSel && allItemIds.some((itemId) => selectedItemIds.has(itemId));
+        selAll.checked = allSel;
+        selAll.indeterminate = someSel;
+      }
+    });
+  });
+  document.getElementById("nmSelAll")?.addEventListener("change", (e) => {
+    const items = activeGroupDetail?.items || [];
+    items.forEach((item) => {
+      if (e.target.checked) selectedItemIds.add(item.id);
+      else selectedItemIds.delete(item.id);
+    });
+    render();
+  });
+  wireStaticBulkEvents();
+  document.querySelectorAll("[data-delete-novelty]").forEach((btn) => btn.addEventListener("click", () => confirmDeleteNovelty(Number(btn.dataset.deleteNovelty))));
+  document.getElementById("turnoFltCuentaCobro")?.addEventListener("change", (e) => { turnosFilter.hasCuentaCobro = e.target.value; render(); });
+  document.getElementById("turnoSearch")?.addEventListener("input", (e) => { turnosFilter.search = e.target.value || ""; render(); document.getElementById("turnoSearch")?.focus(); });
+  document.getElementById("novFltType")?.addEventListener("change", (e) => { noveltiesFilter.type = e.target.value; render(); });
+  document.getElementById("novFltReviewed")?.addEventListener("change", (e) => { noveltiesFilter.reviewed = e.target.value; render(); });
+  document.getElementById("novFltSupport")?.addEventListener("change", (e) => { noveltiesFilter.withSupport = e.target.value; render(); });
+  document.getElementById("novFltSearch")?.addEventListener("input", (e) => { noveltiesFilter.search = e.target.value || ""; render(); document.getElementById("novFltSearch")?.focus(); });
+  document.getElementById("novFltClear")?.addEventListener("click", () => { noveltiesFilter = { type: "", reviewed: "", withSupport: "", search: "" }; render(); });
+  document.getElementById("novToggleGroup")?.addEventListener("click", () => { noveltiesViewMode = noveltiesViewMode === "grouped" ? "table" : "grouped"; render(); });
+  const applyFilter = async (key, value) => { itemsFilter[key] = value; await reloadDetailOnly(); };
+  document.getElementById("fltInstitution")?.addEventListener("change", (e) => applyFilter("institution_id", e.target.value));
+  document.getElementById("fltSite")?.addEventListener("change", (e) => applyFilter("site_id", e.target.value));
+  document.getElementById("fltModality")?.addEventListener("change", (e) => applyFilter("modality", e.target.value));
+  document.getElementById("fltCargo")?.addEventListener("change", (e) => applyFilter("cargo", e.target.value));
+  document.getElementById("fltNovedades")?.addEventListener("change", (e) => applyFilter("has_novelties", e.target.value));
+  document.getElementById("fltReviewed")?.addEventListener("change", (e) => applyFilter("reviewed", e.target.value));
+  document.getElementById("fltSupports")?.addEventListener("change", (e) => applyFilter("support_status", e.target.value));
+  document.getElementById("fltSortBy")?.addEventListener("change", (e) => applyFilter("sort_by", e.target.value));
+  document.getElementById("fltSortDir")?.addEventListener("change", (e) => applyFilter("sort_dir", e.target.value));
+  document.getElementById("fltClear")?.addEventListener("click", async () => { resetItemsFilter(); await reloadDetailOnly(); });
+  document.querySelectorAll("[data-ext-docs]").forEach((btn) => btn.addEventListener("click", () => {
+    openExternalWorkerDocsModal(Number(btn.dataset.extDocs), btn.dataset.extName || "Trabajador externo");
+  }));
+  document.querySelectorAll("[data-mun-review]").forEach((btn) => btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const munId = Number(btn.dataset.munReview);
+    const munName = btn.dataset.munName || "";
+    if (!munId || !activePeriod) return;
+    btn.disabled = true;
+    try {
+      await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
+        method: "POST",
+        body: JSON.stringify({ municipalityId: munId, municipality: munName, isComplete: true }),
+      });
+      showSuccess(`Municipio "${munName}" marcado como revisado`);
+      await reloadWorkArea();
+    } catch (err) {
+      showError(err.message);
+      btn.disabled = false;
+    }
+  }));
+  document.querySelectorAll("[data-mun-unreview]").forEach((btn) => btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const munId = Number(btn.dataset.munUnreview);
+    const munName = btn.dataset.munName || "";
+    if (!munId || !activePeriod) return;
+    btn.disabled = true;
+    try {
+      await apiFetch(`/payroll/periods/${activePeriod.id}/municipality-status`, {
+        method: "POST",
+        body: JSON.stringify({ municipalityId: munId, municipality: munName, isComplete: false }),
+      });
+      showSuccess(`Revision de "${munName}" removida - datos conservados`);
+      await reloadWorkArea();
+    } catch (err) {
+      showError(err.message);
+      btn.disabled = false;
+    }
+  }));
+  document.querySelectorAll("[data-upload-support]").forEach((input) => input.addEventListener("change", async (e) => {
+    const supId = Number(input.dataset.uploadSupport) || null;
+    const noveltyId = Number(input.dataset.noveltyId);
+    const docType = input.dataset.docType || "";
+    const file = e.target.files?.[0];
+    if (!file || !noveltyId) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("noveltyId", String(noveltyId));
+    input.disabled = true;
+    try {
+      const up = await apiFetch("/payroll/supports/upload", { method: "POST", body: form, noContentType: true });
+      await apiFetch("/payroll/supports", {
+        method: "POST",
+        body: JSON.stringify({
+          id: supId || undefined,
+          novelty_id: noveltyId,
+          file_url: up.data.url,
+          file_name: up.data.fileName,
+          status: "cargado",
+          support_type: supId ? undefined : (docType || "otros"),
+        }),
+      });
+      showSuccess("Soporte cargado correctamente");
+      await reloadDetailOnly();
+    } catch (err) {
+      showError("Error cargando soporte: " + err.message);
+      input.disabled = false;
+    }
+  }));
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ENTRYPOINTS EXPORTADOS
 // ─────────────────────────────────────────────────────────────────────────────
+let payrollViewState = null;
+let activeScopeGroupIds = [];
+let activeScopeMeta = null;
+
+function defaultPayrollViewState() {
+  return {
+    divisionKey: "OPERARIO",
+    municipalityId: "ALL",
+    areaKey: TEAM_AREA_ALL,
+    showAdvancedFilters: false,
+    page: 1,
+    pageSize: 20,
+    sortBy: "employee_name",
+    sortDir: "asc",
+    draftFilters: {
+      municipality: "",
+      period: activePeriod?.label || "",
+      contract: String(contractId() || ""),
+      status: "",
+      cargo: "",
+      area: "",
+      name: "",
+      document: "",
+    },
+    appliedFilters: {
+      municipality: "",
+      period: activePeriod?.label || "",
+      contract: String(contractId() || ""),
+      status: "",
+      cargo: "",
+      area: "",
+      name: "",
+      document: "",
+    },
+  };
+}
+
+function ensurePayrollViewState() {
+  if (!payrollViewState) payrollViewState = defaultPayrollViewState();
+  payrollViewState.draftFilters.period = activePeriod?.label || "";
+  payrollViewState.appliedFilters.period = activePeriod?.label || "";
+  payrollViewState.draftFilters.contract = String(contractId() || "");
+  payrollViewState.appliedFilters.contract = String(contractId() || "");
+  const hasOperario = groupsState.positions.some((position) => classifyPayrollDivision(position.position) === "OPERARIO");
+  if (!hasOperario) payrollViewState.divisionKey = "EQUIPO_MINIMO";
+  if (payrollViewState.divisionKey === "OPERARIO") {
+    const validIds = new Set(resolvePayrollScopeGroupIds({
+      divisionKey: "OPERARIO",
+      positions: groupsState.positions,
+      municipalityId: "ALL",
+    }).map(String));
+    if (payrollViewState.municipalityId !== "ALL" && !validIds.has(String(payrollViewState.municipalityId))) {
+      payrollViewState.municipalityId = "ALL";
+    }
+    const operarioPosition = groupsState.positions.find((position) => classifyPayrollDivision(position.position) === "OPERARIO");
+    if (operarioPosition) activePosition = operarioPosition.position;
+  } else {
+    const buckets = buildTeamAreaBuckets(groupsState.positions);
+    const validAreas = new Set([TEAM_AREA_ALL, ...buckets.filter((bucket) => bucket.groupIds.length).map((bucket) => bucket.area)]);
+    if (!validAreas.has(payrollViewState.areaKey)) payrollViewState.areaKey = TEAM_AREA_ALL;
+    const positions = getTeamMinimumPositionsForArea(payrollViewState.areaKey);
+    if (positions.length) activePosition = positions[0].position;
+  }
+}
+
+function getDivisionPositions(divisionKey = payrollViewState?.divisionKey || "OPERARIO") {
+  return groupsState.positions.filter((position) => classifyPayrollDivision(position.position) === divisionKey);
+}
+
+function getOperarioMunicipalityTabs() {
+  const positions = getDivisionPositions("OPERARIO");
+  const municipalities = positions.flatMap((position) => position.municipalities || []);
+  const byId = new Map();
+  for (const municipality of municipalities) byId.set(String(municipality.id), municipality);
+  return [
+    {
+      id: "ALL",
+      label: "Todos",
+      employees: municipalities.reduce((sum, municipality) => sum + Number(municipality.employees || 0), 0),
+    },
+    ...Array.from(byId.values())
+      .sort((a, b) => String(a.municipality_name || "").localeCompare(String(b.municipality_name || ""), "es"))
+      .map((municipality) => ({
+        id: String(municipality.id),
+        label: municipality.municipality_name || "Sin municipio",
+        employees: Number(municipality.employees || 0),
+      })),
+  ];
+}
+
+function getTeamMinimumPositionsForArea(areaKey = TEAM_AREA_ALL) {
+  const teamPositions = getDivisionPositions("EQUIPO_MINIMO");
+  if (areaKey === TEAM_AREA_ALL) return teamPositions;
+  return teamPositions.filter((position) => classifyPayrollArea(position.position) === areaKey);
+}
+
+function getTeamAreaTabs() {
+  const buckets = buildTeamAreaBuckets(groupsState.positions).filter((bucket) => bucket.groupIds.length);
+  const totalEmployees = buckets.reduce((sum, bucket) => sum + Number(bucket.employees || 0), 0);
+  return [
+    { area: TEAM_AREA_ALL, label: "Todos", employees: totalEmployees },
+    ...buckets.map((bucket) => ({ area: bucket.area, label: bucket.area, employees: bucket.employees })),
+  ];
+}
+
+function getCurrentScopeMeta() {
+  ensurePayrollViewState();
+  if (payrollViewState.divisionKey === "OPERARIO") {
+    const tabs = getOperarioMunicipalityTabs();
+    const current = tabs.find((tab) => String(tab.id) === String(payrollViewState.municipalityId)) || tabs[0] || null;
+    const groupIds = resolvePayrollScopeGroupIds({
+      divisionKey: "OPERARIO",
+      positions: groupsState.positions,
+      municipalityId: current?.id || "ALL",
+    });
+    return {
+      divisionKey: "OPERARIO",
+      groupIds,
+      title: current?.label || "Todos los municipios",
+      subtitle: OPERARIO_DIVISION_LABEL,
+      filterLabel: current?.id === "ALL" ? "Vista consolidada de operarios" : `Municipio seleccionado: ${current?.label || "Sin municipio"}`,
+      isVirtual: groupIds.length > 1,
+    };
+  }
+  const areaTabs = getTeamAreaTabs();
+  const currentArea = areaTabs.find((tab) => tab.area === payrollViewState.areaKey) || areaTabs[0] || { area: TEAM_AREA_ALL, label: "Todos" };
+  const groupIds = resolvePayrollScopeGroupIds({
+    divisionKey: "EQUIPO_MINIMO",
+    positions: groupsState.positions,
+    areaKey: currentArea.area,
+  });
+  return {
+    divisionKey: "EQUIPO_MINIMO",
+    groupIds,
+    title: currentArea.label,
+    subtitle: MINIMUM_TEAM_DIVISION_LABEL,
+    filterLabel: currentArea.area === TEAM_AREA_ALL ? "Vista consolidada por areas funcionales" : `Area seleccionada: ${currentArea.label}`,
+    isVirtual: groupIds.length > 1,
+  };
+}
+
+function uniqById(rows = [], key = "id") {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const value = row?.[key];
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function buildCatalogFromItems(items = []) {
+  const municipalities = new Set();
+  const cargos = new Set();
+  const areas = new Set();
+  for (const item of items) {
+    if (item.municipality_name) municipalities.add(item.municipality_name);
+    if (item.operational_position) cargos.add(item.operational_position);
+    areas.add(classifyPayrollDivision(item.operational_position) === "OPERARIO" ? OPERARIO_DIVISION_LABEL : classifyPayrollArea(item.operational_position));
+  }
+  return {
+    municipalities: Array.from(municipalities).sort((a, b) => a.localeCompare(b, "es")),
+    cargos: Array.from(cargos).sort((a, b) => a.localeCompare(b, "es")),
+    areas: Array.from(areas).sort((a, b) => a.localeCompare(b, "es")),
+  };
+}
+
+function mergeScopeDetails(details = [], scopeMeta = null) {
+  const groups = details.map((detail) => detail.group).filter(Boolean);
+  const items = dedupePayrollItems(details.flatMap((detail) => detail.items || []));
+  const novelties = uniqById(details.flatMap((detail) => detail.novelties || []));
+  const supports = uniqById(details.flatMap((detail) => detail.supports || []));
+  const covers = uniqById(details.flatMap((detail) => detail.covers || []));
+  const summary = summarizePayrollItems(items);
+  const group = groups.length === 1 ? groups[0] : {
+    id: null,
+    operational_position: scopeMeta?.subtitle || "",
+    municipality_name: scopeMeta?.title || "",
+    status: "IN_REVIEW",
+    version_number: Math.max(1, ...groups.map((item) => Number(item?.version_number || 1))),
+    group_type: "VIRTUAL",
+    is_virtual: true,
+    contract_id: groups[0]?.contract_id || contractId(),
+    period_id: activePeriod?.id || null,
+  };
+  return {
+    group,
+    items,
+    novelties,
+    supports,
+    covers,
+    totals: {
+      employees: summary.employees,
+      novelties: novelties.length,
+      reviewed: summary.reviewed,
+      items_reviewed: summary.reviewed,
+      items_pending: summary.pending,
+      pending_supports: items.reduce((sum, item) => sum + Number(item.pending_supports || 0), 0),
+      total_devengado: summary.total_devengado,
+      total_deducciones: summary.total_deducciones,
+      neto: summary.neto,
+      average_salary: summary.average_salary,
+    },
+    _scope: scopeMeta,
+    _groups: groups,
+    _catalog: buildCatalogFromItems(items),
+  };
+}
+
+function decoratePayrollItem(item) {
+  const divisionKey = classifyPayrollDivision(item.operational_position);
+  const area = divisionKey === "OPERARIO" ? OPERARIO_DIVISION_LABEL : classifyPayrollArea(item.operational_position);
+  const stateLabel = item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada
+    ? "RETIRADO EN PERIODO"
+    : item.reviewed ? "REVISADO" : "PENDIENTE";
+  return { ...item, ui_division: divisionKey, ui_area: area, ui_state: stateLabel };
+}
+
+function getFilteredPayrollItems() {
+  ensurePayrollViewState();
+  const baseItems = (activeGroupDetail?.items || []).map(decoratePayrollItem);
+  const filters = payrollViewState.appliedFilters;
+  const filtered = baseItems.filter((item) => {
+    if (filters.municipality && item.municipality_name !== filters.municipality) return false;
+    if (filters.status && item.ui_state !== filters.status) return false;
+    if (filters.cargo && item.operational_position !== filters.cargo) return false;
+    if (filters.area && item.ui_area !== filters.area) return false;
+    if (filters.name && !normalized(item.employee_name).includes(normalized(filters.name))) return false;
+    if (filters.document && !normalized(item.document_number).includes(normalized(filters.document))) return false;
+    return true;
+  });
+  const dir = payrollViewState.sortDir === "desc" ? -1 : 1;
+  return filtered.sort((left, right) => {
+    const value = (row) => {
+      switch (payrollViewState.sortBy) {
+        case "document_number": return String(row.document_number || "");
+        case "municipality_name": return String(row.municipality_name || "");
+        case "operational_position": return String(row.operational_position || "");
+        case "ui_area": return String(row.ui_area || "");
+        case "salary_category": return String(row.salary_category || "");
+        case "base_salary": return Number(row.base_salary || 0);
+        case "worked_days": return Number(row.display_worked_days ?? row.worked_days ?? 0);
+        case "total_devengado": return Number(row.total_devengado || 0);
+        case "total_deducciones": return Number(row.total_deducciones || 0);
+        case "neto_pagar": return Number(row.neto_pagar || 0);
+        case "ui_state": return String(row.ui_state || "");
+        default: return String(row.employee_name || "");
+      }
+    };
+    const a = value(left);
+    const b = value(right);
+    if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
+    return String(a).localeCompare(String(b), "es") * dir;
+  });
+}
+
+function getPagedPayrollItems(items = []) {
+  ensurePayrollViewState();
+  const totalPages = Math.max(1, Math.ceil(items.length / payrollViewState.pageSize));
+  payrollViewState.page = Math.min(payrollViewState.page, totalPages);
+  const start = (payrollViewState.page - 1) * payrollViewState.pageSize;
+  return { totalPages, page: payrollViewState.page, items: items.slice(start, start + payrollViewState.pageSize) };
+}
+
+function getFilteredSupportingData(filteredItems = []) {
+  const itemIds = new Set(filteredItems.map((item) => item.id));
+  const novelties = (activeGroupDetail?.novelties || []).filter((novelty) => itemIds.has(novelty.payroll_item_id));
+  const noveltyIds = new Set(novelties.map((novelty) => novelty.id));
+  const supports = (activeGroupDetail?.supports || []).filter((support) => !support.novelty_id || noveltyIds.has(support.novelty_id));
+  return { novelties, supports };
+}
+
+function countNoveltiesWithoutSupport(novelties = [], supports = []) {
+  const docsByNovelty = new Map();
+  for (const support of supports) {
+    if (!support?.novelty_id) continue;
+    const key = String(support.novelty_id);
+    if (!docsByNovelty.has(key)) docsByNovelty.set(key, []);
+    docsByNovelty.get(key).push(support);
+  }
+  return novelties.reduce((count, novelty) => {
+    const expectedTypes = SUPPORT_REQUIREMENTS[novelty?.novelty_type];
+    if (!expectedTypes?.length) return count;
+    const docs = docsByNovelty.get(String(novelty.id)) || [];
+    const missingRequiredSupport = expectedTypes.some((docType) => {
+      const record = docs.find((doc) =>
+        doc.support_type === docType
+        || (docType === "INCAPACIDAD_MEDICA_DOC" && doc.support_type === "INCAPACIDAD_MEDICA")
+        || (docType === "COMPROBANTE_CITACION" && doc.support_type === "COMPROBANTE_ASISTENCIA")
+      );
+      return !record || !record.file_url;
+    });
+    return count + (missingRequiredSupport ? 1 : 0);
+  }, 0);
+}
+
+function buildOperationalAlerts(filteredItems = [], supporting = { novelties: [], supports: [] }) {
+  const alerts = [];
+  const pendingReview = filteredItems.filter((item) => !item.reviewed).length;
+  const noveltiesWithoutSupport = countNoveltiesWithoutSupport(supporting.novelties || [], supporting.supports || []);
+  const pendingRetirements = filteredItems.filter((item) => (
+    item.retirement_reason
+    || item.fecha_retiro_aplicada
+    || item.payroll_inclusion_status === "RETIRADA_EN_PERIODO"
+  ) && !item.reviewed).length;
+  if (pendingReview > 0) alerts.push({ key: "review", count: pendingReview, label: "pendientes de revision" });
+  if (noveltiesWithoutSupport > 0) alerts.push({ key: "support", count: noveltiesWithoutSupport, label: "novedades sin soporte" });
+  if (pendingRetirements > 0) alerts.push({ key: "retirement", count: pendingRetirements, label: "retiros pendientes" });
+  return alerts;
+}
+
+function renderOperationalAlerts(filteredItems = [], supporting = { novelties: [], supports: [] }) {
+  const alerts = buildOperationalAlerts(filteredItems, supporting);
+  if (!alerts.length) return "";
+  return `<div class="nm-pay-alert-strip">${alerts.map((alert) => `<div class="nm-pay-alert-pill nm-pay-alert-pill--${alert.key}"><span>&#9888;</span><b>${alert.count}</b><span>${escapeHtml(alert.label)}</span></div>`).join("")}</div>`;
+}
+
+function selectedPayrollItemsFromFiltered() {
+  const selectedIds = new Set(Array.from(selectedItemIds));
+  return getFilteredPayrollItems().filter((item) => selectedIds.has(item.id));
+}
+
+async function exportSelectedPayslipPdf() {
+  const selectedItems = selectedPayrollItemsFromFiltered();
+  if (selectedItems.length !== 1) {
+    showError("Seleccione un colaborador para exportar su desprendible en PDF.");
+    return;
+  }
+  try {
+    const response = await apiFetch(`/payroll/items/${selectedItems[0].id}/slip`);
+    if (!response.data) throw new Error("No se pudo cargar el desprendible.");
+    downloadPayslipPdf(response.data);
+  } catch (err) {
+    showError(err.message || "Error exportando el desprendible.");
+  }
+}
+
+function renderSecondaryScopeTabs() {
+  ensurePayrollViewState();
+  const tabs = payrollViewState.divisionKey === "OPERARIO" ? getOperarioMunicipalityTabs() : getTeamAreaTabs();
+  const currentValue = payrollViewState.divisionKey === "OPERARIO" ? String(payrollViewState.municipalityId) : payrollViewState.areaKey;
+  return `
+<div class="nm-pay-scope-tabs nm-pay-scope-tabs--operational">
+  <div class="nm-pay-scope-tabs__list">
+    ${tabs.map((tab) => {
+      const key = payrollViewState.divisionKey === "OPERARIO" ? String(tab.id) : tab.area;
+      const label = payrollViewState.divisionKey === "OPERARIO" ? tab.label : tab.label;
+      return `<button class="nm-pay-scope-tab ${key === currentValue ? "active" : ""}" data-scope-tab="${escapeHtml(key)}"><span>${escapeHtml(label)}</span><b>${Number(tab.employees || 0)}</b></button>`;
+    }).join("")}
+  </div>
+</div>`;
+}
+
+function renderPayrollFilterBar() {
+  ensurePayrollViewState();
+  const catalog = activeGroupDetail?._catalog || { municipalities: [], cargos: [], areas: [] };
+  const draft = payrollViewState.draftFilters;
+  const advancedVisible = Boolean(payrollViewState.showAdvancedFilters);
+  return `
+<div class="nm-pay-filterbar nm-pay-filterbar--operational">
+  <div class="nm-pay-filterbar__grid nm-pay-filterbar__grid--main">
+    <label class="nm-pay-filter"><span>Periodo</span><input class="nm-pay-input" value="${escapeHtml(draft.period || activePeriod?.label || "")}" disabled></label>
+    <label class="nm-pay-filter"><span>Contrato</span><input class="nm-pay-input" value="${escapeHtml(draft.contract)}" disabled></label>
+    <label class="nm-pay-filter"><span>Municipio</span><select class="nm-pay-select" id="nmFilterMunicipality"><option value="">Todos</option>${catalog.municipalities.map((municipality) => `<option value="${escapeHtml(municipality)}" ${draft.municipality === municipality ? "selected" : ""}>${escapeHtml(municipality)}</option>`).join("")}</select></label>
+    <label class="nm-pay-filter"><span>Estado</span><select class="nm-pay-select" id="nmFilterStatus"><option value="">Todos</option>${["PENDIENTE", "REVISADO", "RETIRADO EN PERIODO"].map((status) => `<option value="${status}" ${draft.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
+    <label class="nm-pay-filter nm-pay-filter--search"><span>Buscar colaborador</span><input class="nm-pay-input" id="nmFilterName" value="${escapeHtml(draft.name)}" placeholder="Nombre del colaborador"></label>
+  </div>
+  <div class="nm-pay-filterbar__actions nm-pay-filterbar__actions--operational">
+    <button class="nm-pay-btn ${advancedVisible ? "nm-fbar-active" : ""}" id="nmToggleAdvancedFilters">Filtros avanzados</button>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="nmFilterApply">Aplicar</button>
+    <button class="nm-pay-btn" id="nmFilterClear">Limpiar</button>
+  </div>
+  <div class="nm-pay-filterbar__grid nm-pay-filterbar__grid--advanced ${advancedVisible ? "" : "is-hidden"}">
+    <label class="nm-pay-filter"><span>Cargo</span><select class="nm-pay-select" id="nmFilterCargo"><option value="">Todos</option>${catalog.cargos.map((cargo) => `<option value="${escapeHtml(cargo)}" ${draft.cargo === cargo ? "selected" : ""}>${escapeHtml(cargo)}</option>`).join("")}</select></label>
+    <label class="nm-pay-filter"><span>Area</span><select class="nm-pay-select" id="nmFilterArea"><option value="">Todas</option>${catalog.areas.map((area) => `<option value="${escapeHtml(area)}" ${draft.area === area ? "selected" : ""}>${escapeHtml(area)}</option>`).join("")}</select></label>
+    <label class="nm-pay-filter"><span>Documento</span><input class="nm-pay-input" id="nmFilterDocument" value="${escapeHtml(draft.document)}" placeholder="Buscar documento"></label>
+  </div>
+</div>`;
+}
+
+function renderPagination(totalCount, totalPages) {
+  return `<div class="nm-pay-pagination"><span>Pagina ${payrollViewState.page} de ${totalPages} · ${totalCount} registro(s)</span><div class="nm-pay-pagination__actions"><button class="nm-pay-btn nm-pay-btn--sm" id="nmPagePrev" ${payrollViewState.page <= 1 ? "disabled" : ""}>Anterior</button><button class="nm-pay-btn nm-pay-btn--sm" id="nmPageNext" ${payrollViewState.page >= totalPages ? "disabled" : ""}>Siguiente</button></div></div>`;
+}
+
+async function downloadPayrollExport(url, fallbackName) {
+  const token = state.token || localStorage.getItem("empiria_token") || "";
+  const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) {
+    let message = "No se pudo generar la exportacion";
+    try { const payload = await response.json(); message = payload.message || message; } catch { /* noop */ }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename=\"?([^"]+)\"?/i);
+  const fileName = match?.[1] || fallbackName;
+  const link = document.createElement("a");
+  const blobUrl = URL.createObjectURL(blob);
+  link.href = blobUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+}
+
+const _baseLoadGroups = loadGroups;
+loadGroups = async function loadGroupsWithScope() {
+  await _baseLoadGroups();
+  ensurePayrollViewState();
+};
+
+loadGroupDetail = async function loadScopedGroupDetail() {
+  if (!activePeriod) { activeGroupDetail = null; activeScopeGroupIds = []; activeScopeMeta = null; return; }
+  ensurePayrollViewState();
+  activeScopeMeta = getCurrentScopeMeta();
+  activeScopeGroupIds = activeScopeMeta.groupIds;
+  if (!activeScopeGroupIds.length) {
+    activeGroupDetail = null;
+    activeGroupId = null;
+    return;
+  }
+  const payloads = await Promise.all(activeScopeGroupIds.map(async (groupId) => (await apiFetch(`/payroll/${activePeriod.id}/groups/${groupId}`)).data));
+  activeGroupId = activeScopeGroupIds.length === 1 ? activeScopeGroupIds[0] : null;
+  activeGroupDetail = mergeScopeDetails(payloads, activeScopeMeta);
+  activeGroupTurns = null;
+};
+
+loadGroupTurns = async function loadScopedGroupTurns() {
+  if (!activeScopeGroupIds.length) { activeGroupTurns = []; return; }
+  const payloads = await Promise.all(activeScopeGroupIds.map((groupId) => apiFetch(`/payroll/groups/${groupId}/turns`).catch(() => ({ turns: [] }))));
+  activeGroupTurns = uniqById(payloads.flatMap((payload) => payload.turns || []));
+};
+
+municipalityTotals = function municipalityTotalsPremium() {
+  const filteredItems = getFilteredPayrollItems();
+  const summary = summarizePayrollItems(filteredItems);
+  const supporting = getFilteredSupportingData(filteredItems);
+  return {
+    employees: summary.employees,
+    items_reviewed: summary.reviewed,
+    items_pending: summary.pending,
+    pending_supports: filteredItems.reduce((sum, item) => sum + Number(item.pending_supports || 0), 0),
+    novelties: supporting.novelties.length,
+    total_devengado: summary.total_devengado,
+    total_deducciones: summary.total_deducciones,
+    neto: summary.neto,
+    average_salary: summary.average_salary,
+  };
+};
+
+kpiContextLabel = function kpiContextLabelPremium() {
+  ensurePayrollViewState();
+  return activeScopeMeta?.title || "Nomina";
+};
+
+renderCargoTabsBar = function renderDivisionTabsIntegral() {
+  ensurePayrollViewState();
+  const cards = [
+    { key: "OPERARIO", label: "Operario manipulador", employees: getDivisionPositions("OPERARIO").reduce((sum, position) => sum + Number(position.employees || 0), 0) },
+    { key: "EQUIPO_MINIMO", label: "Equipo minimo", employees: getDivisionPositions("EQUIPO_MINIMO").reduce((sum, position) => sum + Number(position.employees || 0), 0) },
+  ].filter((card) => card.employees > 0);
+  return `<div class="nm-pay-cargo-tabs nm-pay-cargo-tabs--operational">${cards.map((card) => `<button class="nm-pay-tab nm-pay-tab--operational ${payrollViewState.divisionKey === card.key ? "active" : ""}" data-division-key="${card.key}"><span class="nm-pay-tab-title">${escapeHtml(card.label)}</span><span class="nm-pay-count">${card.employees}</span></button>`).join("")}</div>`;
+};
+
+render = function renderOperationalNomina() {
+  const root = document.getElementById("nmPayRoot");
+  if (!root) return;
+  root.innerHTML = `
+<div class="nm-pay-card-main nm-pay-card-main--operational">
+  <div class="nm-pay-operational-head">
+    <div class="nm-pay-operational-head__row">
+      ${renderCargoTabsBar()}
+      <div class="nm-pay-operational-period">
+        <span class="nm-pay-operational-period__label">Periodo</span>
+        <select class="nm-pay-select nm-pay-input--sm" id="nmPayPeriod">
+          ${periodOptions() || `<option value="">Sin periodos</option>`}
+        </select>
+        ${isTH() ? `<input class="nm-pay-input nm-pay-input--sm" type="month" id="nmPayMonth" value="${escapeHtml(periodMonth)}">` : `<input type="hidden" id="nmPayMonth" value="${escapeHtml(periodMonth)}">`}
+        ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCreate">Crear periodo</button>` : ""}
+      </div>
+    </div>
+  </div>
+  ${renderNominaPanel()}
+</div>`;
+  wireStaticEvents();
+};
+
+renderNominaPanel = function renderNominaPanelIntegral() {
+  ensurePayrollViewState();
+  const totals = municipalityTotals();
+  const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
+  const supporting = activeGroupDetail ? getFilteredSupportingData(filteredItems) : { novelties: [], supports: [] };
+  return `
+${renderSecondaryScopeTabs()}
+<div class="nm-pay-kpis nm-pay-kpis--operational">
+  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total empleados</span><b class="nm-pay-kpi-card__value">${totals.employees}</b></article>
+  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total devengado</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.total_devengado)}</b></article>
+  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total deducciones</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.total_deducciones)}</b></article>
+  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total neto a pagar</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.neto)}</b></article>
+  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Promedio salarial</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.average_salary)}</b></article>
+</div>
+${renderOperationalAlerts(filteredItems, supporting)}
+${renderPayrollFilterBar()}
+${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nomina.</div></div>`}`;
+};
+
+renderOperationalBody = function renderOperationalBodyIntegral() {
+  if (!groupsState.positions.length) return `<div style="padding:16px"><div class="nm-pay-empty">No hay cargos activos con empleados asignados a este contrato.</div></div>`;
+  return `<div class="nm-pay-workspace"><div class="nm-pay-content nm-pay-content--full">${renderGroupDetail()}</div></div>`;
+};
+
+renderGroupDetail = function renderGroupDetailIntegral() {
+  if (!activeGroupDetail) return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty" style="flex:1">No hay datos de nomina para esta vista.</div></div>`;
+  const filteredItems = getFilteredPayrollItems();
+  const supporting = getFilteredSupportingData(filteredItems);
+  const pageData = getPagedPayrollItems(filteredItems);
+  const group = activeGroupDetail.group || {};
+  const canManageGroup = activeScopeGroupIds.length === 1 && activeGroupId;
+  const editable = canManageGroup && isGroupEditable(group);
+  const isClosed = canManageGroup && isGroupClosed(group);
+  const canReopen = canManageGroup && isClosed && isTH();
+  const canClose = canManageGroup && editable && filteredItems.length > 0;
+  return `
+${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:8px 12px 0"><div class="nm-banner__body"><div class="nm-banner__title">Vista agrupada</div><div class="nm-banner__detail">Para calcular o cerrar seleccione un municipio especifico o un area con un unico grupo.</div></div></div>` : ""}
+<div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
+  <div class="nm-pay-inline-meta">
+    ${canManageGroup ? statusBadge(group.status) : '<span class="nm-pay-badge">Vista agrupada</span>'}
+    <span>${canManageGroup ? escapeHtml(activeScopeMeta?.subtitle || "") : "Seleccione un segmento puntual para habilitar calculo y cierre."}</span>
+  </div>
+  <div class="nm-detail-tabs nm-detail-tabs--operational">
+    <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
+  </div>
+  ${activeDetailTab === "nomina"
+    ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}<div class="nm-pay-footer-actions"><button class="nm-pay-btn nm-pay-btn--primary" id="nmPayExportBottom">Exportar Excel</button><button class="nm-pay-btn" id="nmPayExportPdf" ${selectedItemIds.size === 1 ? "" : "disabled"}>Exportar PDF</button>${editable ? `<button class="nm-pay-btn" id="nmPayCalculate">Calcular nomina</button>` : ""}${canManageGroup ? `<button class="nm-pay-btn" id="nmPayHistory">Historial</button>` : ""}${canClose ? `<button class="nm-pay-btn nm-pay-btn--warning" id="nmPayClose">Cerrar y enviar nomina</button>` : ""}${canReopen ? `<button class="nm-pay-btn" id="nmPayReopen">Reabrir nomina</button>` : ""}</div>`
+    : activeDetailTab === "novedades"
+      ? renderNoveltiesWithFilter(supporting.novelties)
+      : activeDetailTab === "soportes"
+        ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || [])
+        : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos...</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
+</div>`;
+  return `
+<div class="nm-pay-toolbar">
+  <div>
+    <h3 class="nm-pay-section-title">${escapeHtml(activeScopeMeta?.title || "Nomina")}</h3>
+    <div class="nm-pay-section-meta">${escapeHtml(activeScopeMeta?.subtitle || "")} · ${canManageGroup ? statusBadge(group.status) : '<span class="nm-pay-badge">Vista agrupada</span>'}</div>
+  </div>
+  <div class="nm-pay-actions">
+    ${editable ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCalculate">Calcular</button>` : ""}
+    <button class="nm-pay-btn nm-pay-btn--sm" id="nmPayExport">Exportar</button>
+    ${canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayHistory">Historial</button>` : ""}
+    ${canClose ? `<button class="nm-pay-btn nm-pay-btn--warning nm-pay-btn--sm" id="nmPayClose">Cerrar y enviar nomina</button>` : ""}
+    ${canReopen ? `<button class="nm-pay-btn nm-pay-btn--sm" id="nmPayReopen">Reabrir nomina</button>` : ""}
+  </div>
+</div>
+${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:14px 18px 0"><div class="nm-banner__body"><div class="nm-banner__title">Vista agrupada</div><div class="nm-banner__detail">Para calcular o cerrar seleccione un municipio especifico o un area con un unico grupo.</div></div></div>` : ""}
+<div class="nm-pay-scroll-body">
+  <div class="nm-detail-tabs">
+    <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
+  </div>
+  ${activeDetailTab === "nomina" ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}` : activeDetailTab === "novedades" ? renderNoveltiesWithFilter(supporting.novelties) : activeDetailTab === "soportes" ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || []) : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos…</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
+</div>`;
+};
+
+renderItemsTable = function renderItemsTableIntegral(items) {
+  const groupLocked = activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group);
+  const consolidated = isConsolidatedView();
+  const canCfgSalary = consolidated && isCurrentUserAdmin();
+  const allIds = items.map((item) => item.id);
+  const allCount = allIds.length;
+  const allSelected = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
+  const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
+  const sortArrow = (key) => payrollViewState.sortBy === key ? (payrollViewState.sortDir === "asc" ? " ↑" : " ↓") : "";
+  const th = (label, key, cls = "") => `<th class="${cls}" data-sort-col="${key}" style="cursor:pointer">${label}${sortArrow(key)}</th>`;
+  return `<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard"><table class="nm-pay-table"><thead><tr>${!groupLocked && allCount > 0 ? `<th class="nm-sel-col"><input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}></th>` : `<th class="nm-sel-col"></th>`}${th("#", "row_number")}${th("Empleado", "employee_name")}${th("Documento", "document_number")}${th("Municipio", "municipality_name")}${th("Cargo", "operational_position")}${th("Área", "ui_area")}${th("Categoría salarial", "salary_category")}${th("Salario básico", "base_salary", "num")}${th("Días laborados", "worked_days", "num")}${th("Devengado", "total_devengado", "num")}${th("Deducciones", "total_deducciones", "num")}${th("Neto", "neto_pagar", "num")}${th("Estado", "ui_state")}<th>Acciones</th></tr></thead><tbody>${items.map((rawItem, index) => {
+    const item = decoratePayrollItem(rawItem);
+    const reviewed = Boolean(item.reviewed);
+    const locked = groupLocked || reviewed;
+    const isSelected = selectedItemIds.has(item.id);
+    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col">${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="num">${(payrollViewState.page - 1) * payrollViewState.pageSize + index + 1}</td><td><b>${escapeHtml(item.employee_name)}</b><br><small style="color:#64748B">${escapeHtml(item.institution_name || "-")} · ${escapeHtml(item.site_name || "-")}</small></td><td>${escapeHtml(item.document_number || "-")}</td><td>${escapeHtml(item.municipality_name || "-")}</td><td>${escapeHtml(item.operational_position || "-")}</td><td>${escapeHtml(item.ui_area || "-")}</td><td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${fmtCOP(item.base_salary)}</td><td class="num">${item.display_worked_days ?? item.worked_days ?? 30}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td><td>${statusBadge(item.ui_state)}</td><td>${locked ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>${canCfgSalary ? ` <button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}` : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button> <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>${canCfgSalary ? ` <button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}`}</td></tr>`;
+  }).join("")}</tbody></table></div>`;
+};
+
+openExportModal = function openExportModalIntegral() {
+  if (!activePeriod) return;
+  const scope = activeScopeMeta || getCurrentScopeMeta();
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `<div class="nm-pay-dialog" style="max-width:560px"><div class="nm-pay-dialog-h"><b>Exportar nomina</b><button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button></div><div class="nm-pay-dialog-b"><div style="padding:14px;border:1px solid #E2E8F0;border-radius:14px;background:#F8FAFC"><div style="font-size:12px;color:#64748B;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Vista actual</div><div style="font-size:18px;font-weight:800;color:#0F172A">${escapeHtml(scope.title)}</div><div style="font-size:13px;color:#64748B;margin-top:4px">${escapeHtml(scope.subtitle)}</div></div><div style="display:grid;gap:10px"><button class="nm-pay-btn nm-pay-btn--primary" id="nmExportCurrent">Exportar Excel de la vista actual</button><button class="nm-pay-btn" id="nmExportPeriod">Exportar Excel del periodo completo</button></div></div></div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("nmExportCurrent")?.addEventListener("click", async () => {
+    try {
+      const url = scope.groupIds.length > 1 ? `/payroll/groups/multi-export?groupIds=${scope.groupIds.join(",")}` : `/payroll/groups/${scope.groupIds[0]}/export`;
+      await downloadPayrollExport(url, `nomina-${Date.now()}.xlsx`);
+      closeModal();
+    } catch (err) { showError(err.message); }
+  });
+  document.getElementById("nmExportPeriod")?.addEventListener("click", async () => {
+    try {
+      await downloadPayrollExport(`/payroll/periods/${activePeriod.id}/full-export`, `nomina-periodo-${activePeriod.id}.xlsx`);
+      closeModal();
+    } catch (err) { showError(err.message); }
+  });
+};
+
+wireStaticEvents = function wireStaticEventsIntegral() {
+  document.getElementById("nmPayMonth")?.addEventListener("change", (e) => { periodMonth = e.target.value; });
+  document.getElementById("nmPayPeriod")?.addEventListener("change", async (e) => {
+    activePeriod = periods.find((period) => String(period.id) === String(e.target.value)) || null;
+    activeGroupId = null;
+    activeGroupDetail = null;
+    activeGroupTurns = null;
+    activeScopeMeta = null;
+    activeScopeGroupIds = [];
+    payrollViewState = defaultPayrollViewState();
+    selectedItemIds.clear();
+    await reloadWorkArea();
+  });
+  document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
+  document.querySelectorAll("[data-division-key]").forEach((btn) => btn.addEventListener("click", async () => {
+    payrollViewState.divisionKey = btn.dataset.divisionKey || "OPERARIO";
+    payrollViewState.municipalityId = "ALL";
+    payrollViewState.areaKey = TEAM_AREA_ALL;
+    payrollViewState.page = 1;
+    selectedItemIds.clear();
+    await reloadDetailOnly();
+  }));
+  document.querySelectorAll("[data-scope-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+    if (payrollViewState.divisionKey === "OPERARIO") payrollViewState.municipalityId = btn.dataset.scopeTab || "ALL";
+    else payrollViewState.areaKey = btn.dataset.scopeTab || TEAM_AREA_ALL;
+    payrollViewState.page = 1;
+    selectedItemIds.clear();
+    await reloadDetailOnly();
+  }));
+  document.getElementById("nmFilterMunicipality")?.addEventListener("change", (e) => { payrollViewState.draftFilters.municipality = e.target.value; });
+  document.getElementById("nmFilterStatus")?.addEventListener("change", (e) => { payrollViewState.draftFilters.status = e.target.value; });
+  document.getElementById("nmFilterCargo")?.addEventListener("change", (e) => { payrollViewState.draftFilters.cargo = e.target.value; });
+  document.getElementById("nmFilterArea")?.addEventListener("change", (e) => { payrollViewState.draftFilters.area = e.target.value; });
+  document.getElementById("nmFilterName")?.addEventListener("input", (e) => { payrollViewState.draftFilters.name = e.target.value || ""; });
+  document.getElementById("nmFilterDocument")?.addEventListener("input", (e) => { payrollViewState.draftFilters.document = e.target.value || ""; });
+  document.getElementById("nmToggleAdvancedFilters")?.addEventListener("click", () => { payrollViewState.showAdvancedFilters = !payrollViewState.showAdvancedFilters; render(); });
+  document.getElementById("nmFilterApply")?.addEventListener("click", () => { payrollViewState.appliedFilters = { ...payrollViewState.draftFilters }; payrollViewState.page = 1; render(); });
+  document.getElementById("nmFilterClear")?.addEventListener("click", () => { payrollViewState = defaultPayrollViewState(); ensurePayrollViewState(); render(); });
+  document.getElementById("nmFilterExport")?.addEventListener("click", openExportModal);
+  document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
+    activeDetailTab = btn.dataset.detailTab || "nomina";
+    if (activeDetailTab === "turnos" && activeGroupTurns === null) await loadGroupTurns();
+    render();
+  }));
+  document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
+  document.getElementById("nmPayExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayExportBottom")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayExportPdf")?.addEventListener("click", exportSelectedPayslipPdf);
+  document.getElementById("nmPayClose")?.addEventListener("click", closeAndSendGroup);
+  document.getElementById("nmPayReopen")?.addEventListener("click", openReopenModal);
+  document.getElementById("nmPayHistory")?.addEventListener("click", openHistoryModal);
+  document.getElementById("nmPagePrev")?.addEventListener("click", () => { payrollViewState.page = Math.max(1, payrollViewState.page - 1); render(); });
+  document.getElementById("nmPageNext")?.addEventListener("click", () => { payrollViewState.page += 1; render(); });
+  document.querySelectorAll("[data-sort-col]").forEach((th) => th.addEventListener("click", () => {
+    const column = th.dataset.sortCol;
+    if (!column || column === "row_number") return;
+    payrollViewState.sortDir = payrollViewState.sortBy === column && payrollViewState.sortDir === "asc" ? "desc" : "asc";
+    payrollViewState.sortBy = column;
+    render();
+  }));
+  document.querySelectorAll(".nm-item-sel-cb").forEach((cb) => cb.addEventListener("change", () => {
+    const id = Number(cb.dataset.selItem);
+    if (cb.checked) selectedItemIds.add(id); else selectedItemIds.delete(id);
+    render();
+  }));
+  document.getElementById("nmSelAll")?.addEventListener("change", (e) => {
+    const items = getPagedPayrollItems(getFilteredPayrollItems()).items;
+    items.forEach((item) => { if (e.target.checked) selectedItemIds.add(item.id); else selectedItemIds.delete(item.id); });
+    render();
+  });
+  document.querySelectorAll("[data-new-novelty]").forEach((btn) => btn.addEventListener("click", () => openNoveltyModal(Number(btn.dataset.newNovelty))));
+  document.querySelectorAll("[data-payslip]").forEach((btn) => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
+  document.querySelectorAll("[data-salary-cfg]").forEach((btn) => btn.addEventListener("click", () => openSalaryConfigModal(Number(btn.dataset.salaryCfg), btn.dataset.salaryName || "", btn.dataset.salaryDoc || "")));
+  wireStaticBulkEvents();
+};
+
+loadPayrollModule = async function loadPayrollModuleIntegral() {
+  periods = [];
+  activePeriod = null;
+  groupsState = { positions: [], groups: [] };
+  activePosition = "";
+  activeGroupId = null;
+  activeGroupDetail = null;
+  activeGroupTurns = null;
+  turnosFilter = { search: "", hasCuentaCobro: "" };
+  municipalitySearch = "";
+  activePrimaryTab = "nomina";
+  supportsData = [];
+  supportsFilters = { municipalityId: "", status: "", noveltyType: "", employee: "" };
+  viewerSupportId = null;
+  payrollViewState = defaultPayrollViewState();
+  activeScopeGroupIds = [];
+  activeScopeMeta = null;
+  resetItemsFilter();
+  await loadPeriods();
+  await loadGroups();
+  await loadGroupDetail();
+  return shell();
+};
+
 export async function loadPayrollModule() {
   periods            = [];
   activePeriod       = null;

@@ -3719,11 +3719,17 @@ async function getItemPayslip(itemId) {
             m.name AS municipality_name,
             i.name AS institution_name,
             s.name AS site_name,
-            pp.label AS period_label, pp.period_start, pp.period_end
+            pp.label AS period_label, pp.period_start, pp.period_end,
+            co.name AS active_company_name,
+            co.nit  AS active_company_nit,
+            ct.name AS contract_name,
+            ct.code AS contract_code
        FROM payroll_items pi
        LEFT JOIN municipalities m      ON m.id = pi.municipality_id
        LEFT JOIN institutions i        ON i.id = pi.institution_id
        LEFT JOIN educational_sites s   ON s.id = pi.site_id
+       LEFT JOIN contracts ct          ON ct.id = pi.contract_id
+       LEFT JOIN companies co          ON co.id = COALESCE(ct.company_id, pi.company_id)
        JOIN payroll_periods pp         ON pp.id = pi.period_id
       WHERE pi.id = $1`,
     [itemId]
@@ -3828,6 +3834,12 @@ async function getItemPayslip(itemId) {
 
   return {
     item,
+    company: {
+      name:          item.active_company_name || "",
+      nit:           item.active_company_nit || "",
+      contract_name: item.contract_name || "",
+      contract_code: item.contract_code || "",
+    },
     period: {
       label:        item.period_label,
       period_start: item.period_start,
