@@ -79,6 +79,7 @@ let activeGroupId    = null;
 let activeGroupDetail = null;
 let activeGroupTurns  = null;  // null = sin cargar, [] = sin turnos
 let turnosFilter      = { search: "", hasCuentaCobro: "" };
+let turnPersonGroupsCache = [];
 let supportsFilter    = { status: "", noveltyType: "", search: "" };
 let supportsViewer    = null;   // { url, name, type: "image"|"doc" }
 let periodMonth      = new Date().toISOString().slice(0, 7);
@@ -112,6 +113,8 @@ let groupFilterCatalog = { institutions: [], sites: [], modalities: [], cargos: 
 
 // ── Configuración salarial individual (modal) ─────────────────────────────────
 let salaryCfgState = { employeeId: null, employeeName: "", docNumber: "", history: [], loading: false };
+const PAYROLL_FULLSCREEN_STORAGE_KEY = "empiria_payroll_fullscreen_v1";
+let payrollUiState = { fullscreen: false };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DE CONTEXTO
@@ -328,6 +331,117 @@ function isConsolidatedView() {
 function isCurrentUserAdmin() {
   const role = String(state.user?.role || "").toLowerCase();
   return ["administrador", "administrator", "talento_humano", "human_resources"].some((r) => role.includes(r));
+}
+
+function currentContractName() {
+  const currentContractId = Number(contractId() || 0);
+  if (!currentContractId) return "Sin contrato";
+  const contracts = Array.isArray(state.contracts) ? state.contracts : [];
+  const current = contracts.find((item) => Number(item.id) === currentContractId);
+  return current?.name || `Contrato #${currentContractId}`;
+}
+
+function loadPayrollUiState() {
+  try {
+    payrollUiState.fullscreen = localStorage.getItem(PAYROLL_FULLSCREEN_STORAGE_KEY) === "1";
+  } catch {
+    payrollUiState.fullscreen = false;
+  }
+  syncPayrollFullscreen();
+}
+
+function syncPayrollFullscreen() {
+  document.body?.classList.toggle("nm-pay-fullscreen", Boolean(payrollUiState.fullscreen));
+}
+
+function setPayrollFullscreen(enabled) {
+  payrollUiState.fullscreen = Boolean(enabled);
+  try {
+    localStorage.setItem(PAYROLL_FULLSCREEN_STORAGE_KEY, payrollUiState.fullscreen ? "1" : "0");
+  } catch {
+    /* noop */
+  }
+  syncPayrollFullscreen();
+  const button = document.getElementById("nmPayFullscreen");
+  if (button) {
+    button.textContent = payrollUiState.fullscreen ? "Salir pantalla completa" : "Pantalla completa";
+    button.setAttribute("aria-pressed", payrollUiState.fullscreen ? "true" : "false");
+  }
+}
+
+function togglePayrollFullscreen() {
+  setPayrollFullscreen(!payrollUiState.fullscreen);
+}
+
+function getPayrollItemById(itemId) {
+  const item = (activeGroupDetail?.items || []).find((entry) => Number(entry.id) === Number(itemId));
+  return item ? decoratePayrollItem(item) : null;
+}
+
+function getPayrollItemNovelties(itemId) {
+  return (activeGroupDetail?.novelties || [])
+    .filter((novelty) => Number(novelty.payroll_item_id) === Number(itemId))
+    .sort((left, right) => {
+      const leftDate = new Date(left.updated_at || left.created_at || left.novelty_date || 0).getTime();
+      const rightDate = new Date(right.updated_at || right.created_at || right.novelty_date || 0).getTime();
+      return rightDate - leftDate;
+    });
+}
+
+function getPayrollItemSupportsCount(itemId) {
+  const noveltyIds = new Set(getPayrollItemNovelties(itemId).map((novelty) => Number(novelty.id)));
+  return (activeGroupDetail?.supports || []).filter((support) => noveltyIds.has(Number(support.novelty_id))).length;
+}
+
+function payrollStatusMeta(item, groupLocked = false) {
+  if (item?.reviewed) {
+    return { key: "reviewed", label: "Revisado", tone: "success", locked: true };
+  }
+  if (groupLocked) {
+    return { key: "blocked", label: "Bloqueado", tone: "blocked", locked: true };
+  }
+  return { key: "pending", label: "Pendiente", tone: "pending", locked: false };
+}
+
+function renderPayrollStatusBadge(item, groupLocked = false) {
+  const status = payrollStatusMeta(item, groupLocked);
+  return `<span class="nm-pay-state nm-pay-state--${status.tone}">${escapeHtml(status.label)}</span>`;
+}
+
+function firstDefinedValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && String(value).trim() !== "") || "";
+}
+
+function renderPayrollItemFacts(item, novelties = []) {
+  const hireDate = firstDefinedValue(item.fecha_ingreso, item.hire_date, item.start_date, item.contract_start_date);
+  const retireDate = firstDefinedValue(item.fecha_retiro_aplicada, item.fecha_retiro, item.end_date, item.contract_end_date);
+  const observation = novelties.map((novelty) => novelty.description || novelty.observations || "").find(Boolean) || "";
+  return `
+<div class="nm-pay-drawer-grid">
+  <div class="nm-pay-drawer-field"><span>Empleado</span><strong>${escapeHtml(item.employee_name || "-")}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Documento</span><strong>${escapeHtml(item.document_number || "-")}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Cargo</span><strong>${escapeHtml(item.operational_position || "-")}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Municipio</span><strong>${escapeHtml(item.municipality_name || "-")}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Dias laborados</span><strong>${escapeHtml(String(item.display_worked_days ?? item.worked_days ?? 30))}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Ingreso</span><strong>${escapeHtml(fmtDateDMY(hireDate))}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Retiro</span><strong>${escapeHtml(fmtDateDMY(retireDate))}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Estado</span><strong>${renderPayrollStatusBadge(item, activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group))}</strong></div>
+  <div class="nm-pay-drawer-field nm-pay-drawer-field--wide"><span>Novedades</span><strong>${novelties.length ? `${novelties.length} registrada(s)` : "Sin novedades registradas"}</strong></div>
+  <div class="nm-pay-drawer-field nm-pay-drawer-field--wide"><span>Observaciones</span><strong>${escapeHtml(observation || "Sin observaciones registradas")}</strong></div>
+</div>`;
+}
+
+function openSelectedPayslip() {
+  const selectedItems = selectedPayrollItemsFromFiltered();
+  if (selectedItems.length !== 1) {
+    showError("Seleccione un colaborador para abrir su desprendible.");
+    return;
+  }
+  openPayslipModal(selectedItems[0].id);
+}
+
+function closeRowMenu(button) {
+  button?.closest("details")?.removeAttribute("open");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -807,51 +921,142 @@ function shell() {
 @media (max-width:640px){.nm-pay-head--dashboard{padding:16px}.nm-pay-head--dashboard .nm-pay-title{font-size:24px}.nm-pay-kpis--premium{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 16px 14px}.nm-pay-kpi-card--hero{grid-column:1/-1}.nm-pay-cargo-tabs--dashboard,.nm-pay-subtabs,.nm-pay-scope-tabs,.nm-pay-filterbar,.nm-pay-workspace,.nm-pay-scroll-body{padding-left:16px;padding-right:16px}.nm-pay-filterbar__grid{grid-template-columns:1fr}.nm-pay-filterbar__actions{width:100%}.nm-pay-filterbar__actions .nm-pay-btn{flex:1 1 0}.nm-items-fbar__status{width:100%;justify-content:flex-start}}
 
 /* Operational refactor */
-.nm-pay-card-main--operational{height:calc(100vh - 78px);background:#fff;border:1px solid #E2E8F0;border-radius:18px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
-.nm-pay-operational-head{padding:12px 14px 10px;border-bottom:1px solid #E2E8F0;background:#fff}
-.nm-pay-operational-head__row{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
-.nm-pay-cargo-tabs--operational{padding:0;border:0;background:transparent;gap:8px;min-height:auto;flex:1 1 420px}
-.nm-pay-tab--operational{display:inline-flex;align-items:center;gap:8px;min-width:auto;padding:8px 12px;border-radius:999px;background:#F8FAFC;box-shadow:none}
-.nm-pay-tab--operational .nm-pay-tab-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
-.nm-pay-tab--operational .nm-pay-count{min-width:22px;height:22px;margin-left:0}
-.nm-pay-operational-period{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.nm-pay-operational-period__label{font-size:12px;font-weight:700;color:#475569}
-.nm-pay-operational-period .nm-pay-input,.nm-pay-operational-period .nm-pay-select,.nm-pay-operational-period .nm-pay-btn{height:34px;border-radius:10px}
-.nm-pay-scope-tabs--operational{padding:10px 14px 0}
-.nm-pay-scope-tabs--operational .nm-pay-scope-tabs__list{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
-.nm-pay-scope-tabs--operational .nm-pay-scope-tab{padding:7px 12px;box-shadow:none}
-.nm-pay-kpis--operational{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:10px 14px 0;border-bottom:0;background:transparent}
-.nm-pay-kpis--operational .nm-pay-kpi-card{gap:4px;padding:10px 12px;border-radius:14px;background:#fff;border:1px solid #E2E8F0;box-shadow:none}
-.nm-pay-kpis--operational .nm-pay-kpi-card__eyebrow{font-size:10px;color:#64748B}
-.nm-pay-kpis--operational .nm-pay-kpi-card__value{font-size:18px;letter-spacing:-.02em}
-.nm-pay-alert-strip{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px 0}
-.nm-pay-alert-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border-radius:12px;border:1px solid #FDE68A;background:#FFFBEB;color:#92400E;font-size:12px;font-weight:700}
+.nm-pay-card-main--operational{height:calc(100vh - 78px);display:flex;flex-direction:column;overflow:hidden;background:#F7FAFF;border:1px solid #E5EAF3;border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.04);font-family:Inter,system-ui,sans-serif}
+.nm-pay-operational-head{display:block;padding:8px 10px 6px;border-bottom:1px solid #E5EAF3;background:#F7FAFF}
+.nm-pay-toolbar-chip{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 10px;border:1px solid #E5EAF3;border-radius:999px;background:#FFFFFF;color:#0F172A;font-size:11px;font-weight:700}
+.nm-pay-filterbar--operational{display:grid;gap:0;padding:0;min-width:0}
+.nm-pay-filterbar__grid--main{display:grid;grid-template-columns:minmax(190px,1fr) minmax(160px,.75fr) minmax(170px,.75fr) minmax(220px,1fr) minmax(180px,.9fr) auto;gap:8px;align-items:end}
+.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:auto}
+.nm-pay-toolbar-title{display:flex;align-items:center;gap:4px;min-height:36px;min-width:0}
+.nm-pay-toolbar-title strong{font-size:16px;line-height:1;color:#0F172A;letter-spacing:-.03em;white-space:nowrap}
+.nm-pay-toolbar-title__meta{font-size:12px;color:#64748B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm-pay-filterbar--operational .nm-pay-filter{display:grid;gap:4px;padding:0;border:0;background:transparent;box-shadow:none}
+.nm-pay-filterbar--operational .nm-pay-filter span{font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748B}
+.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-input,.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-select{height:36px;padding-top:0;padding-bottom:0;border-radius:10px;border-color:#E5EAF3;background:#FFFFFF}
+.nm-pay-filter--readonly strong{display:flex;align-items:center;min-height:36px;padding:0 10px;border:1px solid #E5EAF3;border-radius:10px;background:#FFFFFF;color:#0F172A;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm-pay-btn--compact{min-height:34px;padding:0 11px;border-radius:10px;font-size:11px}
+.nm-pay-btn--header{align-self:end}
+.nm-pay-btn--quiet{background:#FFFFFF}
+.nm-pay-cargo-tabs--operational{padding:4px 10px 0;border:0;background:transparent;gap:6px;min-height:auto}
+.nm-pay-tab--operational{display:inline-flex;align-items:center;gap:6px;min-width:auto;padding:7px 10px;border-radius:999px;border:1px solid #E5EAF3;background:#FFFFFF;box-shadow:none}
+.nm-pay-tab--operational.active{background:#0B7CFF;color:#FFFFFF;border-color:#0B7CFF}
+.nm-pay-tab--operational .nm-pay-tab-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.nm-pay-tab--operational .nm-pay-count{min-width:18px;height:18px;margin-left:0;background:#E8EEF8;color:#0F172A;font-size:10px}
+.nm-pay-tab--operational.active .nm-pay-count{background:rgba(255,255,255,.18);color:#FFFFFF}
+.nm-pay-input--scope,.nm-pay-scope-picker__controls .nm-pay-select{height:36px;border-radius:10px}
+.nm-pay-kpis-row{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;padding:6px 10px 0}
+.nm-pay-kpi-card{display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:52px;padding:8px 10px;border:1px solid #E5EAF3;border-radius:12px;background:#FFFFFF;min-width:118px;max-width:190px}
+.nm-pay-kpi-card__label{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#64748B;white-space:nowrap}
+.nm-pay-kpi-card__label i{display:inline-block;width:8px;height:8px;border-radius:999px;background:#CBD5E1}
+.nm-pay-kpi-card__value{font-size:14px;line-height:1.1;font-weight:800;color:#0F172A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm-pay-kpi-card--employees .nm-pay-kpi-card__label i{background:#0B7CFF}
+.nm-pay-kpi-card--pending .nm-pay-kpi-card__label i{background:#F59E0B}
+.nm-pay-kpi-card--earned .nm-pay-kpi-card__label i{background:#0EA5E9}
+.nm-pay-kpi-card--deductions .nm-pay-kpi-card__label i{background:#EF4444}
+.nm-pay-kpi-card--net .nm-pay-kpi-card__label i{background:#16A34A}
+.nm-pay-kpi-card--support .nm-pay-kpi-card__label i{background:#8B5CF6}
+.nm-pay-alert-strip{display:flex;gap:6px;flex-wrap:wrap;padding:2px 10px 0}
+.nm-pay-alert-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;padding:0 7px;border-radius:999px;border:1px solid #FDE68A;background:#FFF8E8;color:#92400E;font-size:10px;font-weight:700}
 .nm-pay-alert-pill--support{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
 .nm-pay-alert-pill--retirement{border-color:#BFDBFE;background:#EFF6FF;color:#1D4ED8}
-.nm-pay-filterbar--operational{padding:10px 14px;gap:10px}
-.nm-pay-filterbar__grid--main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;flex:1 1 100%}
-.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}
-.nm-pay-filterbar__grid--advanced{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;flex:1 1 100%}
-.nm-pay-filterbar__grid--advanced.is-hidden{display:none}
-.nm-pay-filterbar__actions--operational{width:100%;justify-content:flex-end}
-.nm-pay-filterbar--operational .nm-pay-filter{gap:4px;padding:8px 10px;border-radius:12px;background:#fff}
-.nm-pay-filterbar--operational .nm-pay-filter span{font-size:9.5px}
-.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-input,.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-select{height:32px;border-radius:8px}
-.nm-pay-workspace{padding:8px 14px 14px;gap:0;background:transparent}
-.nm-pay-content--full{border:1px solid #E2E8F0;border-radius:16px;background:#fff;box-shadow:none}
-.nm-pay-scroll-body--operational{padding:10px 12px 12px}
-.nm-pay-inline-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#64748B}
-.nm-detail-tabs--operational{margin-bottom:8px;padding:0;background:transparent;border-bottom:1px solid #E2E8F0;border-radius:0}
-.nm-detail-tabs--operational .nm-detail-tab{padding:8px 12px;border-radius:10px 10px 0 0}
-.nm-pay-table-wrap--dashboard{border:1px solid #E2E8F0;border-radius:14px;max-height:calc(100vh - 360px);box-shadow:none}
-.nm-pay-table thead th{padding:9px 8px;font-size:10px}
-.nm-pay-table td{padding:8px 8px}
+.nm-pay-workspace{flex:1;min-height:0;padding:4px 10px 10px;gap:0;background:transparent}
+.nm-pay-content--full{display:flex;flex:1;min-height:0;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
+.nm-pay-scroll-body--operational{display:flex;flex:1;flex-direction:column;min-height:0;padding:6px}
+.nm-pay-section-strip{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.nm-pay-section-strip__main{display:grid;gap:3px}
+.nm-pay-section-strip__title{font-size:12px;font-weight:800;color:#0F172A}
+.nm-pay-section-strip__meta{font-size:10px;color:#64748B}
+.nm-pay-inline-warning{display:inline-flex;align-items:center;min-height:20px;padding:0 7px;border-radius:999px;background:#FFF7ED;color:#9A3412;font-size:10px;font-weight:700}
+.nm-pay-inline-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#64748B}
+.nm-detail-tabs--operational{margin-bottom:6px;padding:2px;background:#F2F6FC;border:0;border-radius:11px}
+.nm-detail-tabs--operational .nm-detail-tab{padding:5px 8px;border-radius:8px;border-bottom:0;margin-bottom:0;font-size:11px}
+.nm-detail-tabs--operational .nm-detail-tab.active{background:#FFFFFF;color:#0F172A;box-shadow:0 4px 10px rgba(15,23,42,.05)}
+.nm-pay-table-wrap--dashboard{border:1px solid #E5EAF3;border-radius:14px;height:calc(100vh - 248px);min-height:392px;max-height:none;background:#FFFFFF;box-shadow:none}
+.nm-pay-table--operational{min-width:980px}
+.nm-pay-table--operational thead th{position:sticky;top:0;z-index:2;padding:7px 8px;background:#FFFFFF;color:#64748B;text-transform:uppercase;font-size:9.5px;letter-spacing:.08em;border-bottom:1px solid #E5EAF3;white-space:nowrap}
+.nm-pay-table--operational td{padding:5px 8px;border-bottom:1px solid #EEF2F7;vertical-align:middle;white-space:nowrap}
+.nm-pay-table--operational tbody tr{height:38px}
+.nm-pay-table__sticky-select{position:sticky;left:0;z-index:3;background:#FFFFFF}
+.nm-pay-table__sticky-employee{position:sticky;left:38px;z-index:2;background:#FFFFFF;min-width:210px}
+.nm-pay-table tbody tr:hover .nm-pay-table__sticky-select,.nm-pay-table tbody tr:hover .nm-pay-table__sticky-employee,.nm-pay-table tbody tr:hover td{background:#F8FBFF}
+.nm-pay-employee-cell{display:flex;align-items:center;min-height:24px;overflow:hidden}
+.nm-pay-employee-cell strong{display:block;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#0F172A}
+.nm-pay-employee-cell span{font-size:11px;color:#64748B}
+.nm-pay-cell-note{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:700}
+.nm-pay-cell-note--warn{background:#FFF4E5;color:#B45309}
+.nm-pay-state{display:inline-flex;align-items:center;justify-content:center;min-height:18px;padding:0 7px;border-radius:999px;font-size:9.5px;font-weight:800}
+.nm-pay-state--pending{background:#F1F5F9;color:#64748B}
+.nm-pay-state--success{background:#DCFCE7;color:#166534}
+.nm-pay-state--blocked{background:#E2E8F0;color:#334155}
+.nm-pay-actions-cell{position:relative}
+.nm-pay-row-menu{position:relative}
+.nm-pay-row-menu__trigger{list-style:none;display:inline-flex;align-items:center;justify-content:center;min-height:26px;padding:0 9px;border:1px solid #E5EAF3;border-radius:9px;background:#FFFFFF;cursor:pointer;font-size:10px;font-weight:700;color:#0F172A}
+.nm-pay-row-menu__trigger::-webkit-details-marker{display:none}
+.nm-pay-row-menu__body{position:absolute;right:0;top:calc(100% + 8px);z-index:8;display:grid;gap:6px;min-width:190px;padding:8px;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:0 16px 28px rgba(15,23,42,.08)}
+.nm-pay-row-menu__item{display:flex;align-items:center;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:10px;background:transparent;color:#0F172A;font-size:12px;font-weight:600;text-align:left;cursor:pointer}
+.nm-pay-row-menu__item:hover{background:#F5F9FF}
+.nm-pay-row-menu__item:disabled{opacity:.45;cursor:not-allowed}
+.nm-turn-summary-wrap{height:100%;display:flex;flex-direction:column;overflow:auto}
+.nm-turn-summary-wrap .nm-pay-table thead th{position:sticky;top:0;z-index:3;background:#0F172A;color:#FFFFFF;border-bottom:1px solid #1E293B;padding:7px 8px}
+.nm-turn-summary-wrap .nm-pay-table tbody tr{height:48px}
+.nm-turn-summary-wrap .nm-pay-table td{padding:6px 8px;vertical-align:middle}
+.nm-turn-summary-wrap .nm-pay-table td.num,.nm-turn-summary-wrap .nm-pay-table th.num{text-align:right}
+.nm-turn-compliance{display:flex;flex-direction:column;gap:4px;min-width:150px;max-width:220px}
+.nm-turn-compliance__bar{position:relative;height:6px;border-radius:999px;background:#E5EAF3;overflow:hidden}
+.nm-turn-compliance__bar span{position:absolute;left:0;top:0;bottom:0;border-radius:999px}
+.nm-turn-compliance--bad .nm-turn-compliance__bar span{background:#EF4444}
+.nm-turn-compliance--warn .nm-turn-compliance__bar span{background:#F59E0B}
+.nm-turn-compliance--ok .nm-turn-compliance__bar span{background:#16A34A}
+.nm-turn-compliance__meta{font-size:10px;line-height:1.1;color:#64748B;white-space:nowrap}
+.nm-turn-actions{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.nm-turn-action-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid #E5EAF3;border-radius:10px;background:#FFFFFF;color:#0F172A;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease,transform .15s ease}
+.nm-turn-action-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+.nm-turn-action-btn:hover:not(:disabled){background:#F5F9FF;border-color:#BFD4FF;color:#0B7CFF;transform:translateY(-1px)}
+.nm-turn-action-btn:disabled{opacity:.4;cursor:not-allowed}
+.nm-turn-detail-summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;color:#64748B}
+.nm-turn-detail-summary b{color:#0F172A}
+.nm-turn-detail-stack{display:grid;gap:10px}
+.nm-turn-detail-card{padding:12px;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF}
+.nm-turn-detail-card__top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.nm-turn-detail-card__top strong{font-size:13px;color:#0F172A}
+.nm-turn-detail-card__state{font-size:11px;font-weight:700;color:#64748B}
+.nm-turn-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.nm-turn-detail-grid span{display:block;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748B}
+.nm-turn-detail-grid strong{display:block;margin-top:3px;font-size:12px;font-weight:600;color:#0F172A}
+.nm-turn-detail-grid__wide{grid-column:1/-1}
 .nm-pay-pagination{padding:10px 2px 0}
-.nm-pay-footer-actions{display:flex;gap:8px;flex-wrap:wrap;padding-top:10px}
-.nm-pay-footer-actions .nm-pay-btn{height:36px;padding:0 14px;border-radius:10px}
-@media (max-width:1200px){.nm-pay-kpis--operational{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--advanced{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-kpis--operational{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-table-wrap--dashboard{max-height:none}}
-@media (max-width:640px){.nm-pay-operational-head__row{align-items:flex-start}.nm-pay-operational-period{width:100%}.nm-pay-operational-period .nm-pay-input,.nm-pay-operational-period .nm-pay-select,.nm-pay-operational-period .nm-pay-btn{flex:1 1 150px}.nm-pay-filterbar__grid--main,.nm-pay-filterbar__grid--advanced{grid-template-columns:1fr}.nm-pay-footer-actions .nm-pay-btn{flex:1 1 100%}}
+.nm-pay-dialog--compact{max-width:420px}
+.nm-pay-dialog-b--compact{display:grid;gap:12px;padding:16px}
+.nm-pay-dialog-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.nm-pay-dialog-h small{display:block;margin-top:4px;font-size:12px;color:#64748B;font-weight:500}
+.nm-pay-dialog--drawer{width:min(520px,100%);height:min(100vh - 32px,100%);margin-left:auto;border-radius:22px 0 0 22px;overflow:hidden}
+.nm-pay-modal{justify-content:flex-end}
+.nm-pay-dialog-b--drawer{height:calc(100% - 70px);overflow:auto;padding:18px;display:grid;gap:14px}
+.nm-pay-dialog-h--drawer{padding:16px 18px}
+.nm-pay-drawer-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px;border:1px solid #E5EAF3;border-radius:18px;background:linear-gradient(180deg,#FFFFFF 0%,#F8FBFF 100%)}
+.nm-pay-drawer-hero h3{margin:0;font-size:20px;color:#0F172A}
+.nm-pay-drawer-hero p{margin:6px 0 0;font-size:12px;color:#64748B}
+.nm-pay-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.nm-pay-drawer-field{display:grid;gap:5px;padding:12px;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF}
+.nm-pay-drawer-field span{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748B}
+.nm-pay-drawer-field strong{font-size:13px;color:#0F172A}
+.nm-pay-drawer-field--wide{grid-column:1/-1}
+.nm-pay-drawer-stack{display:grid;gap:12px}
+.nm-pay-drawer-card{padding:14px;border:1px solid #E5EAF3;border-radius:16px;background:#FFFFFF}
+.nm-pay-drawer-card__title{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#0F172A;margin-bottom:10px}
+.nm-pay-drawer-inline{display:flex;gap:8px;flex-wrap:wrap}
+.nm-pay-drawer-list{display:grid;gap:8px}
+.nm-pay-drawer-list__item{display:grid;gap:4px;padding:10px 12px;border:1px solid #E5EAF3;border-radius:12px;background:#F8FBFF;text-align:left;cursor:pointer}
+.nm-pay-drawer-list__item strong{font-size:12px;color:#0F172A}
+.nm-pay-drawer-list__item span{font-size:11px;color:#64748B}
+.nm-pay-drawer-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.module-nomina.nm-pay-fullscreen .dashboard{grid-template-columns:0 minmax(0,1fr)!important}
+.module-nomina.nm-pay-fullscreen .sidebar{display:none!important;width:0!important;min-width:0!important;max-width:0!important;padding:0!important;border:0!important}
+.module-nomina.nm-pay-fullscreen .topbar-pro{left:0!important;padding-left:20px!important;width:100%!important}
+.module-nomina.nm-pay-fullscreen .nm-pay-card-main--operational{height:calc(100vh - 64px)}
+@media (max-width:1200px){.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-toolbar-title,.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:calc(100vh - 270px)}}
+@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-toolbar-title,.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}}
+@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:12px;padding-right:12px}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-toolbar-title{min-height:auto;flex-wrap:wrap}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -1466,6 +1671,16 @@ function renderItemsTable(items) {
   const allCount   = allIds.length;
   const allSelected  = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
   const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
+  const currentSortArrow = (key) => payrollViewState.sortBy === key ? (payrollViewState.sortDir === "asc" ? " &uarr;" : " &darr;") : "";
+  const headerCell = (label, key, cls = "") => `<th class="${cls}" data-sort-col="${key}" style="cursor:pointer">${label}${currentSortArrow(key)}</th>`;
+  return `<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard"><table class="nm-pay-table nm-pay-table--operational"><thead><tr>${!groupLocked && allCount > 0 ? `<th class="nm-sel-col nm-pay-table__sticky-select"><input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}></th>` : `<th class="nm-sel-col nm-pay-table__sticky-select"></th>`}${headerCell("Empleado", "employee_name", "nm-pay-table__sticky-employee")}${headerCell("Documento", "document_number")}${headerCell("Municipio", "municipality_name")}${headerCell("Cargo", "operational_position")}${headerCell("Categoria", "salary_category")}${headerCell("Dias", "worked_days", "num")}${headerCell("Devengado", "total_devengado", "num")}${headerCell("Deducciones", "total_deducciones", "num")}${headerCell("Neto", "neto_pagar", "num")}${headerCell("Estado", "ui_state")}<th>Acciones</th></tr></thead><tbody>${items.map((rawItem) => {
+    const item = decoratePayrollItem(rawItem);
+    const reviewed = Boolean(item.reviewed);
+    const locked = groupLocked || reviewed;
+    const isSelected = selectedItemIds.has(item.id);
+    const retirementNote = item.fecha_retiro_aplicada ? `<span class="nm-pay-cell-note nm-pay-cell-note--warn">Retiro ${escapeHtml(String(item.fecha_retiro_aplicada).slice(0, 10))}</span>` : "";
+    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col nm-pay-table__sticky-select">${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="nm-pay-table__sticky-employee"><div class="nm-pay-employee-cell"><strong>${escapeHtml(item.employee_name || "-")}</strong><span>${escapeHtml(item.institution_name || "-")} · ${escapeHtml(item.site_name || "-")}</span>${retirementNote}</div></td><td>${escapeHtml(item.document_number || "-")}</td><td>${escapeHtml(item.municipality_name || "-")}</td><td>${escapeHtml(item.operational_position || "-")}</td><td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${escapeHtml(String(item.display_worked_days ?? item.worked_days ?? 30))}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><strong>${fmtCOP(item.neto_pagar)}</strong></td><td>${renderPayrollStatusBadge(item, locked && !reviewed)}</td><td class="nm-pay-actions-cell">${renderPayrollRowActionsMenu(item, { groupLocked, canCfgSalary })}</td></tr>`;
+  }).join("")}</tbody></table></div>`;
 
   return `
 <div class="nm-pay-table-wrap">
@@ -2423,8 +2638,10 @@ async function createPeriod() {
     await loadPeriods();
     await reloadWorkArea();
     showSuccess("Periodo creado");
+    return true;
   } catch (err) {
     showError(err.message);
+    return false;
   }
 }
 
@@ -2924,15 +3141,22 @@ function openNoveltyModal(itemId) {
   const BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
   const MULTI_PERIOD_TYPES   = new Set(["INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","PERMISOS_NO_REMUNERADOS","SUSPENSION","LICENCIA_MATERNIDAD_PATERNIDAD","CALAMIDAD_FAMILIAR"]);
   const SELECTABLE           = NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA");
+  const item = getPayrollItemById(itemId);
+  const currentNovelties = getPayrollItemNovelties(itemId);
 
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
-<div class="nm-pay-dialog" style="max-width:600px;max-height:88vh;overflow-y:auto">
-  <div class="nm-pay-dialog-h" style="position:sticky;top:0;z-index:10;background:#fff">
-    <b>Registrar novedad(es)</b>
-    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+<div class="nm-pay-dialog nm-pay-dialog--drawer">
+  <div class="nm-pay-dialog-h nm-pay-dialog-h--drawer" style="position:sticky;top:0;z-index:10;background:#fff">
+    <div>
+      <b>Editar novedades</b>
+      <small>${escapeHtml(item?.employee_name || "-")} · ${escapeHtml(item?.document_number || "-")}</small>
+    </div>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cancelar</button>
   </div>
-  <div class="nm-pay-dialog-b">
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--drawer">
+    ${item ? `<div class="nm-pay-drawer-hero"><div><h3>${escapeHtml(item.employee_name || "-")}</h3><p>${escapeHtml(item.operational_position || "-")} · ${escapeHtml(item.municipality_name || "-")}</p></div>${renderPayrollStatusBadge(item, false)}</div>${renderPayrollItemFacts(item, currentNovelties)}` : ""}
+    ${currentNovelties.length ? `<div class="nm-pay-drawer-card"><div class="nm-pay-drawer-card__title">Novedades registradas</div><div class="nm-pay-drawer-list">${currentNovelties.slice(0, 6).map((novelty) => `<button type="button" class="nm-pay-drawer-list__item" data-edit-existing-novelty="${novelty.id}"><strong>${escapeHtml(noveltyByCode(novelty.novelty_type)?.name || novelty.novelty_type || "Novedad")}</strong><span>${escapeHtml(fmtDateRange(novelty.start_date || novelty.novelty_date, novelty.end_date || novelty.novelty_date))}</span></button>`).join("")}</div></div>` : ""}
     <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em">
       &#9745; Selecciona uno o varios tipos de novedad
     </div>
@@ -2957,6 +3181,7 @@ function openNoveltyModal(itemId) {
 </div>`;
   modal.hidden = false;
   wireModalClose();
+  document.querySelectorAll("[data-edit-existing-novelty]").forEach((btn) => btn.addEventListener("click", () => openEditNoveltyModal(Number(btn.dataset.editExistingNovelty))));
 
   // ── Render campos de fecha para un tipo ───────────────────────────────────
   function renderTypeFields(code) {
@@ -3140,6 +3365,67 @@ function openNoveltyModal(itemId) {
 }
 
 // ─── FUNCIÓN LEGACY INTERNA — ya no usada, se conserva por seguridad ─────────
+function openPayrollItemDetailDrawer(itemId) {
+  const item = getPayrollItemById(itemId);
+  if (!item) {
+    showError("No se pudo cargar el detalle del colaborador.");
+    return;
+  }
+  const novelties = getPayrollItemNovelties(itemId);
+  const supportsCount = getPayrollItemSupportsCount(itemId);
+  const groupLocked = activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group);
+  const reviewed = Boolean(item.reviewed);
+  const canUnlock = reviewed && isTH();
+  const modal = document.getElementById("nmPayModal");
+  modal.innerHTML = `
+<div class="nm-pay-dialog nm-pay-dialog--drawer">
+  <div class="nm-pay-dialog-h nm-pay-dialog-h--drawer">
+    <div>
+      <b>Detalle del colaborador</b>
+      <small>${escapeHtml(item.employee_name || "-")} · ${escapeHtml(item.document_number || "-")}</small>
+    </div>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--drawer">
+    <div class="nm-pay-drawer-hero">
+      <div>
+        <h3>${escapeHtml(item.employee_name || "-")}</h3>
+        <p>${escapeHtml(item.operational_position || "-")} · ${escapeHtml(item.municipality_name || "-")}</p>
+      </div>
+      ${renderPayrollStatusBadge(item, groupLocked && !reviewed)}
+    </div>
+    ${renderPayrollItemFacts(item, novelties)}
+    <div class="nm-pay-drawer-stack">
+      <div class="nm-pay-drawer-card">
+        <div class="nm-pay-drawer-card__title">Novedades</div>
+        ${novelties.length ? `<div class="nm-pay-drawer-list">${novelties.slice(0, 6).map((novelty) => `<button type="button" class="nm-pay-drawer-list__item" data-edit-existing-novelty="${novelty.id}"><strong>${escapeHtml(noveltyByCode(novelty.novelty_type)?.name || novelty.novelty_type || "Novedad")}</strong><span>${escapeHtml(fmtDateRange(novelty.start_date || novelty.novelty_date, novelty.end_date || novelty.novelty_date))}</span></button>`).join("")}</div>` : `<div class="nm-pay-empty">No hay novedades registradas.</div>`}
+      </div>
+      <div class="nm-pay-drawer-card">
+        <div class="nm-pay-drawer-card__title">Resumen operativo</div>
+        <div class="nm-pay-drawer-inline">
+          <span class="nm-pay-toolbar-chip">${novelties.length} novedad(es)</span>
+          <span class="nm-pay-toolbar-chip">${supportsCount} soporte(s)</span>
+          <span class="nm-pay-toolbar-chip">${fmtCOP(item.neto_pagar)}</span>
+        </div>
+      </div>
+    </div>
+    <div class="nm-pay-drawer-actions">
+      <button class="nm-pay-btn" data-payslip="${item.id}">Desprendible</button>
+      <button class="nm-pay-btn" id="nmDrawerReviewAction" ${(!reviewed && groupLocked) || (reviewed && !canUnlock) ? "disabled" : ""}>${reviewed ? "Desbloquear" : "Revisar"}</button>
+      <button class="nm-pay-btn nm-pay-btn--primary" id="nmDrawerEditNovelty" ${groupLocked || reviewed ? "disabled" : ""}>Editar novedades</button>
+    </div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.querySelectorAll("[data-edit-existing-novelty]").forEach((btn) => btn.addEventListener("click", () => openEditNoveltyModal(Number(btn.dataset.editExistingNovelty))));
+  modal.querySelector("[data-payslip]")?.addEventListener("click", () => openPayslipModal(item.id));
+  document.getElementById("nmDrawerEditNovelty")?.addEventListener("click", () => openNoveltyModal(item.id));
+  document.getElementById("nmDrawerReviewAction")?.addEventListener("click", () => {
+    toggleItemReviewed(item.id, !reviewed, { checked: reviewed });
+  });
+}
+
 function _legacyNoveltyModalOld(itemId) {
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
@@ -5120,10 +5406,16 @@ async function openPayslipModal(itemId) {
     modal.innerHTML = `
 <div class="nm-pay-dialog nm-pay-dialog--payslip">
   <div class="nm-pay-dialog-h">
-    <b>Desprendible de pago</b>
+    <div>
+      <b>Desprendible de pago</b>
+      <small>Ver, imprimir o preparar entrega del comprobante.</small>
+    </div>
     <div style="display:flex;gap:6px;align-items:center">
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipView" disabled>Ver</button>
       <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipPrint">Imprimir</button>
       <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipPdf">Descargar PDF</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipEmail">Enviar correo</button>
+      <button class="nm-pay-btn nm-pay-btn--sm" id="nmSlipWhatsapp">WhatsApp</button>
       <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
     </div>
   </div>
@@ -5136,6 +5428,8 @@ async function openPayslipModal(itemId) {
     wireModalClose();
     document.getElementById("nmSlipPrint")?.addEventListener("click", () => printPayslip(data));
     document.getElementById("nmSlipPdf")?.addEventListener("click",   () => downloadPayslipPdf(data));
+    document.getElementById("nmSlipEmail")?.addEventListener("click", () => showSuccess("La estructura visual para envio por correo ya esta lista. Falta conectar el servicio de entrega."));
+    document.getElementById("nmSlipWhatsapp")?.addEventListener("click", () => showSuccess("La estructura visual para WhatsApp ya esta lista. Falta integrar el canal de envio."));
   } catch (err) {
     showError(err.message || "Error cargando desprendible");
   }
@@ -6768,6 +7062,7 @@ function defaultPayrollViewState() {
     divisionKey: "OPERARIO",
     municipalityId: "ALL",
     areaKey: TEAM_AREA_ALL,
+    scopeSearch: "",
     showAdvancedFilters: false,
     page: 1,
     pageSize: 20,
@@ -7097,44 +7392,88 @@ async function exportSelectedPayslipPdf() {
 }
 
 function renderSecondaryScopeTabs() {
+  return "";
+}
+
+function refreshScopeSelectOptions() {
   ensurePayrollViewState();
+  const select = document.getElementById("nmScopeSelect");
+  if (!select) return;
   const tabs = payrollViewState.divisionKey === "OPERARIO" ? getOperarioMunicipalityTabs() : getTeamAreaTabs();
   const currentValue = payrollViewState.divisionKey === "OPERARIO" ? String(payrollViewState.municipalityId) : payrollViewState.areaKey;
-  return `
-<div class="nm-pay-scope-tabs nm-pay-scope-tabs--operational">
-  <div class="nm-pay-scope-tabs__list">
-    ${tabs.map((tab) => {
-      const key = payrollViewState.divisionKey === "OPERARIO" ? String(tab.id) : tab.area;
-      const label = payrollViewState.divisionKey === "OPERARIO" ? tab.label : tab.label;
-      return `<button class="nm-pay-scope-tab ${key === currentValue ? "active" : ""}" data-scope-tab="${escapeHtml(key)}"><span>${escapeHtml(label)}</span><b>${Number(tab.employees || 0)}</b></button>`;
-    }).join("")}
+  const search = String(payrollViewState.scopeSearch || "").trim().toLowerCase();
+  const filteredTabs = tabs.filter((tab) => {
+    const key = payrollViewState.divisionKey === "OPERARIO" ? String(tab.id) : tab.area;
+    if (key === currentValue) return true;
+    if (!search) return true;
+    return String(tab.label || "").toLowerCase().includes(search);
+  });
+  select.innerHTML = filteredTabs.map((tab) => {
+    const key = payrollViewState.divisionKey === "OPERARIO" ? String(tab.id) : tab.area;
+    return `<option value="${escapeHtml(key)}" ${key === currentValue ? "selected" : ""}>${escapeHtml(tab.label)} (${Number(tab.employees || 0)})</option>`;
+  }).join("");
+  select.value = currentValue;
+}
+
+function openCreatePeriodModal() {
+  if (!isTH()) return;
+  const modal = document.getElementById("nmPayModal");
+  if (!modal) return;
+  modal.innerHTML = `
+<div class="nm-pay-dialog nm-pay-dialog--compact">
+  <div class="nm-pay-dialog-h">
+    <b>Nuevo periodo</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--compact">
+    <label class="nm-pay-filter">
+      <span>Mes / ano</span>
+      <input class="nm-pay-input" type="month" id="nmCreatePeriodMonth" value="${escapeHtml(periodMonth)}">
+    </label>
+    <div class="nm-pay-filter nm-pay-filter--readonly">
+      <span>Contrato</span>
+      <strong title="${escapeHtml(currentContractName())}">${escapeHtml(currentContractName())}</strong>
+    </div>
+    <div class="nm-pay-dialog-actions">
+      <button class="nm-pay-btn" data-close-modal>Cancelar</button>
+      <button class="nm-pay-btn nm-pay-btn--primary" id="nmCreatePeriodConfirm">Crear</button>
+    </div>
   </div>
 </div>`;
+  modal.hidden = false;
+  wireModalClose();
+  document.getElementById("nmCreatePeriodMonth")?.addEventListener("change", (e) => {
+    periodMonth = e.target.value || periodMonth;
+  });
+  document.getElementById("nmCreatePeriodConfirm")?.addEventListener("click", async () => {
+    const monthInput = document.getElementById("nmCreatePeriodMonth");
+    if (monthInput?.value) periodMonth = monthInput.value;
+    const created = await createPeriod();
+    if (created) closeModal();
+  });
 }
 
 function renderPayrollFilterBar() {
   ensurePayrollViewState();
-  const catalog = activeGroupDetail?._catalog || { municipalities: [], cargos: [], areas: [] };
   const draft = payrollViewState.draftFilters;
-  const advancedVisible = Boolean(payrollViewState.showAdvancedFilters);
+  const scopeLabel = payrollViewState.divisionKey === "OPERARIO"
+    ? (getOperarioMunicipalityTabs().find((tab) => String(tab.id) === String(payrollViewState.municipalityId || "ALL"))?.label || "Todos")
+    : (getTeamAreaTabs().find((tab) => tab.area === payrollViewState.areaKey)?.label || "Todos");
+  const currentScopeValue = payrollViewState.divisionKey === "OPERARIO"
+    ? String(payrollViewState.municipalityId || "ALL")
+    : payrollViewState.areaKey;
   return `
 <div class="nm-pay-filterbar nm-pay-filterbar--operational">
   <div class="nm-pay-filterbar__grid nm-pay-filterbar__grid--main">
-    <label class="nm-pay-filter"><span>Periodo</span><input class="nm-pay-input" value="${escapeHtml(draft.period || activePeriod?.label || "")}" disabled></label>
-    <label class="nm-pay-filter"><span>Contrato</span><input class="nm-pay-input" value="${escapeHtml(draft.contract)}" disabled></label>
-    <label class="nm-pay-filter"><span>Municipio</span><select class="nm-pay-select" id="nmFilterMunicipality"><option value="">Todos</option>${catalog.municipalities.map((municipality) => `<option value="${escapeHtml(municipality)}" ${draft.municipality === municipality ? "selected" : ""}>${escapeHtml(municipality)}</option>`).join("")}</select></label>
-    <label class="nm-pay-filter"><span>Estado</span><select class="nm-pay-select" id="nmFilterStatus"><option value="">Todos</option>${["PENDIENTE", "REVISADO", "RETIRADO EN PERIODO"].map((status) => `<option value="${status}" ${draft.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
-    <label class="nm-pay-filter nm-pay-filter--search"><span>Buscar colaborador</span><input class="nm-pay-input" id="nmFilterName" value="${escapeHtml(draft.name)}" placeholder="Nombre del colaborador"></label>
-  </div>
-  <div class="nm-pay-filterbar__actions nm-pay-filterbar__actions--operational">
-    <button class="nm-pay-btn ${advancedVisible ? "nm-fbar-active" : ""}" id="nmToggleAdvancedFilters">Filtros avanzados</button>
-    <button class="nm-pay-btn nm-pay-btn--primary" id="nmFilterApply">Aplicar</button>
-    <button class="nm-pay-btn" id="nmFilterClear">Limpiar</button>
-  </div>
-  <div class="nm-pay-filterbar__grid nm-pay-filterbar__grid--advanced ${advancedVisible ? "" : "is-hidden"}">
-    <label class="nm-pay-filter"><span>Cargo</span><select class="nm-pay-select" id="nmFilterCargo"><option value="">Todos</option>${catalog.cargos.map((cargo) => `<option value="${escapeHtml(cargo)}" ${draft.cargo === cargo ? "selected" : ""}>${escapeHtml(cargo)}</option>`).join("")}</select></label>
-    <label class="nm-pay-filter"><span>Area</span><select class="nm-pay-select" id="nmFilterArea"><option value="">Todas</option>${catalog.areas.map((area) => `<option value="${escapeHtml(area)}" ${draft.area === area ? "selected" : ""}>${escapeHtml(area)}</option>`).join("")}</select></label>
-    <label class="nm-pay-filter"><span>Documento</span><input class="nm-pay-input" id="nmFilterDocument" value="${escapeHtml(draft.document)}" placeholder="Buscar documento"></label>
+    <div class="nm-pay-toolbar-title">
+      <strong>Nomina operativa</strong>
+      <span class="nm-pay-toolbar-title__meta">${activePeriod ? `· ${escapeHtml(activePeriod.label || "")}` : ""}</span>
+    </div>
+    <label class="nm-pay-filter"><span>Periodo</span><select class="nm-pay-select" id="nmPayPeriod">${periodOptions() || `<option value="">Sin periodos</option>`}</select></label>
+    <label class="nm-pay-filter"><span>${payrollViewState.divisionKey === "OPERARIO" ? "Municipio" : "Area"}</span><select class="nm-pay-select" id="nmScopeSelect"><option value="${escapeHtml(currentScopeValue)}">${escapeHtml(scopeLabel)}</option></select></label>
+    <label class="nm-pay-filter nm-pay-filter--search"><span>Colaborador</span><input class="nm-pay-input" id="nmFilterName" value="${escapeHtml(draft.name)}" placeholder="Nombre del colaborador"></label>
+    <label class="nm-pay-filter"><span>Documento</span><input class="nm-pay-input" id="nmFilterDocument" value="${escapeHtml(draft.document)}" placeholder="Numero de documento"></label>
+    ${isTH() ? '<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact nm-pay-btn--header" data-open-create-period="+">+ Crear periodo</button>' : ""}
   </div>
 </div>`;
 }
@@ -7224,45 +7563,78 @@ renderCargoTabsBar = function renderDivisionTabsIntegral() {
   return `<div class="nm-pay-cargo-tabs nm-pay-cargo-tabs--operational">${cards.map((card) => `<button class="nm-pay-tab nm-pay-tab--operational ${payrollViewState.divisionKey === card.key ? "active" : ""}" data-division-key="${card.key}"><span class="nm-pay-tab-title">${escapeHtml(card.label)}</span><span class="nm-pay-count">${card.employees}</span></button>`).join("")}</div>`;
 };
 
+function getOperationalActionState() {
+  const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
+  const group = activeGroupDetail?.group || {};
+  const canManageGroup = Boolean(activeScopeGroupIds.length === 1 && activeGroupId);
+  const editable = canManageGroup ? Boolean(isGroupEditable(group)) : false;
+  const isClosed = canManageGroup && isGroupClosed(group);
+  const canReopen = canManageGroup ? Boolean(isClosed && isTH()) : false;
+  const canClose = canManageGroup ? Boolean(editable && filteredItems.length > 0) : false;
+  const canOpenSlip = selectedPayrollItemsFromFiltered().length === 1;
+  return { canManageGroup, editable, isClosed, canReopen, canClose, canOpenSlip };
+}
+
+function renderOperationalActionsBar() {
+  const actionState = getOperationalActionState();
+  return `
+<div class="nm-pay-toolbar-actions">
+  <div class="nm-pay-toolbar-actions__main">
+    <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact" id="nmFilterApply">Buscar</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayExport">Exportar</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayOpenSlip" ${actionState.canOpenSlip ? "" : "disabled"}>Desprendibles</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayFullscreen" aria-pressed="${payrollUiState.fullscreen ? "true" : "false"}">${payrollUiState.fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button>
+    <details class="nm-pay-toolbar-more">
+      <summary class="nm-pay-btn nm-pay-btn--compact" aria-label="Mas acciones">...</summary>
+      <div class="nm-pay-toolbar-more__body">
+        <button type="button" class="nm-pay-row-menu__item" id="nmToggleAdvancedFilters">${payrollViewState.showAdvancedFilters ? "Ocultar filtros" : "Mas filtros"}</button>
+        ${isTH() ? '<button type="button" class="nm-pay-row-menu__item" data-open-create-period="+">+ Nuevo periodo</button>' : ""}
+        ${actionState.editable ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayCalculate">Recalcular</button>' : ""}
+        ${actionState.canManageGroup ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayHistory">Historial</button>' : ""}
+        ${actionState.canClose ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayClose">Cerrar nomina</button>' : ""}
+        ${actionState.canReopen ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayReopen">Reabrir nomina</button>' : ""}
+        <button type="button" class="nm-pay-row-menu__item" id="nmFilterClear">Limpiar filtros</button>
+      </div>
+    </details>
+  </div>
+  <div class="nm-pay-toolbar-actions__side">${selectedItemIds.size ? `<span class="nm-pay-toolbar-chip">${selectedItemIds.size} seleccionados</span>` : ""}</div>
+</div>`;
+}
+
 render = function renderOperationalNomina() {
   const root = document.getElementById("nmPayRoot");
   if (!root) return;
   root.innerHTML = `
 <div class="nm-pay-card-main nm-pay-card-main--operational">
   <div class="nm-pay-operational-head">
-    <div class="nm-pay-operational-head__row">
-      ${renderCargoTabsBar()}
-      <div class="nm-pay-operational-period">
-        <span class="nm-pay-operational-period__label">Periodo</span>
-        <select class="nm-pay-select nm-pay-input--sm" id="nmPayPeriod">
-          ${periodOptions() || `<option value="">Sin periodos</option>`}
-        </select>
-        ${isTH() ? `<input class="nm-pay-input nm-pay-input--sm" type="month" id="nmPayMonth" value="${escapeHtml(periodMonth)}">` : `<input type="hidden" id="nmPayMonth" value="${escapeHtml(periodMonth)}">`}
-        ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--sm" id="nmPayCreate">Crear periodo</button>` : ""}
-      </div>
-    </div>
+    ${renderPayrollFilterBar()}
   </div>
   ${renderNominaPanel()}
 </div>`;
+  syncPayrollFullscreen();
   wireStaticEvents();
 };
 
 renderNominaPanel = function renderNominaPanelIntegral() {
   ensurePayrollViewState();
   const totals = municipalityTotals();
-  const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
-  const supporting = activeGroupDetail ? getFilteredSupportingData(filteredItems) : { novelties: [], supports: [] };
+  const summaryItems = [
+    { label: "Empleados", value: totals.employees, tone: "employees" },
+    { label: "Pendientes", value: totals.items_pending, tone: "pending" },
+    { label: "Devengado", value: fmtCOP(totals.total_devengado), tone: "earned" },
+    { label: "Deducciones", value: fmtCOP(totals.total_deducciones), tone: "deductions" },
+    { label: "Neto", value: fmtCOP(totals.neto), tone: "net" },
+    { label: "Sin soporte", value: totals.pending_supports, tone: "support" },
+  ];
   return `
-${renderSecondaryScopeTabs()}
-<div class="nm-pay-kpis nm-pay-kpis--operational">
-  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total empleados</span><b class="nm-pay-kpi-card__value">${totals.employees}</b></article>
-  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total devengado</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.total_devengado)}</b></article>
-  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total deducciones</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.total_deducciones)}</b></article>
-  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Total neto a pagar</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.neto)}</b></article>
-  <article class="nm-pay-kpi-card"><span class="nm-pay-kpi-card__eyebrow">Promedio salarial</span><b class="nm-pay-kpi-card__value">${fmtCOP(totals.average_salary)}</b></article>
+${renderCargoTabsBar()}
+<div class="nm-pay-kpis-row">
+  ${summaryItems.map((metric) => `
+  <article class="nm-pay-kpi-card nm-pay-kpi-card--${metric.tone}">
+    <span class="nm-pay-kpi-card__label"><i></i>${escapeHtml(metric.label)}</span>
+    <b class="nm-pay-kpi-card__value">${escapeHtml(String(metric.value))}</b>
+  </article>`).join("")}
 </div>
-${renderOperationalAlerts(filteredItems, supporting)}
-${renderPayrollFilterBar()}
 ${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nomina.</div></div>`}`;
 };
 
@@ -7278,16 +7650,19 @@ renderGroupDetail = function renderGroupDetailIntegral() {
   const pageData = getPagedPayrollItems(filteredItems);
   const group = activeGroupDetail.group || {};
   const canManageGroup = activeScopeGroupIds.length === 1 && activeGroupId;
-  const editable = canManageGroup && isGroupEditable(group);
   const isClosed = canManageGroup && isGroupClosed(group);
   const canReopen = canManageGroup && isClosed && isTH();
-  const canClose = canManageGroup && editable && filteredItems.length > 0;
   return `
-${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:8px 12px 0"><div class="nm-banner__body"><div class="nm-banner__title">Vista agrupada</div><div class="nm-banner__detail">Para calcular o cerrar seleccione un municipio especifico o un area con un unico grupo.</div></div></div>` : ""}
 <div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
-  <div class="nm-pay-inline-meta">
-    ${canManageGroup ? statusBadge(group.status) : '<span class="nm-pay-badge">Vista agrupada</span>'}
-    <span>${canManageGroup ? escapeHtml(activeScopeMeta?.subtitle || "") : "Seleccione un segmento puntual para habilitar calculo y cierre."}</span>
+  <div class="nm-pay-section-strip">
+    <div class="nm-pay-section-strip__main">
+      <div class="nm-pay-section-strip__title">Personal</div>
+      ${!canManageGroup ? `<div class="nm-pay-inline-warning">&#9888; Vista agrupada: seleccione un municipio para calcular o cerrar.</div>` : ""}
+    </div>
+    <div class="nm-pay-inline-meta">
+      ${canManageGroup ? statusBadge(group.status) : '<span class="nm-pay-badge">Vista agrupada</span>'}
+      ${canReopen ? '<span class="nm-pay-toolbar-chip">Reapertura disponible</span>' : ""}
+    </div>
   </div>
   <div class="nm-detail-tabs nm-detail-tabs--operational">
     <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
@@ -7296,7 +7671,7 @@ ${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:8p
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
   </div>
   ${activeDetailTab === "nomina"
-    ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}<div class="nm-pay-footer-actions"><button class="nm-pay-btn nm-pay-btn--primary" id="nmPayExportBottom">Exportar Excel</button><button class="nm-pay-btn" id="nmPayExportPdf" ${selectedItemIds.size === 1 ? "" : "disabled"}>Exportar PDF</button>${editable ? `<button class="nm-pay-btn" id="nmPayCalculate">Calcular nomina</button>` : ""}${canManageGroup ? `<button class="nm-pay-btn" id="nmPayHistory">Historial</button>` : ""}${canClose ? `<button class="nm-pay-btn nm-pay-btn--warning" id="nmPayClose">Cerrar y enviar nomina</button>` : ""}${canReopen ? `<button class="nm-pay-btn" id="nmPayReopen">Reabrir nomina</button>` : ""}</div>`
+    ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}`
     : activeDetailTab === "novedades"
       ? renderNoveltiesWithFilter(supporting.novelties)
       : activeDetailTab === "soportes"
@@ -7329,23 +7704,439 @@ ${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:14
 </div>`;
 };
 
+function renderPayrollRowActionsMenu(item, { groupLocked = false, canCfgSalary = false } = {}) {
+  const reviewed = Boolean(item.reviewed);
+  const editable = !groupLocked && !reviewed;
+  const canUnlock = reviewed && isTH();
+  return `
+<details class="nm-pay-row-menu">
+  <summary class="nm-pay-row-menu__trigger" aria-label="Abrir acciones del colaborador">Acciones</summary>
+  <div class="nm-pay-row-menu__body">
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="detail" data-row-item="${item.id}">Ver detalle</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="novelty" data-row-item="${item.id}" ${editable ? "" : "disabled"}>Editar novedades</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="payslip" data-row-item="${item.id}">Desprendible</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="${reviewed ? "unreview" : "review"}" data-row-item="${item.id}" ${(reviewed && !canUnlock) || (!reviewed && groupLocked) ? "disabled" : ""}>${reviewed ? "Desbloquear" : "Revisar"}</button>
+    ${canCfgSalary ? `<button type="button" class="nm-pay-row-menu__item" data-row-action="salary" data-row-item="${item.id}" data-salary-name="${escapeHtml(item.employee_name || "")}" data-salary-doc="${escapeHtml(item.document_number || "")}">Mas acciones</button>` : ""}
+  </div>
+</details>`;
+}
+
+function buildTurnPersonGroups(turns = []) {
+  const filters = payrollViewState?.appliedFilters || {};
+  const nameQuery = normalized(filters.name || "");
+  const docQuery = normalized(filters.document || "");
+  const groups = new Map();
+
+  for (const turn of Array.isArray(turns) ? turns : []) {
+    const workerId = firstDefinedValue(turn.external_worker_id, turn.internal_cover_employee_id, turn.internal_employee_id);
+    const name = firstDefinedValue(turn.external_worker_name, turn.internal_cover_name, turn.cover_employee_name, turn.employee_name, turn.origin_employee_name, "-");
+    const document = firstDefinedValue(turn.external_document, turn.external_worker_doc, turn.internal_cover_doc, turn.document_number, turn.origin_document);
+    const municipality = firstDefinedValue(turn.municipality_name, "-");
+    const days = Number(firstDefinedValue(turn.covered_days, turn.days, 1)) || 0;
+    const modality = firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-");
+    const key = String(workerId || `${document || name}|${municipality}`);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        workerId: turn.external_worker_id || null,
+        coverId: Number(turn.turn_cover_id || turn.id || 0) || null,
+        name,
+        document,
+        municipality,
+        municipalities: new Set(municipality && municipality !== "-" ? [municipality] : []),
+        modalities: new Set(),
+        turns: [],
+        totalDays: 0,
+        bank: firstDefinedValue(turn.external_bank, turn.bank),
+        accountType: firstDefinedValue(turn.external_account_type, turn.account_type, "AHORROS"),
+        accountNumber: firstDefinedValue(turn.external_account_number, turn.account_number),
+      });
+    }
+
+    const group = groups.get(key);
+    group.turns.push(turn);
+    group.totalDays += days;
+    if (municipality && municipality !== "-") group.municipalities.add(municipality);
+    if (modality && modality !== "-") group.modalities.add(modality);
+    if (!group.coverId) group.coverId = Number(turn.turn_cover_id || turn.id || 0) || null;
+    if (!group.workerId && turn.external_worker_id) group.workerId = turn.external_worker_id;
+    if (!group.bank) group.bank = firstDefinedValue(turn.external_bank, turn.bank);
+    if (!group.accountType) group.accountType = firstDefinedValue(turn.external_account_type, turn.account_type, "AHORROS");
+    if (!group.accountNumber) group.accountNumber = firstDefinedValue(turn.external_account_number, turn.account_number);
+  }
+
+  let list = Array.from(groups.values()).map((group) => ({
+    ...group,
+    municipality: group.municipalities.size > 1 ? "Varios" : (Array.from(group.municipalities)[0] || group.municipality || "-"),
+    modalitiesLabel: Array.from(group.modalities).filter(Boolean).join(", ") || "-",
+  }));
+
+  if (nameQuery) list = list.filter((group) => normalized(group.name).includes(nameQuery));
+  if (docQuery) list = list.filter((group) => normalized(group.document).includes(docQuery));
+
+  return list.sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "es"));
+}
+
+function getTurnPersonGroupByKey(groupKey) {
+  return turnPersonGroupsCache.find((group) => String(group.key) === String(groupKey)) || null;
+}
+
+const TURN_REQUIRED_DOCS = Object.freeze([
+  {
+    key: "cuenta_cobro",
+    label: "Cuenta de cobro",
+    turnFields: ["cuenta_cobro_url", "cuentaCobroUrl"],
+    supportTypes: ["cuenta_cobro", "cuenta de cobro", "cuenta_cobro_firmada"],
+  },
+  {
+    key: "cert_bancaria",
+    label: "Certificación bancaria",
+    turnFields: ["cert_bancaria_url", "certBancariaUrl"],
+    supportTypes: ["certificacion_bancaria", "cert_bancaria", "certificado bancario"],
+  },
+  {
+    key: "rut",
+    label: "RUT",
+    turnFields: ["rut_url", "rutUrl"],
+    supportTypes: ["rut", "registro_unico_tributario", "registro tributario"],
+  },
+  {
+    key: "soporte_turno",
+    label: "Soporte del turno",
+    turnFields: ["support_url", "supportUrl", "turn_support_url", "turnSupportUrl"],
+    supportTypes: ["soporte_turno", "support_turno", "turn_support", "turno_support"],
+  },
+]);
+
+function turnDocValue(value) {
+  return Boolean(String(value || "").trim());
+}
+
+function supportTypeMatches(supportType, aliases = []) {
+  const normalizedType = normalized(supportType || "");
+  if (!normalizedType) return false;
+  return aliases.some((alias) => {
+    const normalizedAlias = normalized(alias || "");
+    return normalizedType === normalizedAlias
+      || normalizedType.includes(normalizedAlias)
+      || normalizedAlias.includes(normalizedType);
+  });
+}
+
+function getTurnDocumentCompliance(group) {
+  const turns = Array.isArray(group?.turns) ? group.turns : [];
+  const noveltyIds = new Set(turns.map((turn) => String(turn?.novelty_id || "")).filter(Boolean));
+  const supports = Array.isArray(activeGroupDetail?.supports)
+    ? activeGroupDetail.supports.filter((support) => !support?.novelty_id || noveltyIds.has(String(support.novelty_id)))
+    : [];
+
+  const docStates = TURN_REQUIRED_DOCS.map((doc) => {
+    const hasTurnDoc = turns.some((turn) => doc.turnFields.some((field) => turnDocValue(turn?.[field])));
+    const hasSupportDoc = supports.some((support) => turnDocValue(support?.file_url) && supportTypeMatches(support?.support_type, doc.supportTypes));
+    return { ...doc, present: hasTurnDoc || hasSupportDoc };
+  });
+
+  const uploadedCount = docStates.filter((doc) => doc.present).length;
+  const requiredCount = docStates.length || 1;
+  const percentage = Math.max(0, Math.min(100, Math.round((uploadedCount / requiredCount) * 100)));
+  const missingLabels = docStates.filter((doc) => !doc.present).map((doc) => doc.label);
+  const title = missingLabels.length ? `Faltan: ${missingLabels.join(", ")}` : "Cumplimiento documental completo";
+  const tone = percentage === 100 ? "ok" : percentage >= 50 ? "warn" : "bad";
+  return { uploadedCount, requiredCount, percentage, missingLabels, title, tone };
+}
+
+function turnActionIcon(action) {
+  const icons = {
+    detail: `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M2.06 12C3.41 7.73 7.42 5 12 5s8.59 2.73 9.94 7c-1.35 4.27-5.36 7-9.94 7s-8.59-2.73-9.94-7Z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>`,
+    docs: `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3v10"></path>
+        <path d="m8.5 9.5 3.5 3.5 3.5-3.5"></path>
+        <path d="M4 20h16"></path>
+      </svg>`,
+    bank: `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M3 10h18"></path>
+        <path d="M5 10V7l7-4 7 4v3"></path>
+        <path d="M6 10v8"></path>
+        <path d="M10 10v8"></path>
+        <path d="M14 10v8"></path>
+        <path d="M18 10v8"></path>
+        <path d="M4 18h16"></path>
+      </svg>`,
+    charge: `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"></path>
+        <path d="M14 2v5h5"></path>
+        <path d="m12 11v6"></path>
+        <path d="m9.5 13.5 2.5 2.5 2.5-2.5"></path>
+      </svg>`,
+  };
+  return icons[action] || icons.detail;
+}
+
+function renderTurnActionButton(group, action, label, disabled = false) {
+  const disabledAttr = disabled ? 'disabled title="No disponible"' : `title="${escapeHtml(label)}"`;
+  return `
+<button type="button" class="nm-turn-action-btn" data-turn-action="${action}" data-turn-group="${escapeHtml(group.key)}" aria-label="${escapeHtml(label)}" ${disabledAttr}>
+  ${turnActionIcon(action)}
+</button>`;
+}
+
+function renderTurnPersonActionsMenu(group) {
+  const canUploadDocs = Boolean(group.workerId);
+  const canEditBank = Boolean(group.coverId && canEditBankInfo());
+  const canCharge = Boolean(group.coverId);
+  return `
+<div class="nm-turn-actions">
+  ${renderTurnActionButton(group, "detail", "Ver detalle de turnos")}
+  ${renderTurnActionButton(group, "docs", "Subir documentos", !canUploadDocs)}
+  ${renderTurnActionButton(group, "bank", "Escribir datos bancarios", !canEditBank)}
+  ${renderTurnActionButton(group, "charge", "Cuenta de cobro", !canCharge)}
+</div>`;
+}
+
+function openTurnPersonDetailDrawer(groupKey) {
+  const group = getTurnPersonGroupByKey(groupKey);
+  if (!group) {
+    showError("No se encontro el detalle de turnos para este colaborador.");
+    return;
+  }
+  const modal = document.getElementById("nmPayModal");
+  if (!modal) return;
+
+  const detailRows = group.turns.map((turn) => {
+    const modality = firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-");
+    const observations = firstDefinedValue(turn.observations, turn.description, turn.notes, "-");
+    const replacement = firstDefinedValue(turn.origin_employee_name, turn.replacement_employee_name, "-");
+    const supportLinks = [
+      turn.cedula_url ? `<a href="${escapeHtml(turn.cedula_url)}" target="_blank" rel="noreferrer">Cedula</a>` : "",
+      turn.cert_bancaria_url ? `<a href="${escapeHtml(turn.cert_bancaria_url)}" target="_blank" rel="noreferrer">Cert. bancaria</a>` : "",
+      turn.cuenta_cobro_url ? `<a href="${escapeHtml(turn.cuenta_cobro_url)}" target="_blank" rel="noreferrer">Cuenta de cobro</a>` : "",
+    ].filter(Boolean).join(" · ");
+    return `
+<article class="nm-turn-detail-card">
+  <div class="nm-turn-detail-card__top">
+    <strong>${escapeHtml(fmtDateRange(turn.novelty_start, turn.novelty_end) || fmtDateDMY(turn.shift_date) || "-")}</strong>
+    <span class="nm-turn-detail-card__state">${escapeHtml(firstDefinedValue(turn.status, turn.cover_type, "Registrado"))}</span>
+  </div>
+  <div class="nm-turn-detail-grid">
+    <div><span>Municipio</span><strong>${escapeHtml(firstDefinedValue(turn.municipality_name, "-"))}</strong></div>
+    <div><span>Institucion</span><strong>${escapeHtml(firstDefinedValue(turn.institution_name, "-"))}</strong></div>
+    <div><span>Sede</span><strong>${escapeHtml(firstDefinedValue(turn.site_name, "-"))}</strong></div>
+    <div><span>Modalidad</span><strong>${escapeHtml(modality)}</strong></div>
+    <div><span>Persona reemplazada</span><strong>${escapeHtml(replacement)}</strong></div>
+    <div><span>Valor del turno</span><strong>${fmtCOP(firstDefinedValue(turn.total_value, turn.calculated_day_value, 0))}</strong></div>
+    <div class="nm-turn-detail-grid__wide"><span>Observaciones</span><strong>${escapeHtml(observations)}</strong></div>
+    <div class="nm-turn-detail-grid__wide"><span>Soporte asociado</span><strong>${supportLinks || "Sin soporte asociado"}</strong></div>
+  </div>
+</article>`;
+  }).join("");
+
+  modal.innerHTML = `
+<div class="nm-pay-dialog nm-pay-dialog--drawer">
+  <div class="nm-pay-dialog-h nm-pay-dialog-h--drawer">
+    <b>Detalle de turnos</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--drawer">
+    <div class="nm-pay-drawer-hero">
+      <div>
+        <h3>${escapeHtml(group.name || "-")}</h3>
+        <p>${escapeHtml(group.document || "Sin documento")} · ${escapeHtml(group.municipality || "-")}</p>
+      </div>
+      <span class="nm-pay-toolbar-chip">${group.totalDays} dia(s)</span>
+    </div>
+    <div class="nm-turn-detail-summary">
+      <span>Modalidades: <b>${escapeHtml(group.modalitiesLabel)}</b></span>
+      <span>Turnos: <b>${group.turns.length}</b></span>
+    </div>
+    <div class="nm-turn-detail-stack">${detailRows}</div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+}
+
+renderTurnosSection = function renderTurnosSectionOperational(turns) {
+  const groups = buildTurnPersonGroups(turns);
+  turnPersonGroupsCache = groups;
+  if (!groups.length) {
+    return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty">No hay turnos registrados para este período y filtros seleccionados.</div></div>`;
+  }
+  return `
+<div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
+  <div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard nm-turn-summary-wrap">
+    <table class="nm-pay-table nm-pay-table--operational">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Cedula</th>
+          <th>Municipio</th>
+          <th class="num">Dias turnos</th>
+          <th>Modalidades</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map((group) => `
+        <tr>
+          <td><div class="nm-pay-employee-cell"><strong>${escapeHtml(group.name || "-")}</strong></div></td>
+          <td>${escapeHtml(group.document || "-")}</td>
+          <td>${escapeHtml(group.municipality || "-")}</td>
+          <td class="num">${group.totalDays}</td>
+          <td title="${escapeHtml(group.modalitiesLabel)}">${escapeHtml(group.modalitiesLabel)}</td>
+          <td class="nm-pay-actions-cell">${renderTurnPersonActionsMenu(group)}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>
+</div>`;
+};
+
 renderItemsTable = function renderItemsTableIntegral(items) {
   const groupLocked = activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group);
   const consolidated = isConsolidatedView();
   const canCfgSalary = consolidated && isCurrentUserAdmin();
+  const hideMunicipalityColumn = payrollViewState.divisionKey === "OPERARIO" && String(payrollViewState.municipalityId || "ALL") !== "ALL";
   const allIds = items.map((item) => item.id);
   const allCount = allIds.length;
   const allSelected = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
   const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
   const sortArrow = (key) => payrollViewState.sortBy === key ? (payrollViewState.sortDir === "asc" ? " ↑" : " ↓") : "";
   const th = (label, key, cls = "") => `<th class="${cls}" data-sort-col="${key}" style="cursor:pointer">${label}${sortArrow(key)}</th>`;
-  return `<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard"><table class="nm-pay-table"><thead><tr>${!groupLocked && allCount > 0 ? `<th class="nm-sel-col"><input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}></th>` : `<th class="nm-sel-col"></th>`}${th("#", "row_number")}${th("Empleado", "employee_name")}${th("Documento", "document_number")}${th("Municipio", "municipality_name")}${th("Cargo", "operational_position")}${th("Área", "ui_area")}${th("Categoría salarial", "salary_category")}${th("Salario básico", "base_salary", "num")}${th("Días laborados", "worked_days", "num")}${th("Devengado", "total_devengado", "num")}${th("Deducciones", "total_deducciones", "num")}${th("Neto", "neto_pagar", "num")}${th("Estado", "ui_state")}<th>Acciones</th></tr></thead><tbody>${items.map((rawItem, index) => {
+  return `<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard"><table class="nm-pay-table nm-pay-table--operational"><thead><tr>${!groupLocked && allCount > 0 ? `<th class="nm-sel-col nm-pay-table__sticky-select"><input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}></th>` : `<th class="nm-sel-col nm-pay-table__sticky-select"></th>`}${th("Empleado", "employee_name", "nm-pay-table__sticky-employee")}${th("Documento", "document_number")}${hideMunicipalityColumn ? "" : th("Municipio", "municipality_name")}${th("Categoría salarial", "salary_category")}${th("Días", "worked_days", "num")}${th("Devengado", "total_devengado", "num")}${th("Deducciones", "total_deducciones", "num")}${th("Neto", "neto_pagar", "num")}${th("Estado", "ui_state")}<th>Acciones</th></tr></thead><tbody>${items.map((rawItem) => {
     const item = decoratePayrollItem(rawItem);
     const reviewed = Boolean(item.reviewed);
     const locked = groupLocked || reviewed;
     const isSelected = selectedItemIds.has(item.id);
-    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col">${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="num">${(payrollViewState.page - 1) * payrollViewState.pageSize + index + 1}</td><td><b>${escapeHtml(item.employee_name)}</b><br><small style="color:#64748B">${escapeHtml(item.institution_name || "-")} · ${escapeHtml(item.site_name || "-")}</small></td><td>${escapeHtml(item.document_number || "-")}</td><td>${escapeHtml(item.municipality_name || "-")}</td><td>${escapeHtml(item.operational_position || "-")}</td><td>${escapeHtml(item.ui_area || "-")}</td><td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${fmtCOP(item.base_salary)}</td><td class="num">${item.display_worked_days ?? item.worked_days ?? 30}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><b>${fmtCOP(item.neto_pagar)}</b></td><td>${statusBadge(item.ui_state)}</td><td>${locked ? `<button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>${canCfgSalary ? ` <button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}` : `<button class="nm-pay-btn nm-pay-btn--sm" data-new-novelty="${item.id}">+ Novedad</button> <button class="nm-pay-btn nm-pay-btn--sm" data-payslip="${item.id}">Desprendible</button>${canCfgSalary ? ` <button class="nm-pay-btn nm-pay-btn--sm" style="background:#7C3AED;color:#fff" data-salary-cfg="${item.employee_id}" data-salary-name="${escapeHtml(item.employee_name)}" data-salary-doc="${escapeHtml(item.document_number || "")}">Salario</button>` : ""}`}</td></tr>`;
+    const tooltip = [
+      item.operational_position || "",
+      item.ui_area || "",
+      item.institution_name || "",
+      item.site_name || "",
+    ].filter(Boolean).join(" · ");
+    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col nm-pay-table__sticky-select">${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="nm-pay-table__sticky-employee"><div class="nm-pay-employee-cell" title="${escapeHtml(tooltip || item.employee_name || "-")}"><strong>${escapeHtml(item.employee_name || "-")}</strong></div></td><td>${escapeHtml(item.document_number || "-")}</td>${hideMunicipalityColumn ? "" : `<td>${escapeHtml(item.municipality_name || "-")}</td>`}<td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${escapeHtml(String(item.display_worked_days ?? item.worked_days ?? 30))}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><strong>${fmtCOP(item.neto_pagar)}</strong></td><td>${renderPayrollStatusBadge(item, locked && !reviewed)}</td><td class="nm-pay-actions-cell">${renderPayrollRowActionsMenu(item, { groupLocked, canCfgSalary })}</td></tr>`;
   }).join("")}</tbody></table></div>`;
+};
+
+openTurnPersonDetailDrawer = function openTurnPersonDetailDrawerOperational(groupKey) {
+  const group = getTurnPersonGroupByKey(groupKey);
+  if (!group) {
+    showError("No se encontro el detalle de turnos para este colaborador.");
+    return;
+  }
+  const modal = document.getElementById("nmPayModal");
+  if (!modal) return;
+  const compliance = getTurnDocumentCompliance(group);
+
+  const detailRows = group.turns.map((turn) => {
+    const modality = firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-");
+    const observations = firstDefinedValue(turn.observations, turn.description, turn.notes, "-");
+    const replacement = firstDefinedValue(turn.origin_employee_name, turn.replacement_employee_name, "-");
+    const supportLinks = [
+      turn.cedula_url ? `<a href="${escapeHtml(turn.cedula_url)}" target="_blank" rel="noreferrer">Cedula</a>` : "",
+      turn.cert_bancaria_url ? `<a href="${escapeHtml(turn.cert_bancaria_url)}" target="_blank" rel="noreferrer">Cert. bancaria</a>` : "",
+      turn.cuenta_cobro_url ? `<a href="${escapeHtml(turn.cuenta_cobro_url)}" target="_blank" rel="noreferrer">Cuenta de cobro</a>` : "",
+      turn.support_url ? `<a href="${escapeHtml(turn.support_url)}" target="_blank" rel="noreferrer">Soporte del turno</a>` : "",
+    ].filter(Boolean).join(" · ");
+    return `
+<article class="nm-turn-detail-card">
+  <div class="nm-turn-detail-card__top">
+    <strong>${escapeHtml(fmtDateRange(turn.novelty_start, turn.novelty_end) || fmtDateDMY(turn.shift_date) || "-")}</strong>
+    <span class="nm-turn-detail-card__state">${escapeHtml(firstDefinedValue(turn.status, turn.cover_type, "Registrado"))}</span>
+  </div>
+  <div class="nm-turn-detail-grid">
+    <div><span>Municipio</span><strong>${escapeHtml(firstDefinedValue(turn.municipality_name, "-"))}</strong></div>
+    <div><span>Institucion</span><strong>${escapeHtml(firstDefinedValue(turn.institution_name, "-"))}</strong></div>
+    <div><span>Sede</span><strong>${escapeHtml(firstDefinedValue(turn.site_name, "-"))}</strong></div>
+    <div><span>Modalidad</span><strong>${escapeHtml(modality)}</strong></div>
+    <div><span>Persona reemplazada</span><strong>${escapeHtml(replacement)}</strong></div>
+    <div><span>Valor del turno</span><strong>${fmtCOP(firstDefinedValue(turn.total_value, turn.calculated_day_value, 0))}</strong></div>
+    <div class="nm-turn-detail-grid__wide"><span>Observaciones</span><strong>${escapeHtml(observations)}</strong></div>
+    <div class="nm-turn-detail-grid__wide"><span>Soporte asociado</span><strong>${supportLinks || "Sin soporte asociado"}</strong></div>
+  </div>
+</article>`;
+  }).join("");
+
+  modal.innerHTML = `
+<div class="nm-pay-dialog nm-pay-dialog--drawer">
+  <div class="nm-pay-dialog-h nm-pay-dialog-h--drawer">
+    <b>Detalle de turnos</b>
+    <button class="nm-pay-btn nm-pay-btn--sm" data-close-modal>Cerrar</button>
+  </div>
+  <div class="nm-pay-dialog-b nm-pay-dialog-b--drawer">
+    <div class="nm-pay-drawer-hero">
+      <div>
+        <h3>${escapeHtml(group.name || "-")}</h3>
+        <p>${escapeHtml(group.document || "Sin documento")} · ${escapeHtml(group.municipality || "-")}</p>
+      </div>
+      <span class="nm-pay-toolbar-chip">${group.totalDays} dia(s)</span>
+    </div>
+    <div class="nm-turn-compliance nm-turn-compliance--${compliance.tone}" title="${escapeHtml(compliance.title)}">
+      <div class="nm-turn-compliance__bar"><span style="width:${compliance.percentage}%"></span></div>
+      <div class="nm-turn-compliance__meta">${compliance.uploadedCount}/${compliance.requiredCount} documentos · ${compliance.percentage}%</div>
+    </div>
+    <div class="nm-turn-detail-summary">
+      <span>Modalidades: <b>${escapeHtml(group.modalitiesLabel)}</b></span>
+      <span>Turnos: <b>${group.turns.length}</b></span>
+    </div>
+    <div class="nm-turn-detail-stack">${detailRows}</div>
+  </div>
+</div>`;
+  modal.hidden = false;
+  wireModalClose();
+};
+
+renderTurnosSection = function renderTurnosSectionOperational(turns) {
+  const groups = buildTurnPersonGroups(turns);
+  turnPersonGroupsCache = groups;
+  if (!groups.length) {
+    return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty">No hay turnos registrados para este período y filtros seleccionados.</div></div>`;
+  }
+  return `
+<div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
+  <div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard nm-turn-summary-wrap">
+    <table class="nm-pay-table nm-pay-table--operational">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Cedula</th>
+          <th>Municipio</th>
+          <th class="num">Dias turnos</th>
+          <th>Modalidades</th>
+          <th>Cumplimiento documental</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map((group) => {
+          const compliance = getTurnDocumentCompliance(group);
+          return `
+        <tr>
+          <td><div class="nm-pay-employee-cell"><strong>${escapeHtml(group.name || "-")}</strong></div></td>
+          <td>${escapeHtml(group.document || "-")}</td>
+          <td>${escapeHtml(group.municipality || "-")}</td>
+          <td class="num">${group.totalDays}</td>
+          <td title="${escapeHtml(group.modalitiesLabel)}">${escapeHtml(group.modalitiesLabel)}</td>
+          <td>
+            <div class="nm-turn-compliance nm-turn-compliance--${compliance.tone}" title="${escapeHtml(compliance.title)}">
+              <div class="nm-turn-compliance__bar"><span style="width:${compliance.percentage}%"></span></div>
+              <div class="nm-turn-compliance__meta">${compliance.uploadedCount}/${compliance.requiredCount} documentos · ${compliance.percentage}%</div>
+            </div>
+          </td>
+          <td class="nm-pay-actions-cell">${renderTurnPersonActionsMenu(group)}</td>
+        </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>
+</div>`;
 };
 
 openExportModal = function openExportModalIntegral() {
@@ -7371,7 +8162,6 @@ openExportModal = function openExportModalIntegral() {
 };
 
 wireStaticEvents = function wireStaticEventsIntegral() {
-  document.getElementById("nmPayMonth")?.addEventListener("change", (e) => { periodMonth = e.target.value; });
   document.getElementById("nmPayPeriod")?.addEventListener("change", async (e) => {
     activePeriod = periods.find((period) => String(period.id) === String(e.target.value)) || null;
     activeGroupId = null;
@@ -7383,32 +8173,51 @@ wireStaticEvents = function wireStaticEventsIntegral() {
     selectedItemIds.clear();
     await reloadWorkArea();
   });
-  document.getElementById("nmPayCreate")?.addEventListener("click", createPeriod);
+  document.querySelectorAll("[data-open-create-period]").forEach((btn) => btn.addEventListener("click", openCreatePeriodModal));
   document.querySelectorAll("[data-division-key]").forEach((btn) => btn.addEventListener("click", async () => {
     payrollViewState.divisionKey = btn.dataset.divisionKey || "OPERARIO";
     payrollViewState.municipalityId = "ALL";
     payrollViewState.areaKey = TEAM_AREA_ALL;
+    payrollViewState.scopeSearch = "";
     payrollViewState.page = 1;
     selectedItemIds.clear();
     await reloadDetailOnly();
   }));
-  document.querySelectorAll("[data-scope-tab]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (payrollViewState.divisionKey === "OPERARIO") payrollViewState.municipalityId = btn.dataset.scopeTab || "ALL";
-    else payrollViewState.areaKey = btn.dataset.scopeTab || TEAM_AREA_ALL;
+  document.getElementById("nmScopeSearch")?.addEventListener("input", (e) => {
+    payrollViewState.scopeSearch = e.target.value || "";
+    refreshScopeSelectOptions();
+  });
+  document.getElementById("nmScopeSelect")?.addEventListener("change", async (e) => {
+    if (payrollViewState.divisionKey === "OPERARIO") payrollViewState.municipalityId = e.target.value || "ALL";
+    else payrollViewState.areaKey = e.target.value || TEAM_AREA_ALL;
     payrollViewState.page = 1;
     selectedItemIds.clear();
     await reloadDetailOnly();
-  }));
-  document.getElementById("nmFilterMunicipality")?.addEventListener("change", (e) => { payrollViewState.draftFilters.municipality = e.target.value; });
-  document.getElementById("nmFilterStatus")?.addEventListener("change", (e) => { payrollViewState.draftFilters.status = e.target.value; });
-  document.getElementById("nmFilterCargo")?.addEventListener("change", (e) => { payrollViewState.draftFilters.cargo = e.target.value; });
-  document.getElementById("nmFilterArea")?.addEventListener("change", (e) => { payrollViewState.draftFilters.area = e.target.value; });
+  });
   document.getElementById("nmFilterName")?.addEventListener("input", (e) => { payrollViewState.draftFilters.name = e.target.value || ""; });
+  document.getElementById("nmFilterName")?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    payrollViewState.appliedFilters = { ...payrollViewState.draftFilters };
+    payrollViewState.page = 1;
+    render();
+  });
+  document.getElementById("nmFilterName")?.addEventListener("change", () => {
+    payrollViewState.appliedFilters = { ...payrollViewState.draftFilters };
+    payrollViewState.page = 1;
+    render();
+  });
   document.getElementById("nmFilterDocument")?.addEventListener("input", (e) => { payrollViewState.draftFilters.document = e.target.value || ""; });
-  document.getElementById("nmToggleAdvancedFilters")?.addEventListener("click", () => { payrollViewState.showAdvancedFilters = !payrollViewState.showAdvancedFilters; render(); });
-  document.getElementById("nmFilterApply")?.addEventListener("click", () => { payrollViewState.appliedFilters = { ...payrollViewState.draftFilters }; payrollViewState.page = 1; render(); });
-  document.getElementById("nmFilterClear")?.addEventListener("click", () => { payrollViewState = defaultPayrollViewState(); ensurePayrollViewState(); render(); });
-  document.getElementById("nmFilterExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmFilterDocument")?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    payrollViewState.appliedFilters = { ...payrollViewState.draftFilters };
+    payrollViewState.page = 1;
+    render();
+  });
+  document.getElementById("nmFilterDocument")?.addEventListener("change", () => {
+    payrollViewState.appliedFilters = { ...payrollViewState.draftFilters };
+    payrollViewState.page = 1;
+    render();
+  });
   document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
     activeDetailTab = btn.dataset.detailTab || "nomina";
     if (activeDetailTab === "turnos" && activeGroupTurns === null) await loadGroupTurns();
@@ -7416,6 +8225,10 @@ wireStaticEvents = function wireStaticEventsIntegral() {
   }));
   document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
   document.getElementById("nmPayExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayOpenSlip")?.addEventListener("click", openSelectedPayslip);
+  document.getElementById("nmPayFullscreen")?.addEventListener("click", () => {
+    togglePayrollFullscreen();
+  });
   document.getElementById("nmPayExportBottom")?.addEventListener("click", openExportModal);
   document.getElementById("nmPayExportPdf")?.addEventListener("click", exportSelectedPayslipPdf);
   document.getElementById("nmPayClose")?.addEventListener("click", closeAndSendGroup);
@@ -7440,9 +8253,76 @@ wireStaticEvents = function wireStaticEventsIntegral() {
     items.forEach((item) => { if (e.target.checked) selectedItemIds.add(item.id); else selectedItemIds.delete(item.id); });
     render();
   });
+  document.querySelectorAll("[data-row-action]").forEach((btn) => btn.addEventListener("click", () => {
+    const action = btn.dataset.rowAction;
+    const itemId = Number(btn.dataset.rowItem);
+    closeRowMenu(btn);
+    if (!action || !itemId) return;
+    if (action === "detail") {
+      openPayrollItemDetailDrawer(itemId);
+      return;
+    }
+    if (action === "novelty") {
+      openNoveltyModal(itemId);
+      return;
+    }
+    if (action === "payslip") {
+      openPayslipModal(itemId);
+      return;
+    }
+    if (action === "review") {
+      toggleItemReviewed(itemId, true, { checked: false });
+      return;
+    }
+    if (action === "unreview") {
+      toggleItemReviewed(itemId, false, { checked: true });
+      return;
+    }
+    if (action === "salary") {
+      const item = getPayrollItemById(itemId);
+      if (!item) return;
+      openSalaryConfigModal(Number(item.employee_id), btn.dataset.salaryName || item.employee_name || "", btn.dataset.salaryDoc || item.document_number || "");
+    }
+  }));
+  document.querySelectorAll("[data-turn-action]").forEach((btn) => btn.addEventListener("click", () => {
+    const action = btn.dataset.turnAction;
+    const groupKey = btn.dataset.turnGroup || "";
+    closeRowMenu(btn);
+    if (!action || !groupKey) return;
+    const group = getTurnPersonGroupByKey(groupKey);
+    if (!group) return;
+    if (action === "detail") {
+      openTurnPersonDetailDrawer(groupKey);
+      return;
+    }
+    if (action === "docs") {
+      if (!group.workerId) {
+        showError("Este registro no tiene trabajador externo asociado para cargar documentos.");
+        return;
+      }
+      openExternalWorkerDocsModal(Number(group.workerId), group.name || "Colaborador");
+      return;
+    }
+    if (action === "bank") {
+      if (!group.coverId) {
+        showError("No hay datos bancarios editables para este registro.");
+        return;
+      }
+      openBankEditModal(group.coverId, group.bank || "", group.accountType || "AHORROS", group.accountNumber || "");
+      return;
+    }
+    if (action === "charge") {
+      if (!group.coverId) {
+        showError("No hay cuenta de cobro disponible para este registro.");
+        return;
+      }
+      openChargeAccount(Number(group.coverId));
+    }
+  }));
   document.querySelectorAll("[data-new-novelty]").forEach((btn) => btn.addEventListener("click", () => openNoveltyModal(Number(btn.dataset.newNovelty))));
   document.querySelectorAll("[data-payslip]").forEach((btn) => btn.addEventListener("click", () => openPayslipModal(Number(btn.dataset.payslip))));
   document.querySelectorAll("[data-salary-cfg]").forEach((btn) => btn.addEventListener("click", () => openSalaryConfigModal(Number(btn.dataset.salaryCfg), btn.dataset.salaryName || "", btn.dataset.salaryDoc || "")));
+  refreshScopeSelectOptions();
   wireStaticBulkEvents();
 };
 
@@ -7455,6 +8335,7 @@ loadPayrollModule = async function loadPayrollModuleIntegral() {
   activeGroupDetail = null;
   activeGroupTurns = null;
   turnosFilter = { search: "", hasCuentaCobro: "" };
+  turnPersonGroupsCache = [];
   municipalitySearch = "";
   activePrimaryTab = "nomina";
   supportsData = [];
@@ -7464,6 +8345,7 @@ loadPayrollModule = async function loadPayrollModuleIntegral() {
   activeScopeGroupIds = [];
   activeScopeMeta = null;
   resetItemsFilter();
+  loadPayrollUiState();
   await loadPeriods();
   await loadGroups();
   await loadGroupDetail();
@@ -7479,12 +8361,14 @@ export async function loadPayrollModule() {
   activeGroupDetail  = null;
   activeGroupTurns   = null;
   turnosFilter       = { search: "", hasCuentaCobro: "" };
+  turnPersonGroupsCache = [];
   municipalitySearch = "";
   activePrimaryTab   = "nomina";
   supportsData       = [];
   supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
   viewerSupportId    = null;
   resetItemsFilter();
+  loadPayrollUiState();
   await loadPeriods();
   await loadGroups();
   await loadGroupDetail();
