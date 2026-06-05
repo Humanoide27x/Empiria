@@ -930,8 +930,8 @@ function shell() {
 .nm-pay-toolbar-title{display:flex;align-items:center;gap:4px;min-height:36px;min-width:0}
 .nm-pay-toolbar-title strong{font-size:16px;line-height:1;color:#0F172A;letter-spacing:-.03em;white-space:nowrap}
 .nm-pay-toolbar-title__meta{font-size:12px;color:#64748B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nm-pay-filterbar--operational .nm-pay-filter{display:grid;gap:4px;padding:0;border:0;background:transparent;box-shadow:none}
-.nm-pay-filterbar--operational .nm-pay-filter span{font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748B}
+.nm-pay-filterbar--operational .nm-pay-filter{display:grid;gap:0;padding:0;border:0;background:transparent;box-shadow:none}
+.nm-pay-filterbar--operational .nm-pay-filter span{display:none}
 .nm-pay-filterbar--operational .nm-pay-filter .nm-pay-input,.nm-pay-filterbar--operational .nm-pay-filter .nm-pay-select{height:36px;padding-top:0;padding-bottom:0;border-radius:10px;border-color:#E5EAF3;background:#FFFFFF}
 .nm-pay-filter--readonly strong{display:flex;align-items:center;min-height:36px;padding:0 10px;border:1px solid #E5EAF3;border-radius:10px;background:#FFFFFF;color:#0F172A;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nm-pay-btn--compact{min-height:34px;padding:0 11px;border-radius:10px;font-size:11px}
@@ -1054,9 +1054,9 @@ function shell() {
 .module-nomina.nm-pay-fullscreen .sidebar{display:none!important;width:0!important;min-width:0!important;max-width:0!important;padding:0!important;border:0!important}
 .module-nomina.nm-pay-fullscreen .topbar-pro{left:0!important;padding-left:20px!important;width:100%!important}
 .module-nomina.nm-pay-fullscreen .nm-pay-card-main--operational{height:calc(100vh - 64px)}
-@media (max-width:1200px){.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-toolbar-title,.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:calc(100vh - 270px)}}
-@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-toolbar-title,.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}}
-@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:12px;padding-right:12px}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-toolbar-title{min-height:auto;flex-wrap:wrap}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
+@media (max-width:1200px){.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-table-wrap--dashboard{height:calc(100vh - 270px)}}
+@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}}
+@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -1301,7 +1301,7 @@ render = function renderPremium() {
   <div class="nm-pay-head nm-pay-head--dashboard">
     <div class="nm-pay-head-copy">
       <span class="nm-pay-overline">Empiria</span>
-      <span class="nm-pay-title">Nomina operativa</span>
+      <span class="nm-pay-title">Nomina</span>
       <small class="nm-pay-head-caption">Vista ejecutiva por division, municipio y categoria salarial.</small>
     </div>
     <div class="nm-pay-head-controls">
@@ -7457,23 +7457,20 @@ function renderPayrollFilterBar() {
   ensurePayrollViewState();
   const draft = payrollViewState.draftFilters;
   const scopeLabel = payrollViewState.divisionKey === "OPERARIO"
-    ? (getOperarioMunicipalityTabs().find((tab) => String(tab.id) === String(payrollViewState.municipalityId || "ALL"))?.label || "Todos")
-    : (getTeamAreaTabs().find((tab) => tab.area === payrollViewState.areaKey)?.label || "Todos");
+    ? (getOperarioMunicipalityTabs().find((tab) => String(tab.id) === String(payrollViewState.municipalityId || "ALL"))?.label || "Municipio")
+    : (getTeamAreaTabs().find((tab) => tab.area === payrollViewState.areaKey)?.label || "Area");
   const currentScopeValue = payrollViewState.divisionKey === "OPERARIO"
     ? String(payrollViewState.municipalityId || "ALL")
     : payrollViewState.areaKey;
   return `
 <div class="nm-pay-filterbar nm-pay-filterbar--operational">
   <div class="nm-pay-filterbar__grid nm-pay-filterbar__grid--main">
-    <div class="nm-pay-toolbar-title">
-      <strong>Nomina operativa</strong>
-      <span class="nm-pay-toolbar-title__meta">${activePeriod ? `· ${escapeHtml(activePeriod.label || "")}` : ""}</span>
-    </div>
     <label class="nm-pay-filter"><span>Periodo</span><select class="nm-pay-select" id="nmPayPeriod">${periodOptions() || `<option value="">Sin periodos</option>`}</select></label>
     <label class="nm-pay-filter"><span>${payrollViewState.divisionKey === "OPERARIO" ? "Municipio" : "Area"}</span><select class="nm-pay-select" id="nmScopeSelect"><option value="${escapeHtml(currentScopeValue)}">${escapeHtml(scopeLabel)}</option></select></label>
-    <label class="nm-pay-filter nm-pay-filter--search"><span>Colaborador</span><input class="nm-pay-input" id="nmFilterName" value="${escapeHtml(draft.name)}" placeholder="Nombre del colaborador"></label>
-    <label class="nm-pay-filter"><span>Documento</span><input class="nm-pay-input" id="nmFilterDocument" value="${escapeHtml(draft.document)}" placeholder="Numero de documento"></label>
+    <label class="nm-pay-filter nm-pay-filter--search"><span>Buscar colaborador</span><input class="nm-pay-input" id="nmFilterName" value="${escapeHtml(draft.name)}" placeholder="Buscar colaborador"></label>
+    <label class="nm-pay-filter"><span>Buscar documento</span><input class="nm-pay-input" id="nmFilterDocument" value="${escapeHtml(draft.document)}" placeholder="Buscar documento"></label>
     ${isTH() ? '<button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact nm-pay-btn--header" data-open-create-period="+">+ Crear periodo</button>' : ""}
+    <button class="nm-pay-btn nm-pay-btn--compact nm-pay-btn--header" id="nmPayExport">Exportar</button>
   </div>
 </div>`;
 }
@@ -7606,9 +7603,6 @@ render = function renderOperationalNomina() {
   if (!root) return;
   root.innerHTML = `
 <div class="nm-pay-card-main nm-pay-card-main--operational">
-  <div class="nm-pay-operational-head">
-    ${renderPayrollFilterBar()}
-  </div>
   ${renderNominaPanel()}
 </div>`;
   syncPayrollFullscreen();
@@ -7618,6 +7612,8 @@ render = function renderOperationalNomina() {
 renderNominaPanel = function renderNominaPanelIntegral() {
   ensurePayrollViewState();
   const totals = municipalityTotals();
+  const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
+  const supporting = activeGroupDetail ? getFilteredSupportingData(filteredItems) : { novelties: [], supports: [] };
   const summaryItems = [
     { label: "Empleados", value: totals.employees, tone: "employees" },
     { label: "Pendientes", value: totals.items_pending, tone: "pending" },
@@ -7627,19 +7623,28 @@ renderNominaPanel = function renderNominaPanelIntegral() {
     { label: "Sin soporte", value: totals.pending_supports, tone: "support" },
   ];
   return `
-${renderCargoTabsBar()}
-<div class="nm-pay-kpis-row">
-  ${summaryItems.map((metric) => `
-  <article class="nm-pay-kpi-card nm-pay-kpi-card--${metric.tone}">
-    <span class="nm-pay-kpi-card__label"><i></i>${escapeHtml(metric.label)}</span>
-    <b class="nm-pay-kpi-card__value">${escapeHtml(String(metric.value))}</b>
-  </article>`).join("")}
+<div class="nm-pay-operational-head">
+  <div class="nm-pay-kpis-row">
+    ${summaryItems.map((metric) => `
+    <article class="nm-pay-kpi-card nm-pay-kpi-card--${metric.tone}">
+      <span class="nm-pay-kpi-card__label"><i></i>${escapeHtml(metric.label)}</span>
+      <b class="nm-pay-kpi-card__value">${escapeHtml(String(metric.value))}</b>
+    </article>`).join("")}
+  </div>
+  ${renderPayrollFilterBar()}
+  ${renderCargoTabsBar()}
+  <div class="nm-detail-tabs nm-detail-tabs--operational">
+    <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
+  </div>
 </div>
-${activePeriod ? renderOperationalBody() : `<div style="padding:20px"><div class="nm-pay-empty">Crea o selecciona un periodo de nomina.</div></div>`}`;
+${activePeriod ? renderOperationalBody() : `<div class="nm-pay-workspace"><div class="nm-pay-content nm-pay-content--full"><div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty" style="flex:1">Crea o selecciona un periodo de nomina.</div></div></div></div>`}`;
 };
 
 renderOperationalBody = function renderOperationalBodyIntegral() {
-  if (!groupsState.positions.length) return `<div style="padding:16px"><div class="nm-pay-empty">No hay cargos activos con empleados asignados a este contrato.</div></div>`;
+  if (!groupsState.positions.length) return `<div class="nm-pay-workspace"><div class="nm-pay-content nm-pay-content--full"><div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty" style="flex:1">No hay cargos activos con empleados asignados a este contrato.</div></div></div></div>`;
   return `<div class="nm-pay-workspace"><div class="nm-pay-content nm-pay-content--full">${renderGroupDetail()}</div></div>`;
 };
 
@@ -7701,6 +7706,27 @@ ${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:14
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
   </div>
   ${activeDetailTab === "nomina" ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}` : activeDetailTab === "novedades" ? renderNoveltiesWithFilter(supporting.novelties) : activeDetailTab === "soportes" ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || []) : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos…</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
+</div>`;
+};
+
+renderGroupDetail = function renderGroupDetailOperationalLayout() {
+  if (!activeGroupDetail) return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty" style="flex:1">No hay datos de nomina para esta vista.</div></div>`;
+  const filteredItems = getFilteredPayrollItems();
+  const supporting = getFilteredSupportingData(filteredItems);
+  const pageData = getPagedPayrollItems(filteredItems);
+  const group = activeGroupDetail.group || {};
+  const canManageGroup = activeScopeGroupIds.length === 1 && activeGroupId;
+  const isClosed = canManageGroup && isGroupClosed(group);
+  return `
+<div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
+  ${!canManageGroup ? `<div class="nm-pay-inline-warning">&#9888; Vista agrupada: seleccione un municipio o area puntual para calcular o cerrar.</div>` : ""}
+  ${activeDetailTab === "nomina"
+    ? `<div class="nm-pay-tab-panel--table">${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}</div>`
+    : activeDetailTab === "novedades"
+      ? renderNoveltiesWithFilter(supporting.novelties)
+      : activeDetailTab === "soportes"
+        ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || [])
+        : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos...</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
 </div>`;
 };
 
