@@ -1603,7 +1603,7 @@ function buildGroupXlsx(options) {
   XLSX.utils.book_append_sheet(wb, wsNom,  "Nómina");
   XLSX.utils.book_append_sheet(wb, wsNov,  "Novedades");
   XLSX.utils.book_append_sheet(wb, wsTurn, "Turnos");
-  XLSX.utils.book_append_sheet(wb, wsRes,  "Resumen");
+  XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
@@ -2001,6 +2001,115 @@ async function handleGroupHistory(req, res, url) {
 
 // ── helper local (duplicado de operational para no importar) ─────────────────
 function s(v) { return String(v == null ? "" : v); }
+function n0(v) { return Number(v || 0); }
+
+const EXTERNAL_TURN_LABELS = Object.freeze({
+  CAARES_TC: "CAARES TC",
+  CAARES_MT: "CAARES MT",
+  CAA1: "CAA 1",
+  CAA2: "CAA 2",
+  RI: "RI",
+});
+
+function computeNoveltyDeductionForExport(item) {
+  const calc = item.calculation || {};
+  let deduction;
+  if (calc.cambio_operativo) {
+    deduction = n0(calc.salary_discount) + n0(calc.transport_discount);
+  } else if (n0(calc.full_base_salary) > 0) {
+    const fullComp = n0(calc.full_base_salary) + n0(calc.full_transport) + n0(calc.full_other);
+    const effectiveComp = n0(item.base_salary) + n0(item.transport_allowance) +
+      Math.max(0, n0(item.other_earnings) - n0(calc.internal_cover_value));
+    deduction = Math.max(0, fullComp - effectiveComp);
+  } else {
+    deduction = n0(calc.salary_discount) + n0(calc.transport_discount) + n0(calc.other_discount);
+  }
+  return deduction + n0(calc.turn_cover_discount);
+}
+
+function formatTurnRateLabel(value) {
+  return n0(value).toLocaleString("es-CO", { maximumFractionDigits: 0 });
+}
+
+function getExternalTurnModeLabel(turn = {}) {
+  const tariffKey = s(turn.tariff_category || "").trim().toUpperCase();
+  if (EXTERNAL_TURN_LABELS[tariffKey]) return EXTERNAL_TURN_LABELS[tariffKey];
+  const originCategory = s(turn.origin_category || "").trim().toUpperCase();
+  if (EXTERNAL_TURN_LABELS[originCategory]) return EXTERNAL_TURN_LABELS[originCategory];
+  return s(turn.modality || "Pendiente").trim() || "Pendiente";
+}
+
+function buildExternalTurnsWorksheet(makeSheet, turns = []) {
+  const headers = [
+    "Nombre",
+    "Cedula",
+    "Municipio",
+    "Cantidad Turnos",
+    "Modalidades",
+    "Banco",
+    "Numero Cuenta",
+    "Valor Unitario",
+    "Valor Total",
+  ];
+
+  const grouped = new Map();
+  for (const turn of (turns || [])) {
+    if (s(turn.cover_type).toUpperCase() !== "EXTERNA") continue;
+
+    const name = s(turn.external_worker_name || turn.full_name || "").trim();
+    const document = s(turn.external_document || turn.document_number || "").trim();
+    const key = `${document}::${name.toUpperCase()}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        name,
+        document,
+        municipalities: new Set(),
+        quantity: 0,
+        modalities: new Map(),
+        bank: "",
+        accountNumber: "",
+        totalValue: 0,
+      });
+    }
+
+    const row = grouped.get(key);
+    const municipality = s(turn.municipality_name || "").trim();
+    const unitValue = n0(turn.official_value_per_day ?? turn.value_per_day ?? turn.calculated_day_value);
+    const totalValue = n0(turn.official_total_value ?? turn.total_value);
+    const quantity = n0(turn.covered_days ?? turn.days ?? turn.novelty_days);
+    const modeLabel = getExternalTurnModeLabel(turn);
+
+    if (municipality) row.municipalities.add(municipality);
+    row.quantity += quantity;
+    row.totalValue += totalValue;
+    if (!row.bank && s(turn.external_bank || "").trim()) row.bank = s(turn.external_bank).trim();
+    if (!row.accountNumber && s(turn.external_account_number || "").trim()) row.accountNumber = s(turn.external_account_number).trim();
+    if (!row.modalities.has(modeLabel)) row.modalities.set(modeLabel, unitValue);
+  }
+
+  const rows = Array.from(grouped.values())
+    .sort((a, b) => a.name.localeCompare(b.name, "es-CO") || a.document.localeCompare(b.document, "es-CO"))
+    .map((row) => {
+      const modalityEntries = Array.from(row.modalities.entries());
+      const unitValueLabel = modalityEntries.length <= 1
+        ? formatTurnRateLabel(modalityEntries[0]?.[1] || 0)
+        : modalityEntries.map(([label, value]) => `${label}: ${formatTurnRateLabel(value)}`).join(", ");
+
+      return [
+        row.name || "Pendiente",
+        row.document || "Pendiente",
+        Array.from(row.municipalities).join(", ") || "Pendiente",
+        row.quantity,
+        modalityEntries.map(([label]) => label).join(", ") || "Pendiente",
+        row.bank || "Pendiente",
+        row.accountNumber || "Pendiente",
+        unitValueLabel,
+        row.totalValue,
+      ];
+    });
+
+  return makeSheet(headers, rows, [8], [32, 16, 22, 14, 24, 20, 20, 24, 16]);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTACIÓN FORMATO VARIABLES DE NÓMINA — helpers compartidos
@@ -2151,7 +2260,7 @@ function buildVariablesXlsx(rows) {
 // EXPORTACIÓN GLOBAL DEL PERÍODO (todos los municipios)
 // Genera: Variables Nómina + Nómina + Resumen
 // ─────────────────────────────────────────────────────────────────────────────
-function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
+function buildPeriodFullXlsx({ periodLabel, items, novelties, turns = [], totals }) {
   const nn  = (v) => Number(v || 0);
   const hdrStyle = {
     font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
@@ -2241,12 +2350,16 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
   const muniNamesSet = [...new Set(items.map((i) => i.municipality_name || "").filter(Boolean))].sort();
   const muniTotals = muniNamesSet.map((mName) => {
     const mItems = items.filter((i) => i.municipality_name === mName);
+    const mTurns = turns.filter((t) => s(t.municipality_name) === mName && s(t.cover_type).toUpperCase() === "EXTERNA");
     return {
       name:             mName,
       employees:        mItems.length,
       items_reviewed:   mItems.filter((i) => i.reviewed).length,
       items_pending:    mItems.filter((i) => !i.reviewed).length,
       novelties:        mItems.reduce((a, i) => a + nn(i.novelty_count), 0),
+      novelty_deductions: mItems.reduce((a, i) => a + computeNoveltyDeductionForExport(i), 0),
+      novelty_additions:  mItems.reduce((a, i) => a + nn((i.calculation || {}).internal_cover_value), 0),
+      turn_payments:      mTurns.reduce((a, t) => a + nn(t.official_total_value ?? t.total_value), 0),
       total_devengado:  mItems.reduce((a, i) => a + nn(i.total_devengado), 0),
       total_deducciones:mItems.reduce((a, i) => a + nn(i.total_deducciones), 0),
       neto:             mItems.reduce((a, i) => a + nn(i.neto_pagar), 0),
@@ -2265,6 +2378,9 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
     ["", ...muniTotals.map(() => ""), ""],
     ["── NOVEDADES ──",    ...muniTotals.map(() => ""),                    ""],
     ["Total novedades",    ...muniTotals.map((m) => m.novelties),          sumMf("novelties")],
+    ["Deducciones por novedades", ...muniTotals.map((m) => m.novelty_deductions), sumMf("novelty_deductions")],
+    ["Adiciones por novedades", ...muniTotals.map((m) => m.novelty_additions), sumMf("novelty_additions")],
+    ["Pago de turnos por novedades", ...muniTotals.map((m) => m.turn_payments), sumMf("turn_payments")],
     ["", ...muniTotals.map(() => ""), ""],
     ["── VALORES ──",      ...muniTotals.map(() => ""),                    ""],
     ["Total devengado",    ...muniTotals.map((m) => m.total_devengado),    sumMf("total_devengado")],
@@ -2302,6 +2418,8 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, totals }) {
   XLSX.utils.book_append_sheet(wb, wsVars, "Variables Nómina");
   XLSX.utils.book_append_sheet(wb, wsNom,  "Nómina");
   XLSX.utils.book_append_sheet(wb, wsRes,  "Resumen");
+  const wsTurnsExternal = buildExternalTurnsWorksheet(makeSheet, turns);
+  XLSX.utils.book_append_sheet(wb, wsTurnsExternal, "Turnos Externos");
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
 }
 
@@ -2321,7 +2439,7 @@ async function handlePeriodFullExport(req, res, url) {
         console.log("[EXPORT] Exportación completa del período:", periodId);
         console.log("[MEMORY] inicio:", Math.round(process.memoryUsage().heapUsed / 1024 / 1024), "MB");
 
-        const { items, novelties, totals, periodLabel } = await operational.getPeriodItemsForExport(periodId);
+        const { items, novelties, turns, totals, periodLabel } = await operational.getPeriodItemsForExport(periodId);
 
         const payrollRows = (items     || []).length;
         const noveltyRows = (novelties || []).length;
@@ -2343,7 +2461,7 @@ async function handlePeriodFullExport(req, res, url) {
 
         let buf;
         try {
-          buf = buildPeriodFullXlsx({ periodLabel, items, novelties, totals });
+          buf = buildPeriodFullXlsx({ periodLabel, items, novelties, turns, totals });
         } catch (xlsxErr) {
           console.error("[EXPORT XLSX ERROR] Fallo al generar workbook período completo", periodId);
           console.error("[EXPORT XLSX ERROR] Volumen: items=%d novs=%d", payrollRows, noveltyRows);

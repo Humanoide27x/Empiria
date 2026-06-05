@@ -480,6 +480,53 @@ function getExternalCoverDailyValue(category) {
   return getTurnTariffDailyValue({ salary_category: category }, { strict: true });
 }
 
+function resolveOfficialExternalTurnAmounts(row = {}) {
+  const quantity = n(row.covered_days ?? row.days ?? row.novelty_days ?? row.nov_days ?? 0);
+  const storedValuePerDay = n(row.value_per_day ?? row.calculated_day_value);
+  const storedTotalValue = n(row.total_value);
+  const fallback = {
+    tariff_category: "",
+    quantity,
+    value_per_day: storedValuePerDay,
+    total_value: storedTotalValue || (quantity * storedValuePerDay),
+  };
+
+  if (norm(row.cover_type || "") !== "EXTERNA") return fallback;
+
+  try {
+    const source = {
+      salary_category: row.origin_category || row.origin_salary_category || row.covered_salary_category || row.salary_category,
+      modality: row.modality || row.work_modality || row.origin_modality,
+      work_time_type: row.work_time_type || row.origin_work_time_type || row.workTimeType,
+    };
+    const tariffCategory = resolveTurnTariffCategory(source, { strict: true });
+    const valuePerDay = getTurnTariffDailyValue(source, { strict: true });
+    return {
+      tariff_category: tariffCategory,
+      quantity,
+      value_per_day: valuePerDay,
+      total_value: quantity * valuePerDay,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function applyOfficialExternalTurnAmounts(row = {}) {
+  const official = resolveOfficialExternalTurnAmounts(row);
+  return {
+    ...row,
+    tariff_category: official.tariff_category || row.tariff_category || "",
+    covered_days: official.quantity,
+    days: row.days ?? official.quantity,
+    calculated_day_value: official.value_per_day,
+    value_per_day: official.value_per_day,
+    total_value: official.total_value,
+    official_value_per_day: official.value_per_day,
+    official_total_value: official.total_value,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NORMALIZACIÓN DE TIPO DE NOVEDAD
 // Convierte labels visibles o variantes al código canónico oficial.
@@ -3529,18 +3576,21 @@ async function buildChargeAccountHtml(coverId) {
     throw new Error("Datos incompletos para generar la cuenta de cobro (nombre o cédula faltante)");
   }
 
+  const normalizedRows = rows.map((row) => applyOfficialExternalTurnAmounts(row));
+  const wNorm = normalizedRows[0];
+
   const fmt = (v) =>
     Number(v || 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
   const today = new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" });
-  const totalAPagar = rows.reduce((s, r) => s + Number(r.total_value || 0), 0);
-  const totalDias   = rows.reduce((s, r) => s + Number(r.days || r.nov_days || 0), 0);
+  const totalAPagar = normalizedRows.reduce((s, r) => s + Number(r.total_value || 0), 0);
+  const totalDias   = normalizedRows.reduce((s, r) => s + Number(r.covered_days || r.days || r.nov_days || 0), 0);
 
-  const introText = rows.length === 1
+  const introText = normalizedRows.length === 1
     ? `cubrimiento de <strong>1 turno externo</strong>`
-    : `cubrimiento de <strong>${rows.length} turnos externos</strong>`;
+    : `cubrimiento de <strong>${normalizedRows.length} turnos externos</strong>`;
 
-  const detailRows = rows.map((r, i) => `
+  const detailRows = normalizedRows.map((r, i) => `
   <tr>
     <td style="text-align:center;font-weight:700">${i + 1}</td>
     <td>${r.origin_employee_name || "—"}<br><small style="color:#6B7280">CC ${r.origin_doc || "—"}</small></td>
@@ -3548,12 +3598,12 @@ async function buildChargeAccountHtml(coverId) {
     <td>${r.modality || "—"}</td>
     <td>${r.novelty_type_name || r.novelty_type || "—"}</td>
     <td>${r.start_date ? String(r.start_date).slice(0,10) : "—"}<br><small style="color:#6B7280">al ${r.end_date ? String(r.end_date).slice(0,10) : "—"}</small></td>
-    <td style="text-align:center">${Number(r.days || r.nov_days || 0)}</td>
+    <td style="text-align:center">${Number(r.covered_days || r.days || r.nov_days || 0)}</td>
     <td style="text-align:right">${fmt(r.value_per_day)}</td>
     <td style="text-align:right;font-weight:700">${fmt(r.total_value)}</td>
   </tr>`).join("");
 
-  const gestorName = (w.gestor_zona || "").trim().toUpperCase();
+  const gestorName = (wNorm.gestor_zona || "").trim().toUpperCase();
   const gestorBlock = gestorName
     ? `<p><strong>${gestorName}</strong></p><p>Gestor de Zona</p>`
     : `<p><strong>GESTOR DE ZONA</strong></p>`;
@@ -3562,7 +3612,7 @@ async function buildChargeAccountHtml(coverId) {
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Cuenta de Cobro — ${w.full_name}</title>
+<title>Cuenta de Cobro — ${wNorm.full_name}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111;padding:30px;max-width:820px;margin:auto}
@@ -4288,7 +4338,7 @@ async function listGroupTurns(groupId) {
     ORDER BY COALESCE(pn.start_date, ptc.created_at) DESC, ptc.created_at DESC`,
     [groupId]
   );
-  return { group, turns: rows };
+  return { group, turns: rows.map((row) => applyOfficialExternalTurnAmounts(row)) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4321,7 +4371,7 @@ async function getPeriodItemsForExport(periodId) {
   const periodDbId = id(periodId);
   if (!periodDbId) throw new Error("ID de período inválido");
 
-  const [{ rows: items }, { rows: novelties }, { rows: periodRows }, { rows: totRows }] = await Promise.all([
+  const [{ rows: items }, { rows: novelties }, { rows: periodRows }, { rows: totRows }, { rows: turnRows }] = await Promise.all([
     pool.query(
       `SELECT pi.*,
               COUNT(DISTINCT pn.id)::int AS novelty_count
@@ -4358,12 +4408,51 @@ async function getPeriodItemsForExport(periodId) {
       WHERE pi.period_id = $1`,
       [periodDbId]
     ),
+    pool.query(
+      `SELECT
+         ptc.id,
+         ptc.cover_type,
+         ptc.days                   AS covered_days,
+         ptc.value_per_day          AS calculated_day_value,
+         ptc.total_value,
+         ptc.created_at,
+         pn.id                      AS novelty_id,
+         pn.novelty_type,
+         pn.start_date              AS novelty_start,
+         pn.end_date                AS novelty_end,
+         pn.days                    AS novelty_days,
+         pn.observations            AS novelty_observations,
+         pi.employee_name           AS origin_employee_name,
+         pi.document_number         AS origin_document,
+         pi.operational_position    AS origin_position,
+         pi.municipality_id,
+         pi.municipality_name,
+         pi.institution_name,
+         pi.site_name,
+         pi.modality,
+         pi.work_time_type,
+         pi.salary_category         AS origin_category,
+         etw.id                     AS external_worker_id,
+         etw.full_name              AS external_worker_name,
+         etw.document_number        AS external_document,
+         etw.bank                   AS external_bank,
+         etw.account_type           AS external_account_type,
+         etw.account_number         AS external_account_number
+       FROM payroll_turn_covers ptc
+       JOIN payroll_novelties pn        ON pn.id = ptc.novelty_id
+       JOIN payroll_items pi            ON pi.id = ptc.payroll_item_id
+       LEFT JOIN external_turn_workers etw ON etw.id = ptc.external_worker_id
+      WHERE pi.period_id = $1
+      ORDER BY COALESCE(pn.start_date, ptc.created_at), ptc.created_at`,
+      [periodDbId]
+    ),
   ]);
 
   return {
     periodLabel: periodRows[0]?.label || String(periodId),
     items,
     novelties,
+    turns: turnRows.map((row) => applyOfficialExternalTurnAmounts(row)),
     totals: { ...totRows[0], items_pending: Number(totRows[0]?.employees || 0) - Number(totRows[0]?.items_reviewed || 0) },
   };
 }

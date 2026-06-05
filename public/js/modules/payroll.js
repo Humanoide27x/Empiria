@@ -921,11 +921,11 @@ function shell() {
 @media (max-width:640px){.nm-pay-head--dashboard{padding:16px}.nm-pay-head--dashboard .nm-pay-title{font-size:24px}.nm-pay-kpis--premium{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 16px 14px}.nm-pay-kpi-card--hero{grid-column:1/-1}.nm-pay-cargo-tabs--dashboard,.nm-pay-subtabs,.nm-pay-scope-tabs,.nm-pay-filterbar,.nm-pay-workspace,.nm-pay-scroll-body{padding-left:16px;padding-right:16px}.nm-pay-filterbar__grid{grid-template-columns:1fr}.nm-pay-filterbar__actions{width:100%}.nm-pay-filterbar__actions .nm-pay-btn{flex:1 1 0}.nm-items-fbar__status{width:100%;justify-content:flex-start}}
 
 /* Operational refactor */
-.nm-pay-card-main--operational{height:calc(100vh - 78px);display:flex;flex-direction:column;overflow:hidden;background:#F7FAFF;border:1px solid #E5EAF3;border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.04);font-family:Inter,system-ui,sans-serif}
-.nm-pay-operational-head{display:block;padding:8px 10px 6px;border-bottom:1px solid #E5EAF3;background:#F7FAFF}
+.nm-pay-card-main--operational{height:calc(100vh - 78px);display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#F7FAFF;border:1px solid #E5EAF3;border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.04);font-family:Inter,system-ui,sans-serif}
+.nm-pay-operational-head{display:flex;flex-direction:column;gap:6px;flex:0 0 auto;padding:8px;border-bottom:1px solid #E5EAF3;background:#F7FAFF;overflow:visible;min-height:0}
 .nm-pay-toolbar-chip{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 10px;border:1px solid #E5EAF3;border-radius:999px;background:#FFFFFF;color:#0F172A;font-size:11px;font-weight:700}
 .nm-pay-filterbar--operational{display:grid;gap:0;padding:0;min-width:0}
-.nm-pay-filterbar__grid--main{display:grid;grid-template-columns:minmax(190px,1fr) minmax(160px,.75fr) minmax(170px,.75fr) minmax(220px,1fr) minmax(180px,.9fr) auto;gap:8px;align-items:end}
+.nm-pay-filterbar__grid--main{display:grid;grid-template-columns:minmax(130px,.75fr) minmax(130px,.8fr) minmax(190px,1fr) minmax(170px,.9fr) auto auto;gap:8px;align-items:stretch}
 .nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:auto}
 .nm-pay-toolbar-title{display:flex;align-items:center;gap:4px;min-height:36px;min-width:0}
 .nm-pay-toolbar-title strong{font-size:16px;line-height:1;color:#0F172A;letter-spacing:-.03em;white-space:nowrap}
@@ -937,15 +937,15 @@ function shell() {
 .nm-pay-btn--compact{min-height:34px;padding:0 11px;border-radius:10px;font-size:11px}
 .nm-pay-btn--header{align-self:end}
 .nm-pay-btn--quiet{background:#FFFFFF}
-.nm-pay-cargo-tabs--operational{padding:4px 10px 0;border:0;background:transparent;gap:6px;min-height:auto}
+.nm-pay-cargo-tabs--operational{display:flex;flex-wrap:wrap;padding:0;border:0;background:transparent;gap:8px;min-height:auto}
 .nm-pay-tab--operational{display:inline-flex;align-items:center;gap:6px;min-width:auto;padding:7px 10px;border-radius:999px;border:1px solid #E5EAF3;background:#FFFFFF;box-shadow:none}
 .nm-pay-tab--operational.active{background:#0B7CFF;color:#FFFFFF;border-color:#0B7CFF}
 .nm-pay-tab--operational .nm-pay-tab-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
 .nm-pay-tab--operational .nm-pay-count{min-width:18px;height:18px;margin-left:0;background:#E8EEF8;color:#0F172A;font-size:10px}
 .nm-pay-tab--operational.active .nm-pay-count{background:rgba(255,255,255,.18);color:#FFFFFF}
 .nm-pay-input--scope,.nm-pay-scope-picker__controls .nm-pay-select{height:36px;border-radius:10px}
-.nm-pay-kpis-row{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;padding:6px 10px 0}
-.nm-pay-kpi-card{display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:52px;padding:8px 10px;border:1px solid #E5EAF3;border-radius:12px;background:#FFFFFF;min-width:118px;max-width:190px}
+.nm-pay-kpis-row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;padding:0}
+.nm-pay-kpi-card{display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:52px;padding:8px 10px;border:1px solid #E5EAF3;border-radius:12px;background:#FFFFFF;min-width:0;max-width:none;overflow:hidden}
 .nm-pay-kpi-card__label{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:#64748B;white-space:nowrap}
 .nm-pay-kpi-card__label i{display:inline-block;width:8px;height:8px;border-radius:999px;background:#CBD5E1}
 .nm-pay-kpi-card__value{font-size:14px;line-height:1.1;font-weight:800;color:#0F172A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -959,19 +959,19 @@ function shell() {
 .nm-pay-alert-pill{display:inline-flex;align-items:center;gap:5px;min-height:20px;padding:0 7px;border-radius:999px;border:1px solid #FDE68A;background:#FFF8E8;color:#92400E;font-size:10px;font-weight:700}
 .nm-pay-alert-pill--support{border-color:#FECACA;background:#FEF2F2;color:#991B1B}
 .nm-pay-alert-pill--retirement{border-color:#BFDBFE;background:#EFF6FF;color:#1D4ED8}
-.nm-pay-workspace{flex:1;min-height:0;padding:4px 10px 10px;gap:0;background:transparent}
-.nm-pay-content--full{display:flex;flex:1;min-height:0;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
-.nm-pay-scroll-body--operational{display:flex;flex:1;flex-direction:column;min-height:0;padding:6px}
-.nm-pay-section-strip{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.nm-pay-workspace{display:flex;flex:1;min-height:0;padding:6px;gap:0;background:transparent;overflow:hidden}
+.nm-pay-content--full{display:flex;flex:1;flex-direction:column;min-height:0;overflow:hidden;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
+.nm-pay-scroll-body--operational{display:flex;flex:1;flex-direction:column;gap:4px;min-height:0;padding:6px;overflow:hidden}
+.nm-pay-section-strip{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px}
 .nm-pay-section-strip__main{display:grid;gap:3px}
 .nm-pay-section-strip__title{font-size:12px;font-weight:800;color:#0F172A}
 .nm-pay-section-strip__meta{font-size:10px;color:#64748B}
 .nm-pay-inline-warning{display:inline-flex;align-items:center;min-height:20px;padding:0 7px;border-radius:999px;background:#FFF7ED;color:#9A3412;font-size:10px;font-weight:700}
 .nm-pay-inline-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#64748B}
-.nm-detail-tabs--operational{margin-bottom:6px;padding:2px;background:#F2F6FC;border:0;border-radius:11px}
-.nm-detail-tabs--operational .nm-detail-tab{padding:5px 8px;border-radius:8px;border-bottom:0;margin-bottom:0;font-size:11px}
+.nm-detail-tabs--operational{display:flex;flex-wrap:wrap;gap:4px;flex:0 0 auto;margin:0;padding:2px;background:#F2F6FC;border:0;border-radius:11px}
+.nm-detail-tabs--operational .nm-detail-tab{min-height:32px;padding:5px 10px;border-radius:8px;border-bottom:0;margin-bottom:0;font-size:11px}
 .nm-detail-tabs--operational .nm-detail-tab.active{background:#FFFFFF;color:#0F172A;box-shadow:0 4px 10px rgba(15,23,42,.05)}
-.nm-pay-table-wrap--dashboard{border:1px solid #E5EAF3;border-radius:14px;height:calc(100vh - 248px);min-height:392px;max-height:none;background:#FFFFFF;box-shadow:none}
+.nm-pay-card-main--operational .nm-pay-table-wrap--dashboard{flex:1 1 auto;min-height:0;height:auto;max-height:none;overflow:auto;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
 .nm-pay-table--operational{min-width:980px}
 .nm-pay-table--operational thead th{position:sticky;top:0;z-index:2;padding:7px 8px;background:#FFFFFF;color:#64748B;text-transform:uppercase;font-size:9.5px;letter-spacing:.08em;border-bottom:1px solid #E5EAF3;white-space:nowrap}
 .nm-pay-table--operational td{padding:5px 8px;border-bottom:1px solid #EEF2F7;vertical-align:middle;white-space:nowrap}
@@ -996,6 +996,10 @@ function shell() {
 .nm-pay-row-menu__item{display:flex;align-items:center;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:10px;background:transparent;color:#0F172A;font-size:12px;font-weight:600;text-align:left;cursor:pointer}
 .nm-pay-row-menu__item:hover{background:#F5F9FF}
 .nm-pay-row-menu__item:disabled{opacity:.45;cursor:not-allowed}
+.nm-pay-tab-panel--table{display:flex;flex:1;flex-direction:column;gap:6px;min-height:0;overflow:hidden}
+.nm-pay-tab-panel--table .nm-bulk-bar{flex:0 0 auto;gap:8px;margin:0;padding:6px 8px}
+.nm-pay-tab-panel--table .nm-pay-table-wrap--dashboard{flex:1 1 auto;min-height:0;height:auto}
+.nm-pay-tab-panel--table .nm-pay-pagination{flex:0 0 auto;gap:8px;padding:4px 0 0}
 .nm-turn-summary-wrap{height:100%;display:flex;flex-direction:column;overflow:auto}
 .nm-turn-summary-wrap .nm-pay-table thead th{position:sticky;top:0;z-index:3;background:#0F172A;color:#FFFFFF;border-bottom:1px solid #1E293B;padding:7px 8px}
 .nm-turn-summary-wrap .nm-pay-table tbody tr{height:48px}
@@ -1054,9 +1058,9 @@ function shell() {
 .module-nomina.nm-pay-fullscreen .sidebar{display:none!important;width:0!important;min-width:0!important;max-width:0!important;padding:0!important;border:0!important}
 .module-nomina.nm-pay-fullscreen .topbar-pro{left:0!important;padding-left:20px!important;width:100%!important}
 .module-nomina.nm-pay-fullscreen .nm-pay-card-main--operational{height:calc(100vh - 64px)}
-@media (max-width:1200px){.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-table-wrap--dashboard{height:calc(100vh - 270px)}}
+@media (max-width:1200px){.nm-pay-kpis-row{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}}
-@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
+@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-kpis-row,.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
