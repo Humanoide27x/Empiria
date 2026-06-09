@@ -2579,12 +2579,12 @@ async function listEmployeeDocumentCompliance(employeeId) {
   const id = toInt(employeeId);
   if (!id) throw new Error("employee_id inválido");
 
-  const result = await pool.query(
+     const result = await pool.query(
     `WITH latest_docs AS (
-       SELECT DISTINCT ON (ed.employee_id, ed.master_document_type_id, COALESCE(ed.employee_assignment_id, 0))
+       SELECT DISTINCT ON (ed.employee_id, COALESCE(ed.master_document_type_id, dt.master_document_type_id), COALESCE(ed.employee_assignment_id, 0))
          ed.employee_id,
          ed.employee_assignment_id,
-         ed.master_document_type_id,
+         COALESCE(ed.master_document_type_id, dt.master_document_type_id) AS master_document_type_id,
          ed.id AS employee_document_id,
          ed.document_type_id,
          ed.file_name,
@@ -2595,11 +2595,12 @@ async function listEmployeeDocumentCompliance(employeeId) {
          ed.validated,
          ed.observations
        FROM employee_documents ed
+       LEFT JOIN document_types dt ON dt.id = ed.document_type_id
        WHERE ed.employee_id = $1
-         AND ed.master_document_type_id IS NOT NULL
+         AND COALESCE(ed.master_document_type_id, dt.master_document_type_id) IS NOT NULL
        ORDER BY
          ed.employee_id,
-         ed.master_document_type_id,
+         COALESCE(ed.master_document_type_id, dt.master_document_type_id),
          COALESCE(ed.employee_assignment_id, 0),
          ed.uploaded_at DESC NULLS LAST,
          ed.id DESC

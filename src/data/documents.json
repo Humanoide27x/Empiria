@@ -151,5 +151,22 @@
     "rejectionReason": "",
     "createdAt": "2026-06-05T00:48:21.682Z",
     "updatedAt": "2026-06-05T00:48:21.682Z"
+  },
+  {
+    "id": 1780943989878,
+    "employeeId": 278,
+    "documentType": "CEDULA",
+    "issueDate": "",
+    "expirationDate": "",
+    "fileName": "CC_ADRIANA_DEL_PILAR_MORALES_CANTOR.pdf",
+    "storedFileName": "employee_278_1780943989872_CC_ADRIANA_DEL_PILAR_MORALES_CANTOR.pdf",
+    "fileUrl": "/uploads/documents/employee_278_1780943989872_CC_ADRIANA_DEL_PILAR_MORALES_CANTOR.pdf",
+    "validationStatus": "PENDIENTE_VALIDACION",
+    "uploadedBy": "Daniel Alexander Torrado Acevedo",
+    "validatedBy": "",
+    "validatedAt": "",
+    "rejectionReason": "",
+    "createdAt": "2026-06-08T18:39:49.878Z",
+    "updatedAt": "2026-06-08T18:39:49.878Z"
   }
 ]

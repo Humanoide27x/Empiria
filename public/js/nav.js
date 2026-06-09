@@ -33,6 +33,7 @@ export function renderModuleNav(modules = []) {
     "registro_novedades",
     "seguridad_salud_trabajo",
     "gestion_dotacion",
+    "centro_documentos",
     "repositorio_hojas_vida",
     "administracion_configuraciones",
     "portal_colaborador",
@@ -68,6 +69,7 @@ export function renderModuleNav(modules = []) {
       administracion_configuraciones: "Configuración",
       seguridad_salud_trabajo: "SST",
       registro_novedades: "Novedades",
+      centro_documentos: "Centro de Documentos",
       repositorio_hojas_vida: "Repositorio HV",
       portal_colaborador: "Colaboradores",
     };
@@ -83,6 +85,7 @@ export function renderModuleNav(modules = []) {
       "cobertura_calculadora",
       "administracion_configuraciones",
       "gestion_dotacion",
+      "centro_documentos",
       "portal_colaborador",
     ]);
     const submodules = noSubmoduleKeys.has(moduleKey) ? [] : (view?.submodules || []);
@@ -310,6 +313,13 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   if (moduleKey === "repositorio_hojas_vida") {
     const { loadRepositorioHvModule } = await import(_iv('./modules/repositorio-hv.js'));
     return await loadRepositorioHvModule();
+  }
+
+  if (moduleKey === "centro_documentos") {
+    const { loadCentroDocumentosModule, wireBulkEvents } = await import(_iv('./modules/document-center.js'));
+    const html = await loadCentroDocumentosModule();
+    setTimeout(wireBulkEvents, 0);
+    return html;
   }
 
   if (moduleKey === "gestion_dotacion") {

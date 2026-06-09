@@ -33,6 +33,7 @@ const { requestLogger, emit }   = require("./middleware/logger");
 const { corsMiddleware }        = require("./middleware/cors");
 const { upload: mkUpload, normalizeUploadedFile } = require("./middleware/upload");
 const { requireAuth }           = require("./modules/auth/auth.helpers");
+const { ROLES, normalizeRole }  = require("./auth/permissions");
 const { isR2Configured, getPrivateUrl } = require("./config/storage");
 const { sendJson }              = require("./http/response");
 
@@ -71,10 +72,35 @@ app.use(
 );
 
 app.disable("x-powered-by");
+app.get("/health", (_req, res) => {
+  sendJson(res, 200, { ok: true, status: "up" });
+});
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+app.use((req, res, next) => {
+  const guardedPrefixes = ["/documents/bulk", "/document-center", "/document-audit"];
+  const pathname = req.path || "";
+  const isGuarded = guardedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+
+  if (!isGuarded) {
+    return next();
+  }
+
+  const auth = requireAuth(req, res);
+  if (!auth) {
+    return;
+  }
+
+  if (normalizeRole(auth.user.role) !== ROLES.ADMINISTRATOR) {
+    sendJson(res, 403, { ok: false, message: "No tienes permiso para esta accion" });
+    return;
+  }
+
+  next();
+});
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 const loginLimiter = rateLimit({

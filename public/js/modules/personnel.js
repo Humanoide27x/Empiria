@@ -7,7 +7,7 @@ import {
   syncEmployeeHeaderFromDraft, getDepartmentMunicipalities,
   getCompanyOptionsHtml, getContractOptionsHtml, formatCompany, formatContract,
   ensureOfficialMunicipalitiesLoaded, getOfficialMunicipalities,
-  findOfficialMunicipality, normalizeMunicipalityText,
+  findOfficialMunicipality, normalizeMunicipalityText, getMunicipalityName,
 } from '../utils.js';
 import {
   COLOMBIA_DEPARTMENTS, LICITACION_CARGOS,
@@ -199,6 +199,30 @@ async function getEmployeeDossierPayload(id, { force = false } = {}) {
   if (dossier) state.personnelDossierCache.set(key, dossier);
   return dossier;
 }
+
+async function getEmployeeDocumentsCollection(employeeId, { force = false } = {}) {
+  const key = String(employeeId || "").trim();
+  if (!key) return [];
+  if (!state.personnelEmployeeDocumentsCache) state.personnelEmployeeDocumentsCache = new Map();
+
+  if (!force && state.personnelEmployeeDocumentsCache.has(key)) {
+    return state.personnelEmployeeDocumentsCache.get(key) || [];
+  }
+
+  const res = await apiFetch(`/documents/employee/${encodeURIComponent(key)}`);
+  const documents = Array.isArray(res.data) ? res.data : [];
+  state.personnelEmployeeDocumentsCache.set(key, documents);
+  return documents;
+}
+
+const EMPLOYEE_DOCUMENT_UI_STATE = {
+  employeeId: null,
+  replaceDocumentId: null,
+  replaceDocumentTypeKey: "",
+  busy: false,
+};
+
+let employeeDocumentHandlersBound = false;
 
 function getDossierTone(status) {
   const normalized = String(status || "").toLowerCase();
@@ -656,6 +680,149 @@ function syncPersonnelSaveStateDom() {
   chip.textContent = saveState.label;
 }
 
+function clonePersonnelDraftSnapshot(value = state.personnelDraft || {}) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function getPersonnelFieldAutocomplete(fieldName) {
+  const map = {
+    firstName: "given-name",
+    secondName: "additional-name",
+    firstLastName: "family-name",
+    secondLastName: "additional-name",
+    documentNumber: "off",
+    birthDay: "bday-day",
+    birthMonth: "bday-month",
+    birthYear: "bday-year",
+    phone: "tel",
+    email: "email",
+    address: "street-address",
+    neighborhood: "address-line2",
+    residenceMunicipality: "address-level2",
+    birthMunicipality: "address-level2",
+    expeditionMunicipality: "address-level2",
+    municipalityId: "address-level2",
+    institution: "organization",
+    site: "organization-title",
+    bankName: "organization",
+  };
+  return map[fieldName] || "off";
+}
+
+function configurePersonnelFormForKeyboard(form, { focusFirst = false } = {}) {
+  if (!form) return;
+
+  const fieldSelector = 'input:not([type="hidden"]):not([type="file"]):not([disabled]), select:not([disabled]), textarea:not([disabled])';
+  const priorityOrder = [
+    "documentNumber",
+    "documentType",
+    "birthDay",
+    "birthMonth",
+    "birthYear",
+    "expeditionDay",
+    "expeditionMonth",
+    "expeditionYear",
+    "biologicalSex",
+    "bloodType",
+    "civilStatus",
+    "birthCountry",
+    "phone",
+    "email",
+    "address",
+    "neighborhood",
+    "residenceMunicipality",
+    "residenceZone",
+  ];
+
+  const isVisibleField = (element) =>
+    element &&
+    !element.disabled &&
+    !element.closest(".hidden") &&
+    element.getClientRects().length > 0;
+
+  const fields = Array.from(form.querySelectorAll(fieldSelector)).filter(isVisibleField);
+
+  fields.forEach((field, index) => {
+    const baseName = String(field.name || field.id || `field-${index + 1}`)
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .toLowerCase();
+    if (!field.id) field.id = `personnel-${baseName}-${index + 1}`;
+    field.setAttribute("autocomplete", getPersonnelFieldAutocomplete(field.name));
+    const label = field.closest("label");
+    if (label) label.setAttribute("for", field.id);
+  });
+
+  const orderedFields = fields
+    .map((field, index) => ({ field, index }))
+    .sort((left, right) => {
+      const leftPriority = priorityOrder.indexOf(left.field.name);
+      const rightPriority = priorityOrder.indexOf(right.field.name);
+      const safeLeft = leftPriority === -1 ? 999 + left.index : leftPriority;
+      const safeRight = rightPriority === -1 ? 999 + right.index : rightPriority;
+      return safeLeft - safeRight;
+    })
+    .map((item) => item.field);
+
+  orderedFields.forEach((field, index) => {
+    field.tabIndex = index + 1;
+  });
+
+  const primaryActions = Array.from(form.querySelectorAll("[data-personnel-primary-action]")).filter(isVisibleField);
+  primaryActions.forEach((button, index) => {
+    button.tabIndex = orderedFields.length + index + 1;
+  });
+
+  document.getElementById("backToPersonnelTable")?.setAttribute("tabindex", "-1");
+  document.querySelectorAll("[data-step-tab]").forEach((button) => button.setAttribute("tabindex", "-1"));
+  form.querySelectorAll('button:not([data-personnel-primary-action])').forEach((button) => button.setAttribute("tabindex", "-1"));
+
+  if (!form.dataset.personnelFocusTrapBound) {
+    form.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const tabbableFields = Array.from(form.querySelectorAll(fieldSelector)).filter(isVisibleField);
+      const tabbableActions = Array.from(form.querySelectorAll("[data-personnel-primary-action]")).filter(isVisibleField);
+      const tabbables = [...tabbableFields, ...tabbableActions];
+      if (!tabbables.length) return;
+
+      const first = tabbables[0];
+      const last = tabbables[tabbables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    form.dataset.personnelFocusTrapBound = "true";
+  }
+
+  if (focusFirst) {
+    const firstField = form.querySelector('[name="documentNumber"]') || orderedFields[0] || primaryActions[0] || null;
+    if (firstField) {
+      setTimeout(() => {
+        firstField.focus({ preventScroll: true });
+        if (typeof firstField.select === "function" && firstField.tagName === "INPUT") firstField.select();
+      }, 0);
+    }
+  }
+}
+
+async function restorePersonnelDraftFromBaseline() {
+  state.personnelDraft = clonePersonnelDraftSnapshot(state.personnelDraftBaselineData || {});
+  state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
+  state.personnelSaveState = "clean";
+  syncDraftOfficialMunicipality(state.personnelDraft);
+
+  try {
+    await loadEducationalScopeOptions(state.personnelDraft, { force: true });
+    syncInstitutionalSelectionsWithCatalog(state.personnelDraft, _cachedPayload?.educationalCatalog || {});
+    await loadGestorScopeOptions(state.personnelDraft, { force: true });
+  } catch (error) {
+    console.warn("[personnel] No fue posible restaurar catalogos tras cancelar:", error.message);
+  }
+}
+
 function buildTabHistorial(dossier) {
   const alerts = Array.isArray(dossier?.alerts) ? dossier.alerts : [];
   const timeline = Array.isArray(dossier?.timeline) ? dossier.timeline : [];
@@ -703,10 +870,10 @@ function buildExpedienteSectionBlock(title, content) {
   `;
 }
 
-function buildTabDatosGeneralesGroup(draftValue, draft, residenceMunicipality) {
+function buildTabDatosGeneralesGroup(draftValue, draft, expeditionDepartment, birthDepartment, isEditMode = false) {
   return `
     <section class="personnel-section expediente-group-grid">
-      ${buildExpedienteSectionBlock("Datos Personales", buildTabDatosPersonales(draftValue, residenceMunicipality))}
+      ${buildExpedienteSectionBlock("Complementarios de Identificación", buildTabIdentificacionComplementary(draftValue, expeditionDepartment, birthDepartment, isEditMode))}
       ${buildExpedienteSectionBlock("Estudios", buildTabEstudios(draftValue))}
       ${buildExpedienteSectionBlock("Experiencia", buildTabExperiencia(draft))}
       ${buildExpedienteSectionBlock("Seguimiento", buildTabSeguimiento(draftValue))}
@@ -827,7 +994,7 @@ function buildPersonnelMacroSection({
   }
 
   if (activeTab === "datos_generales") {
-    return buildTabDatosGeneralesGroup(draftValue, draft, residenceMunicipality);
+    return buildTabDatosGeneralesGroup(draftValue, draft, expeditionDepartment, birthDepartment, isEditMode);
   }
 
   if (activeTab === "vinculacion_laboral") {
@@ -1081,6 +1248,22 @@ function getPersonnelBirthDate(item) {
   return `${year}-${month}-${day}`;
 }
 
+function getPersonnelExpeditionDate(item) {
+  const direct =
+    item.expeditionDate ||
+    item.expedition_date ||
+    item.fecha_expedicion ||
+    item.fechaExpedicion ||
+    "";
+  if (direct) return direct;
+
+  const day = String(item.expeditionDay || item.fecha_expedicion_dia || "").padStart(2, "0");
+  const month = String(item.expeditionMonth || item.fecha_expedicion_mes || "").padStart(2, "0");
+  const year = String(item.expeditionYear || item.fecha_expedicion_anio || "");
+  if (!day || !month || !year) return "";
+  return `${year}-${month}-${day}`;
+}
+
 function getPersonnelAge(item) {
   const birthDate = getPersonnelBirthDate(item);
   if (!birthDate) return "—";
@@ -1142,15 +1325,18 @@ function getPersonnelDocumentMetrics(employee, allDocuments = []) {
     const rejected = Number(employee.documentRejected || 0);
     const expired = Number(employee.documentExpired || 0);
     const missing = Math.max(0, total - validated - pending - rejected - expired);
+    const uploaded = Math.max(0, total - missing);
+    const percent = total ? Math.round((uploaded / total) * 100) : 0;
     return {
       total,
+      uploaded,
       validated,
       pending,
       rejected,
       expired,
       expiring: 0,
       missing,
-      percent: total ? Math.round((validated / total) * 100) : 0,
+      percent,
     };
   }
 
@@ -1204,7 +1390,7 @@ function getPersonnelDocumentMetrics(employee, allDocuments = []) {
   });
 
   const total = requiredDocs.length;
-  const percent = total ? Math.round((validated / total) * 100) : 100;
+  const percent = total ? Math.round((uploaded / total) * 100) : 100;
 
   return {
     ...hv,
@@ -1225,238 +1411,676 @@ function buildPersonnelStatusChip(label) {
   return `<span class="status-chip ${normalizeChipStatus(label)}">${escapeHtml(label)}</span>`;
 }
 
-function buildPersonnelDetailPanel(employee, allDocuments = []) {
-  if (!employee) {
-    return `
-      <div class="pnl-empty-state">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+const PERSONNEL_WORKSPACE_TABS = [
+  { key: "identificacion", label: "Identificación" },
+  { key: "datos_generales", label: "Datos Personales" },
+  { key: "vinculacion_laboral", label: "Vinculación" },
+  { key: "historial_observaciones", label: "Historial" },
+];
+
+function getPersonnelWorkspaceTab() {
+  const validTabs = new Set(PERSONNEL_WORKSPACE_TABS.map((tab) => tab.key));
+  const current = String(state.personnelWorkspaceTab || "").trim();
+  if (validTabs.has(current)) return current;
+  state.personnelWorkspaceTab = "identificacion";
+  return "identificacion";
+}
+
+function buildPersonnelDetailEmptyState(options = {}) {
+  const canSelectFirst = Boolean(options.canSelectFirst);
+  return `
+    <div class="personnel-expediente-empty">
+      <div class="personnel-expediente-empty-icon">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55">
+          <path d="M8 4.75h8.5A2.75 2.75 0 0 1 19.25 7.5v9A2.75 2.75 0 0 1 16.5 19.25h-9A2.75 2.75 0 0 1 4.75 16.5V8"></path>
+          <path d="M8.5 4.75V9.5A1.5 1.5 0 0 0 10 11h4.75"></path>
+          <path d="M9 15h6"></path>
+          <path d="M9 12.25h2.5"></path>
         </svg>
-        <p>Selecciona un empleado para ver su expediente</p>
       </div>
-    `;
+      <h3>Selecciona un colaborador</h3>
+      <p>El expediente aparecerá aquí con hoja de vida, documentos, cobertura, nómina y seguimiento.</p>
+      ${canSelectFirst ? `<button type="button" class="btn btn-secondary personnel-expediente-empty-btn" data-open-first-personnel>Ver primer colaborador</button>` : ""}
+    </div>
+  `;
+}
+
+function buildPersonnelDetailLoadingState(employee) {
+  return `
+    <div class="personnel-expediente-empty personnel-expediente-empty-loading">
+      <div class="personnel-expediente-empty-icon personnel-expediente-empty-spinner">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M21 12a9 9 0 1 1-3.2-6.9"></path>
+        </svg>
+      </div>
+      <h3>Cargando expediente</h3>
+      <p>${escapeHtml(getPersonnelFullName(employee) || "Preparando la información del colaborador.")}</p>
+    </div>
+  `;
+}
+
+function buildPersonnelExpedienteField(label, value, options = {}) {
+  const toneClass = options.tone ? ` tone-${escapeAttr(options.tone)}` : "";
+  const spanClass = options.span ? ` span-${escapeAttr(String(options.span))}` : "";
+  return `
+    <div class="personnel-expediente-field${toneClass}${spanClass}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${value}</strong>
+    </div>
+  `;
+}
+
+function buildPersonnelExpedienteFields(items = []) {
+  return items
+    .filter((item) => item && item.label)
+    .map((item) => buildPersonnelExpedienteField(item.label, item.value, item))
+    .join("");
+}
+
+function buildPersonnelExpedienteSection(title, content, extraClass = "") {
+  const className = extraClass
+    ? `personnel-expediente-section ${extraClass}`.trim()
+    : "personnel-expediente-section";
+  return `
+    <section class="${className}">
+      <header class="personnel-expediente-section-head">
+        <h4>${escapeHtml(title)}</h4>
+      </header>
+      <div class="personnel-expediente-section-body">
+        ${content}
+      </div>
+    </section>
+  `;
+}
+
+function buildPersonnelExpedienteCollection(items = [], emptyMessage = "Sin información registrada.", renderItem) {
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!safeItems.length) {
+    return `<div class="personnel-expediente-empty-block">${escapeHtml(emptyMessage)}</div>`;
+  }
+  return safeItems.map((item, index) => renderItem(item, index)).join("");
+}
+
+function toPersonnelDisplayCase(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("es-CO")
+    .replace(/(^|[\s\-/.(])([\p{L}])/gu, (match, prefix, letter) => `${prefix}${letter.toLocaleUpperCase("es-CO")}`);
+}
+
+function formatPersonnelBoolean(value) {
+  if (value === true || value === "true" || value === "SI" || value === "Sí") return "Sí";
+  if (value === false || value === "false" || value === "NO") return "No";
+  return "—";
+}
+
+function formatPersonnelDocumentSummary(summary = {}, fallbackMetrics = {}) {
+  const total = Number(summary.totalRequired || fallbackMetrics.total || 0);
+  const uploaded = Number(summary.uploaded || fallbackMetrics.uploaded || summary.approved || fallbackMetrics.validated || 0);
+  const approved = Number(summary.approved || fallbackMetrics.validated || uploaded || 0);
+  const expiring = Number(summary.expiring || fallbackMetrics.expiring || 0);
+  const expired = Number(summary.expired || fallbackMetrics.expired || 0);
+  const missing = Number(summary.missing || fallbackMetrics.missing || 0);
+  const rejected = Number(summary.rejected || fallbackMetrics.rejected || 0);
+  const pending = Number(summary.pending || fallbackMetrics.pending || 0);
+  const percent = total ? Math.round((approved / total) * 100) : Number(fallbackMetrics.percent || 0);
+  return {
+    total,
+    uploaded,
+    approved,
+    expiring,
+    expired,
+    missing,
+    rejected,
+    pending,
+    percent: Math.max(0, Math.min(100, percent)),
+  };
+}
+
+function buildPersonnelDocumentsTab(employee, dossierSummary, docMetrics) {
+  const summary = formatPersonnelDocumentSummary(dossierSummary.documents.summary, docMetrics);
+  const hvStatus = getPersonnelHvStatusFull(employee, []);
+  const progressTone = summary.percent >= 100 ? "success" : summary.percent >= 60 ? "warning" : "danger";
+  const progressLabel = summary.percent >= 100
+    ? "Completo"
+    : summary.percent >= 60
+      ? "En revisión"
+      : "Incompleto";
+  const documentItems = Array.isArray(dossierSummary.documents.items) ? dossierSummary.documents.items : [];
+
+  const itemsHtml = buildPersonnelExpedienteCollection(
+    documentItems,
+    "La matriz documental detallada estará disponible cuando el expediente tenga soportes vinculados.",
+    (item) => {
+      const name = item.name || item.label || item.documentName || item.documentTypeName || item.documentType || "Documento";
+      const status = item.statusLabel || item.status || item.validationStatus || "Pendiente";
+      const required = item.required === false ? "Opcional" : "Obligatorio";
+      const tone = normalizeChipStatus(status);
+      const icon = tone === "success"
+        ? "✓"
+        : tone === "warning"
+          ? "•"
+          : tone === "danger"
+            ? "!"
+            : "•";
+      const dateParts = [
+        item.issueDate ? `Exp. ${formatUiDate(item.issueDate)}` : "",
+        item.expirationDate ? `Vence ${formatUiDate(item.expirationDate)}` : "",
+      ].filter(Boolean);
+      return `
+        <article class="personnel-expediente-check-item tone-${escapeAttr(tone)}">
+          <div class="personnel-expediente-check-icon" aria-hidden="true">${escapeHtml(icon)}</div>
+          <div class="personnel-expediente-check-copy">
+            <strong>${escapeHtml(name)}</strong>
+            <p>${escapeHtml(required)}${dateParts.length ? ` · ${escapeHtml(dateParts.join(" · "))}` : ""}</p>
+          </div>
+          <span class="status-chip ${tone}">${escapeHtml(status)}</span>
+        </article>
+      `;
+    }
+  );
+
+  const checklistHtml = documentItems.length
+    ? `<div class="personnel-expediente-checklist-grid">${itemsHtml}</div>`
+    : itemsHtml;
+
+  return [
+    buildPersonnelExpedienteSection(
+      "Checklist documental",
+      `
+        <div class="personnel-expediente-doc-summary">
+          <div class="personnel-expediente-doc-hero">
+            <div class="personnel-expediente-doc-meter">
+              <strong>${summary.percent}%</strong>
+              <span>${escapeHtml(progressLabel)}</span>
+            </div>
+            <span class="status-chip ${hvStatus.className}">${escapeHtml(hvStatus.label)}</span>
+          </div>
+          <div class="personnel-expediente-doc-progress tone-${escapeAttr(progressTone)}">
+            <span style="width:${summary.percent}%"></span>
+          </div>
+          <div class="personnel-expediente-metrics personnel-expediente-metrics-4">
+            ${buildPersonnelExpedienteField("Cargados", escapeHtml(`${summary.uploaded || docMetrics.uploaded || 0}/${summary.total || 0}`), { tone: "success" })}
+            ${buildPersonnelExpedienteField("Pendientes", escapeHtml(String(summary.pending + summary.missing)), { tone: "warning" })}
+            ${buildPersonnelExpedienteField("Por vencer", escapeHtml(String(summary.expiring)), { tone: "warning" })}
+            ${buildPersonnelExpedienteField("Vencidos / rechazados", escapeHtml(String(summary.expired + summary.rejected)), { tone: "danger" })}
+          </div>
+          <div class="personnel-expediente-doc-actions">
+            <div class="personnel-expediente-doc-caption">
+              <strong>${escapeHtml(`${summary.approved || 0} validados`)}</strong>
+              <span>${escapeHtml(summary.total ? `${summary.total} requisitos en matriz` : "Sin matriz documental cargada")}</span>
+            </div>
+            <button type="button" class="btn btn-secondary" data-documents-personnel-id="${escapeAttr(employee.id)}">Gestionar documentos</button>
+          </div>
+        </div>
+        ${checklistHtml}
+      `,
+      "personnel-expediente-section-docs"
+    ),
+  ].join("");
+}
+
+function buildPersonnelObservationsTab(observations = []) {
+  return buildPersonnelExpedienteSection(
+    "Observaciones registradas",
+    buildPersonnelExpedienteCollection(
+      observations,
+      "No hay observaciones registradas para este colaborador.",
+      (observation) => `
+        <article class="personnel-expediente-note">
+          <div class="personnel-expediente-note-meta">
+            <strong>${escapeHtml(observation.user || "Sistema")}</strong>
+            <span>${escapeHtml(formatUiDate(observation.date || ""))}</span>
+          </div>
+          <p>${escapeHtml(observation.text || "")}</p>
+          ${observation.attachmentUrl
+            ? `<a href="${escapeAttr(observation.attachmentUrl)}" rel="noopener noreferrer">${escapeHtml(observation.attachmentName || "Ver adjunto")}</a>`
+            : ""}
+        </article>
+      `
+    )
+  );
+}
+
+function buildPersonnelStudiesTab(draft) {
+  const studies = Array.isArray(draft.studies) ? draft.studies : [];
+  return buildPersonnelExpedienteSection(
+    "Formación académica",
+    `<div class="personnel-expediente-card-grid">${buildPersonnelExpedienteCollection(
+      studies,
+      "No hay estudios registrados para este colaborador.",
+      (study) => `
+        <article class="personnel-expediente-record">
+          <strong>${escapeHtml(study.degree || "Sin título registrado")}</strong>
+          <p>${escapeHtml([study.educationLevel, study.institution, study.year].filter(Boolean).join(" · ") || "Sin detalles de formación")}</p>
+        </article>
+      `
+    )}</div>`
+  );
+}
+
+function buildPersonnelExperienceTab(draft) {
+  const experiences = Array.isArray(draft.workExperience) ? draft.workExperience : [];
+  return buildPersonnelExpedienteSection(
+    "Experiencia laboral",
+    `<div class="personnel-expediente-card-grid">${buildPersonnelExpedienteCollection(
+      experiences,
+      "No hay experiencia laboral registrada para este colaborador.",
+      (experience) => `
+        <article class="personnel-expediente-record">
+          <strong>${escapeHtml(experience.empresa || "Empresa sin nombre")}</strong>
+          <p>${escapeHtml([
+            experience.cargo || "",
+            experience.fechaInicio ? `Inicio ${experience.fechaInicio}` : "",
+            experience.fechaFin ? `Fin ${experience.fechaFin}` : "Actual",
+            experience.dias != null ? `${experience.dias} días` : "",
+          ].filter(Boolean).join(" · ") || "Sin detalle de experiencia")}</p>
+        </article>
+      `
+    )}</div>`
+  );
+}
+
+function getPersonnelComplianceSummary(item, allDocuments = []) {
+  const metrics = getPersonnelDocumentMetrics(item, allDocuments);
+  const hv = allDocuments.length
+    ? getPersonnelHvStatusFull(item, allDocuments)
+    : { label: "", className: "" };
+  let label = "Parcial";
+  let tone = "warning";
+  const percent = Math.max(0, Math.min(100, Number(metrics.percent || 0)));
+
+  if (hv.label === "No apto documental" || metrics.rejected > 0 || metrics.expired > 0 || percent < 50) {
+    label = "Crítico";
+    tone = "danger";
+  } else if (hv.label === "Completa" || percent >= 95) {
+    label = "Completo";
+    tone = "success";
   }
 
-  const docMetrics    = getPersonnelDocumentMetrics(employee, allDocuments);
-  const fullName      = getPersonnelFullName(employee);
-  const role          = getPersonnelRole(employee);
+  return {
+    percent,
+    label,
+    tone,
+  };
+}
+
+function buildPersonnelWorkspaceListItem(item, isSelected, allDocuments = []) {
+  const fullName = getPersonnelFullName(item);
+  const documentNumber = getPersonnelDocument(item);
+  const municipality = getPersonnelMunicipality(item) || "Sin municipio";
+  const displayName = toPersonnelDisplayCase(fullName || "Sin nombre");
+  const displayMunicipality = toPersonnelDisplayCase(municipality);
+  const compliance = getPersonnelComplianceSummary(item, allDocuments);
+  return `
+    <button
+      type="button"
+      class="personnel-dossier-list-item${isSelected ? " selected" : ""}"
+      data-select-personnel-id="${escapeAttr(item.id)}"
+      aria-pressed="${isSelected ? "true" : "false"}"
+      title="${escapeAttr(`${displayName} · CC ${documentNumber || "—"} · ${displayMunicipality}`)}"
+    >
+      <span class="personnel-dossier-list-dot tone-${escapeAttr(compliance.tone)}" aria-hidden="true"></span>
+      <span class="personnel-dossier-list-copy">
+        <strong title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</strong>
+        <span class="personnel-dossier-list-meta" title="${escapeAttr(`CC ${documentNumber || "—"} · ${displayMunicipality}`)}">
+          CC ${escapeHtml(documentNumber || "—")} · ${escapeHtml(displayMunicipality)}
+        </span>
+      </span>
+    </button>
+  `;
+}
+
+function buildPersonnelDetailPanel(employee, allDocuments = null, dossier = null, options = {}) {
+  if (!employee) {
+    return buildPersonnelDetailEmptyState(options);
+  }
+  if (allDocuments === null) {
+    return buildPersonnelDetailLoadingState(employee);
+  }
+
+  const draft = hydratePersonnelDraft(employee);
+  const draftValue = (name, fallback = "") => {
+    const value = draft[name];
+    if (value === undefined || value === null || value === "") return fallback;
+    return value;
+  };
+  const assignment = dossier?.currentAssignment || {};
+  const fullName = getPersonnelDraftDisplayName(draftValue);
+  const workStatus = getPersonnelWorkStatus(employee);
+  const statusBadge = formatPersonnelStatusBadge(workStatus);
+  const role = getPersonnelRole(employee);
+  const company = getPersonnelCompanyLabel(employee);
+  const municipality = getPersonnelMunicipality(employee) || draftValue("municipalityName");
+  const institution = getPersonnelInstitution(employee);
+  const site = getPersonnelSite(employee);
+  const modality = getPersonnelModality(employee);
+  const documentType = String(draftValue("documentType", employee.documentType || employee.tipo_documento || "CC")).toUpperCase();
   const documentNumber = getPersonnelDocument(employee);
-  const workStatus    = getPersonnelWorkStatus(employee);
-  const contractStart = formatUiDate(getPersonnelCoverageStart(employee));
-  const contractEnd   = formatUiDate(employee.terminationDate || employee.fecha_retiro || "");
-  const birthDate     = getPersonnelBirthDate(employee);
-  const age           = getPersonnelAge(employee);
-  const category      = getPersonnelCategory(employee);
-  const docType       = escapeHtml(employee.documentType || employee.tipo_documento || "CC");
-  const pct           = Math.max(0, Math.min(100, docMetrics.percent));
-  const barColor      = pct >= 80 ? "#16a34a" : pct >= 50 ? "#d97706" : "#dc2626";
-  const birthStr      = birthDate
-    ? `${escapeHtml(formatUiDate(birthDate))}${age ? ` · ${escapeHtml(age)}` : ""}`
-    : "—";
-  const sexLabel = { F: "Femenino", M: "Masculino" }[String(employee.biologicalSex || employee.sex || "").toUpperCase()] || "—";
-
-  const obsArr = Array.isArray(employee.observations)
-    ? employee.observations.slice().sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 6)
+  const documentLabel = [documentType, documentNumber].filter(Boolean).join(" ");
+  const birthDate = getPersonnelBirthDate(employee);
+  const expeditionDate = getPersonnelExpeditionDate(employee);
+  const age = getPersonnelAge(employee);
+  const documentMetrics = getPersonnelDocumentMetrics(employee, allDocuments);
+  const compliance = getPersonnelComplianceSummary(employee, allDocuments);
+  const dossierSummary = buildDossierOperationalSummaryModel(dossier);
+  const indicators = dossierSummary.indicators || {};
+  const coverageSummary = dossierSummary.coverage?.summary || {};
+  const payrollSummary = dossierSummary.payroll || {};
+  const dossierAlerts = dossierSummary.history?.alerts || [];
+  const observations = Array.isArray(draft.observations)
+    ? draft.observations.slice().sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
     : [];
-
-  const avatarContent = employee.photoUrl
-    ? `<img src="${escapeAttr(employee.photoUrl)}" alt="Foto" class="cv-photo-img" />`
+  const activeTab = getPersonnelWorkspaceTab();
+  const photoUrl = employee.photoUrl || employee.photo_url || draft.photoUrl || "";
+  const photoHtml = photoUrl
+    ? `<img src="${escapeAttr(photoUrl)}" alt="Foto del colaborador" class="cv-photo-img" />`
     : `<span class="cv-photo-initials" style="${getPersonnelAvatarStyle(employee)}">${escapeHtml(getPersonnelInitials(employee))}</span>`;
+  const headerChips = [
+    { label: statusBadge.label, tone: statusBadge.tone },
+  ].filter((item) => String(item.label || "").trim());
+  const documentsBadge = formatDossierDocumentsBadge(dossierSummary.documents.summary || {}, indicators.documentsStatus || "");
+  const coverageBadge = formatDossierCoverageBadge(coverageSummary, assignment);
+  const payrollBadge = formatDossierPayrollBadge(indicators, payrollSummary);
+  const noveltiesBadge = formatDossierNoveltiesBadge(indicators.activeNovelties ?? payrollSummary.activeNoveltiesCount ?? 0);
+  const alertsBadge = formatDossierAlertsBadge(dossierAlerts);
+  const heroBadgesHtml = [
+    buildDossierBadge(documentsBadge),
+    buildDossierBadge(coverageBadge),
+    buildDossierBadge(payrollBadge),
+    buildDossierBadge(noveltiesBadge),
+    buildDossierBadge(alertsBadge),
+  ].join("");
 
-  const statusCls = workStatus === "ACTIVO"   ? "pnl-chip-green"
-                  : workStatus === "INACTIVO" ? "pnl-chip-red"
-                  : "pnl-chip-gray";
+  const identificationHtml = buildPersonnelExpedienteSection(
+    "Identificación",
+    `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+      ${buildPersonnelExpedienteFields([
+        { label: "Documento", value: escapeHtml(documentLabel || "—"), span: 2 },
+        { label: "Fecha de nacimiento", value: escapeHtml(birthDate ? `${formatUiDate(birthDate)}${age && age !== "—" ? ` · ${age}` : ""}` : "—") },
+        { label: "Fecha de expedición", value: escapeHtml(expeditionDate ? formatUiDate(expeditionDate) : "—") },
+        { label: "Sexo", value: escapeHtml(({ F: "Femenino", M: "Masculino" }[String(draftValue("biologicalSex", employee.biologicalSex || employee.sex || "")).toUpperCase()] || "—")) },
+        { label: "Grupo sanguíneo", value: escapeHtml(draftValue("bloodType", employee.grupo_sanguineo || "—")) },
+        { label: "Estado civil", value: escapeHtml(draftValue("civilStatus", employee.estado_civil || "—")) },
+        { label: "Nacionalidad", value: escapeHtml(draftValue("birthCountry", employee.birthCountry || employee.pais_nacimiento || "Colombia") || "—") },
+      ])}
+    </div>`
+  );
 
-  const row = (lbl, val, cls = "") =>
-    `<div class="pnl-row">
-       <span class="pnl-lbl">${lbl}</span>
-       <span class="pnl-val${cls ? " " + cls : ""}">${val}</span>
-     </div>`;
+  const identificationOriginHtml = buildPersonnelExpedienteSection(
+    "Origen y expedición",
+    `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+      ${buildPersonnelExpedienteFields([
+        { label: "Departamento de expedición", value: escapeHtml(draftValue("expeditionDepartment", employee.expeditionDepartment || employee.departamento_expedicion || "—")) },
+        { label: "Municipio de expedición", value: escapeHtml(getNormalizedMunicipalityValue([draftValue("expeditionMunicipality"), employee.expeditionMunicipalityName, employee.expedition_municipality_name, employee.expeditionMunicipality, employee.municipio_expedicion])) },
+        { label: "Departamento de nacimiento", value: escapeHtml(draftValue("birthDepartment", employee.birthDepartment || employee.departamento_nacimiento || "—")) },
+        { label: "Municipio de nacimiento", value: escapeHtml(getNormalizedMunicipalityValue([draftValue("birthMunicipality"), employee.birthMunicipalityName, employee.birth_municipality_name, employee.birthMunicipality, employee.municipio_nacimiento])) },
+      ])}
+    </div>`
+  );
+
+  const generalContactHtml = buildPersonnelExpedienteSection(
+    "Datos personales",
+    `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+      ${buildPersonnelExpedienteFields([
+        { label: "Teléfono", value: escapeHtml(draftValue("phone", employee.celular || "—")) },
+        { label: "Correo", value: escapeHtml(draftValue("email", employee.correo_electronico || "—")), span: 2 },
+        { label: "Dirección", value: escapeHtml(draftValue("address", employee.direccion_residencia || "—")), span: 2 },
+        { label: "Barrio", value: escapeHtml(draftValue("neighborhood", employee.barrio_residencia || "—")) },
+        { label: "Municipio de residencia", value: escapeHtml(getNormalizedMunicipalityValue([draftValue("residenceMunicipality"), employee.residenceMunicipalityName, employee.residence_municipality_name, employee.residenceMunicipality, employee.municipio_residencia])), span: 2 },
+        { label: "Zona", value: escapeHtml(draftValue("residenceZone", employee.zona_residencia || "—")) },
+      ])}
+    </div>`
+  );
+
+  const licitationHtml = buildPersonnelExpedienteSection(
+    "Licitación",
+    `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+      ${buildPersonnelExpedienteFields([
+        { label: "Presentado en oferta", value: escapeHtml(formatPersonnelBoolean(draftValue("presentedInOffer", employee.presentedInOffer || employee.presented_in_offer || ""))) },
+        { label: "Cargo presentado", value: escapeHtml(draftValue("offerPosition", employee.offerPosition || employee.cargo_presentado_en_licitacion || "—")), span: 3 },
+      ])}
+    </div>`
+  );
+
+  const vinculationHtml = [
+    buildPersonnelExpedienteSection(
+      "Vinculación laboral",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "Empresa", value: escapeHtml(company) },
+          { label: "Cargo", value: escapeHtml(role) },
+          { label: "Contrato", value: escapeHtml(getPersonnelContractLabel(employee)) },
+          { label: "Tipo de contrato", value: escapeHtml(getPersonnelContractType(employee)) },
+          { label: "Jornada", value: escapeHtml(getPersonnelWorkTime(employee)) },
+          { label: "Estado", value: escapeHtml(workStatus), tone: statusBadge.tone },
+          { label: "Ingreso", value: escapeHtml(formatUiDate(draftValue("startDate", employee.startDate || employee.start_date || ""))) },
+          { label: "Inicio cobertura", value: escapeHtml(formatUiDate(getPersonnelCoverageStart(employee))) },
+          { label: "Vinculación ARL", value: escapeHtml(formatUiDate(draftValue("arlVinculationDate", employee.arlVinculationDate || employee.fecha_real_vinculacion_arl || ""))) },
+          { label: "Retiro", value: escapeHtml(formatUiDate(draftValue("terminationDate", employee.fecha_retiro || ""))) },
+        ])}
+      </div>`
+    ),
+    buildPersonnelExpedienteSection(
+      "Seguridad social",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "EPS", value: escapeHtml(getPersonnelEps(employee)) },
+          { label: "ARL", value: escapeHtml(getPersonnelArl(employee)) },
+          { label: "Pensión", value: escapeHtml(draftValue("pensionFund", employee.fondo_pensiones || "—")) },
+          { label: "Caja de compensación", value: escapeHtml(draftValue("compensationBox", employee.caja_compensacion || "COFREM")) },
+        ])}
+      </div>`
+    ),
+  ].join("");
+
+  const contractingHtml = [
+    buildPersonnelExpedienteSection(
+      "Condiciones contractuales",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "Salario", value: escapeHtml(getPersonnelSalary(employee)) },
+          { label: "Tipo de cuenta", value: escapeHtml(draftValue("accountType", employee.accountType || employee.account_type || "—")) },
+          { label: "Banco", value: escapeHtml(draftValue("bankName", employee.bankName || employee.bank_name || "—")) },
+          { label: "Número de cuenta", value: escapeHtml(draftValue("accountNumber", employee.accountNumber || employee.account_number || "—")) },
+        ])}
+      </div>`
+    ),
+    buildPersonnelExpedienteSection(
+      "Dotación",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "Camisa", value: escapeHtml(draftValue("shirtSize", employee.shirtSize || employee.shirt_size || "—")) },
+          { label: "Pantalón", value: escapeHtml(draftValue("pantsSize", employee.pantsSize || employee.pants_size || "—")) },
+          { label: "Calzado", value: escapeHtml(draftValue("shoeSize", employee.shoeSize || employee.shoe_size || "—")) },
+        ])}
+      </div>`
+    ),
+  ].join("");
+
+  const institutionalHtml = buildPersonnelExpedienteSection(
+    "Cobertura",
+    `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+      ${buildPersonnelExpedienteFields([
+        { label: "Institución", value: escapeHtml(institution || "Sin institución") },
+        { label: "Sede", value: escapeHtml(site || "Sin sede") },
+        { label: "Municipio operativo", value: escapeHtml(municipality || "—") },
+        { label: "Modalidad", value: escapeHtml(modality || "—") },
+        { label: "Gestor de zona", value: escapeHtml(draftValue("gestorZona", employee.gestor_zona || "—")) },
+        { label: "Auxiliar gestor", value: escapeHtml(draftValue("auxiliarGestorZona", employee.auxiliar_gestor_zona || "—")) },
+        { label: "Municipios a cargo", value: escapeHtml(draftValue("municipiosACargo", employee.municipios_a_cargo || "—")) },
+      ])}
+    </div>`
+  );
+
+  const seguimientoHtml = [
+    buildPersonnelExpedienteSection(
+      "SISBEN y residencia",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "Tiene SISBEN", value: escapeHtml(formatPersonnelBoolean(draftValue("sisben", employee.sisben || employee.sisben_tiene || ""))) },
+          { label: "Categoría SISBEN", value: escapeHtml(draftValue("sisbenCategory", employee.sisben_categoria || "—")) },
+          { label: "Expedición SISBEN", value: escapeHtml(formatUiDate(draftValue("sisbenIssueDate", employee.sisbenIssueDate || employee.sisben_issue_date || ""))) },
+          { label: "Vencimiento SISBEN", value: escapeHtml(formatUiDate(draftValue("sisbenExpirationDate", employee.sisbenExpirationDate || employee.sisben_expiration_date || ""))) },
+          { label: "Certificado de residencia", value: escapeHtml(formatPersonnelBoolean(draftValue("hasResidenceCertificate", employee.hasResidenceCertificate || employee.has_residence_certificate || ""))) },
+          { label: "Expedición residencia", value: escapeHtml(formatUiDate(draftValue("residenceCertificateIssueDate", employee.residenceCertificateIssueDate || employee.residence_certificate_issue_date || ""))) },
+          { label: "Vencimiento residencia", value: escapeHtml(formatUiDate(draftValue("residenceCertificateExpiration", employee.residenceCertificateExpiration || employee.residence_certificate_expiration || ""))) },
+        ])}
+      </div>`
+    ),
+    buildPersonnelExpedienteSection(
+      "Manipulación de alimentos",
+      `<div class="personnel-expediente-grid personnel-expediente-grid-4">
+        ${buildPersonnelExpedienteFields([
+          { label: "Curso · expedición", value: escapeHtml(formatUiDate(draftValue("foodHandlingCourseIssueDate", employee.foodHandlingCourseIssueDate || employee.food_handling_course_issue_date || ""))) },
+          { label: "Curso · vencimiento", value: escapeHtml(formatUiDate(draftValue("foodHandlingCourseExpirationDate", employee.foodHandlingCourseExpirationDate || employee.food_handling_course_expiration_date || ""))) },
+          { label: "Exámenes · expedición", value: escapeHtml(formatUiDate(draftValue("foodHandlingExamIssueDate", employee.foodHandlingExamIssueDate || employee.food_handling_exam_issue_date || ""))) },
+          { label: "Exámenes · vencimiento", value: escapeHtml(formatUiDate(draftValue("foodHandlingExamExpirationDate", employee.foodHandlingExamExpirationDate || employee.food_handling_exam_expiration_date || ""))) },
+        ])}
+      </div>`
+    ),
+  ].join("");
+
+  const tabsHtml = PERSONNEL_WORKSPACE_TABS.map((tab) => `
+    <button
+      type="button"
+      class="personnel-expediente-tab${activeTab === tab.key ? " active" : ""}"
+      data-expediente-tab="${escapeAttr(tab.key)}"
+    >
+      ${escapeHtml(tab.label)}
+    </button>
+  `).join("");
+
+  const tabPanels = [
+    { key: "identificacion", content: [identificationHtml, identificationOriginHtml].join("") },
+    { key: "datos_generales", content: [generalContactHtml, buildPersonnelStudiesTab(draft), buildPersonnelExperienceTab(draft), seguimientoHtml].join("") },
+    { key: "vinculacion_laboral", content: [licitationHtml, vinculationHtml, contractingHtml, institutionalHtml].join("") },
+    { key: "historial_observaciones", content: [buildPersonnelDocumentsTab(employee, dossierSummary, documentMetrics), buildPersonnelObservationsTab(observations), buildPersonnelExpedienteSection("Historial del expediente", buildTabHistorial(dossier || {}))].join("") },
+  ].map((panel) => `
+    <section
+      class="personnel-expediente-tab-panel${activeTab === panel.key ? " active" : ""}"
+      data-expediente-panel="${escapeAttr(panel.key)}"
+    >
+      ${panel.content}
+    </section>
+  `).join("");
 
   return `
-    <article class="pnl-card">
-
-      <!-- ── HEADER ──────────────────────────────────── -->
-      <div class="pnl-head">
-        <button type="button" class="pnl-close-btn" data-clear-personnel-selection aria-label="Cerrar">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-
-        <div class="pnl-avatar-wrap" data-photo-upload-id="${escapeAttr(employee.id)}">
-          ${avatarContent}
-          <div class="cv-photo-overlay">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            <span>Subir Foto</span>
-          </div>
-          <input type="file" class="cv-photo-input" accept="image/*" style="display:none" />
-        </div>
-
-        <div class="pnl-head-info">
-          <div class="pnl-head-name">${escapeHtml(fullName)}</div>
-          <div class="pnl-head-role">${escapeHtml(role)}</div>
-          <div class="pnl-head-doc">${docType} · ${escapeHtml(documentNumber)}</div>
-          <div class="pnl-head-chips">
-            <span class="pnl-chip ${statusCls}">${escapeHtml(workStatus)}</span>
-            <span class="pnl-chip pnl-chip-gray">${escapeHtml(category)}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── ACTIONS ─────────────────────────────────── -->
-      <div class="pnl-acts">
-        <button type="button" class="pnl-act" data-edit-personnel-id="${escapeAttr(employee.id)}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-          </svg>
-          Editar
-        </button>
-        <button type="button" class="pnl-act" data-documents-personnel-id="${escapeAttr(employee.id)}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-          </svg>
-          Documentos
-        </button>
-        <button type="button" class="pnl-act pnl-act-prime" data-cv-personnel-id="${escapeAttr(employee.id)}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-            <circle cx="12" cy="12" r="3"/>
-          </svg>
-          Ver HV
-        </button>
-      </div>
-
-      <!-- ── TABS ────────────────────────────────────── -->
-      <div class="pnl-tabs">
-        <button type="button" class="pnl-tab pnl-tab-active" data-panel-tab="personal">
-          <svg class="pnl-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-          </svg>
-          <span class="pnl-tab-lbl">Personal</span>
-        </button>
-        <button type="button" class="pnl-tab" data-panel-tab="laboral">
-          <svg class="pnl-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
-          </svg>
-          <span class="pnl-tab-lbl">Laboral</span>
-        </button>
-        <button type="button" class="pnl-tab" data-panel-tab="docs">
-          <svg class="pnl-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-          </svg>
-          <span class="pnl-tab-lbl">Docs</span>
-        </button>
-        <button type="button" class="pnl-tab" data-panel-tab="notas">
-          <svg class="pnl-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-          <span class="pnl-tab-lbl">Notas</span>
-        </button>
-      </div>
-
-      <!-- ── BODY ────────────────────────────────────── -->
-      <div class="pnl-body">
-
-        <!-- TAB: PERSONAL -->
-        <div class="pnl-section pnl-sec-active" data-panel-section="personal">
-          <div class="pnl-group-lbl">DATOS PERSONALES</div>
-          ${row("Nacimiento", birthStr)}
-          ${row("Sexo", sexLabel)}
-          ${row("Grupo sang.", escapeHtml(employee.bloodType || employee.grupo_sanguineo || "—"))}
-          ${row("Teléfono", escapeHtml(employee.phone || employee.celular || "—"))}
-          ${row("Correo", escapeHtml(employee.email || employee.correo_electronico || "—"), "pnl-ellipsis")}
-          ${row("Dirección", escapeHtml(employee.address || employee.direccion_residencia || "—"))}
-          <div class="pnl-group-lbl">SEGURIDAD SOCIAL</div>
-          ${row("EPS", escapeHtml(getPersonnelEps(employee)))}
-          ${row("ARL", escapeHtml(getPersonnelArl(employee)))}
-          ${row("Pensión", escapeHtml(employee.pensionFund || employee.fondo_pensiones || "—"))}
-          ${row("Caja comp.", escapeHtml(employee.compensationBox || employee.caja_compensacion || "COFREM"))}
-        </div>
-
-        <!-- TAB: LABORAL -->
-        <div class="pnl-section" data-panel-section="laboral">
-          <div class="pnl-group-lbl">CARGO Y CONTRATO</div>
-          ${row("Cargo real", escapeHtml(role))}
-          ${row("Empresa", escapeHtml(getPersonnelCompanyLabel(employee)))}
-          ${row("Contrato", escapeHtml(getPersonnelContractLabel(employee)))}
-          ${row("Salario", escapeHtml(getPersonnelSalary(employee)))}
-          <div class="pnl-group-lbl">ASIGNACIÓN</div>
-          ${row("Municipio", escapeHtml(employee.municipality || employee.municipio_cobertura || employee.municipio || "—"))}
-          ${row("Institución", escapeHtml(getPersonnelInstitution(employee)))}
-          ${row("Sede", escapeHtml(getPersonnelSite(employee)))}
-          ${row("Modalidad", escapeHtml(getPersonnelModality(employee)))}
-          ${row("Gestor zona", escapeHtml(employee.gestorZona || employee.gestor_zona || "—"))}
-          <div class="pnl-group-lbl">FECHAS</div>
-          ${row("Ingreso", escapeHtml(contractStart))}
-          ${contractEnd ? row("Retiro", escapeHtml(contractEnd)) : ""}
-        </div>
-
-        <!-- TAB: DOCS -->
-        <div class="pnl-section" data-panel-section="docs">
-          <div class="pnl-doc-summary">
-            <div class="pnl-doc-pct-wrap">
-              <span class="pnl-doc-pct-num" style="color:${barColor}">${pct}%</span>
-              <span class="pnl-doc-pct-sub">completado</span>
-            </div>
-            <div class="pnl-doc-track">
-              <div class="pnl-doc-fill" style="width:${pct}%;background:${barColor}"></div>
-            </div>
-          </div>
-          <div class="pnl-doc-stats">
-            <div class="pnl-doc-stat">
-              <div class="pnl-doc-stat-n" style="color:#16a34a">${docMetrics.validated}</div>
-              <div class="pnl-doc-stat-l">Al día</div>
-            </div>
-            <div class="pnl-doc-stat">
-              <div class="pnl-doc-stat-n" style="color:#d97706">${docMetrics.pending + docMetrics.missing}</div>
-              <div class="pnl-doc-stat-l">Pendientes</div>
-            </div>
-            <div class="pnl-doc-stat">
-              <div class="pnl-doc-stat-n" style="color:#f59e0b">${docMetrics.expiring}</div>
-              <div class="pnl-doc-stat-l">Por vencer</div>
-            </div>
-            <div class="pnl-doc-stat">
-              <div class="pnl-doc-stat-n" style="color:#dc2626">${docMetrics.expired + docMetrics.rejected}</div>
-              <div class="pnl-doc-stat-l">Vencidos</div>
-            </div>
-          </div>
-          <div class="pnl-group-lbl" style="margin-top:14px">GESTIÓN</div>
-          <button type="button" class="pnl-docs-link" data-documents-personnel-id="${escapeAttr(employee.id)}">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-            Ver y gestionar documentos
-          </button>
-        </div>
-
-        <!-- TAB: NOTAS -->
-        <div class="pnl-section" data-panel-section="notas">
-          ${obsArr.length ? obsArr.map(obs => `
-            <div class="pnl-obs">
-              <div class="pnl-obs-meta">
-                <span class="pnl-obs-user">${escapeHtml(obs.user || "Sistema")}</span>
-                <span class="pnl-obs-date">${escapeHtml(formatUiDate(obs.date || ""))}</span>
-              </div>
-              <p class="pnl-obs-text">${escapeHtml(obs.text || "")}</p>
-            </div>
-          `).join("") : `
-            <div class="pnl-empty-tab">
-              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    <article class="personnel-expediente-shell employee-detail">
+      <header class="personnel-expediente-hero employee-detail-header employee-dossier-header-premium">
+        <div class="employee-dossier-header-main personnel-expediente-hero-main">
+          <div class="personnel-expediente-toolbelt" aria-label="Acciones del expediente">
+            <button
+              type="button"
+              class="personnel-icon-btn personnel-expediente-icon-btn btn-icon-edit"
+              data-edit-personnel-id="${escapeAttr(employee.id)}"
+              title="Editar expediente"
+              aria-label="Editar expediente"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
               </svg>
-              <p>Sin novedades registradas</p>
+            </button>
+            <button
+              type="button"
+              class="personnel-icon-btn personnel-expediente-icon-btn btn-icon-docs"
+              data-documents-personnel-id="${escapeAttr(employee.id)}"
+              title="Documentos"
+              aria-label="Documentos"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"></path>
+                <path d="M14 2v5h5"></path>
+                <path d="M9 13h6"></path>
+                <path d="M9 17h6"></path>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="personnel-icon-btn personnel-expediente-icon-btn btn-icon-view"
+              data-cv-personnel-id="${escapeAttr(employee.id)}"
+              title="Hoja de vida"
+              aria-label="Hoja de vida"
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M6 9V4h12v16H6z"></path>
+                <path d="M9 8h6"></path>
+                <path d="M9 12h6"></path>
+                <path d="M9 16h4"></path>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="personnel-icon-btn personnel-expediente-icon-btn btn-icon-close"
+              data-clear-personnel-selection
+              title="Cerrar expediente"
+              aria-label="Cerrar expediente"
+            >
+              <svg viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="employee-dossier-title-row personnel-expediente-title-row">
+            <div class="employee-dossier-identity personnel-expediente-identity">
+            <div class="personnel-expediente-photo" data-photo-upload-id="${escapeAttr(employee.id)}">
+              ${photoHtml}
+              <div class="cv-photo-overlay">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>Actualizar foto</span>
+              </div>
+              <input type="file" class="cv-photo-input" accept="image/*" style="display:none" />
             </div>
-          `}
+            <div class="employee-dossier-identity-copy personnel-expediente-copy">
+              <div class="personnel-expediente-row personnel-expediente-row-main">
+                <div class="personnel-expediente-primary employee-dossier-secondary-block">
+                  <h2 title="${escapeAttr(fullName || "Sin nombre")}">${escapeHtml(fullName || "Sin nombre")}</h2>
+                  <p class="emp-doc-subtitle">${escapeHtml(documentLabel || "Documento pendiente")}</p>
+                  ${buildDossierSecondaryLine([role], "Sin cargo", "employee-dossier-secondary-primary")}
+                  ${buildDossierSecondaryLine([municipality, institution, company], "Sin informacion operativa", "employee-dossier-secondary-contract")}
+                </div>
+              </div>
+              <div class="personnel-expediente-row personnel-expediente-row-meta personnel-expediente-row-meta-premium">
+                <div class="personnel-expediente-badges personnel-expediente-status-badges">
+                  ${headerChips.map((badge) => `<span class="status-chip ${escapeAttr(badge.tone)}">${escapeHtml(badge.label)}</span>`).join("")}
+                </div>
+                <div class="employee-dossier-badges-row personnel-expediente-kpi-badges">
+                  ${heroBadgesHtml}
+                </div>
+              </div>
+              <div class="personnel-expediente-row personnel-expediente-row-progress">
+                <div class="personnel-expediente-progress personnel-expediente-progress-premium">
+                  <div class="personnel-expediente-progress-head">
+                    <span>Completitud expediente</span>
+                    <strong>${escapeHtml(`${compliance.percent}%`)}</strong>
+                  </div>
+                  <div class="personnel-expediente-progress-bar tone-${escapeAttr(compliance.tone)}">
+                    <span style="width:${escapeAttr(compliance.percent)}%"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
         </div>
+      </header>
 
+      <div class="personnel-expediente-scroll-shell employee-detail-body">
+        <div class="personnel-expediente-scroll">
+          <nav class="personnel-expediente-tabs" aria-label="Secciones del expediente">
+            ${tabsHtml}
+          </nav>
+
+          <div class="personnel-expediente-content">
+            ${tabPanels}
+          </div>
+        </div>
       </div>
     </article>
   `;
@@ -1597,8 +2221,7 @@ export function _clearPersonnelCache() {
 }
 
 function getPersonnelMunicipalityNameById(municipalityId) {
-  const found = findOfficialMunicipality(municipalityId, { includeFallback: true });
-  return found?.name || "";
+  return getMunicipalityName(municipalityId, null, "");
 }
 
 function getDraftMunicipalityId(draft = {}) {
@@ -1613,9 +2236,20 @@ function getDraftMunicipalityId(draft = {}) {
 }
 
 function getDraftMunicipalityName(draft = {}) {
-  const id = getDraftMunicipalityId(draft);
-  return getPersonnelMunicipalityNameById(id)
-    || String(draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "").trim();
+  return getPersonnelMunicipalityNameById(getDraftMunicipalityId(draft))
+    || getMunicipalityName(
+      draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "",
+      null,
+      ""
+    );
+}
+
+function getNormalizedMunicipalityValue(values = [], fallback = "No registrado") {
+  for (const value of values) {
+    const resolved = getMunicipalityName(value, null, "");
+    if (resolved) return resolved;
+  }
+  return fallback;
 }
 
 function syncDraftOfficialMunicipality(draft = state.personnelDraft || {}) {
@@ -1624,7 +2258,11 @@ function syncDraftOfficialMunicipality(draft = state.personnelDraft || {}) {
   draft.municipality_id = municipalityId;
   const municipalityName = municipalityId
     ? getPersonnelMunicipalityNameById(municipalityId)
-    : String(draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "").trim();
+    : getMunicipalityName(
+      draft.municipalityName || draft.municipality_name || draft.municipality || draft.municipio || "",
+      null,
+      ""
+    );
   draft.municipalityName = municipalityName;
   draft.municipality_name = municipalityName;
   draft.educationalMunicipality = municipalityName;
@@ -1864,6 +2502,7 @@ function _refreshPersonnelSection() {
 
   enforceInputRestrictions(sectionEl);
   syncEmployeeHeaderFromDraft();
+  configurePersonnelFormForKeyboard(document.getElementById("personnelForm"));
   return true;
 }
 
@@ -1905,7 +2544,7 @@ function _buildTabButtonsLegacy(activeTab, institutionalEnabled) {
 function _buildTabButtonsPremiumLegacy(activeTab, institutionalEnabled) {
   const tabs = [
     { key: "identificacion", label: "Identificacion", icon: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M13 10h4M13 14h4M5 14c0-1.1.9-2 2-2h4a2 2 0 0 1 2 2"/></svg>` },
-    { key: "datos_generales", label: "Datos generales", icon: `<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>` },
+    { key: "datos_generales", label: "Complementarios", icon: `<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>` },
     { key: "vinculacion_laboral", label: "Vinculacion laboral", icon: `<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>` },
     { key: "historial_observaciones", label: "Historial y observaciones", icon: `<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/><path d="M12 7v5l3 3"/></svg>` },
   ];
@@ -1934,7 +2573,7 @@ function _buildTabButtonsPremiumLegacy(activeTab, institutionalEnabled) {
 function buildTabButtons(activeTab, institutionalEnabled) {
   const tabs = [
     { key: "identificacion", label: "Identificacion" },
-    { key: "datos_generales", label: "Datos Generales" },
+    { key: "datos_generales", label: "Complementarios" },
     { key: "vinculacion_laboral", label: "Vinculacion Laboral" },
     { key: "historial_observaciones", label: "Historial" },
   ];
@@ -2108,15 +2747,13 @@ function showPersonnelConfirmDialog() {
 // ── Tab: identificacion ───────────────────────────────────────────────────────
 
 function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartment, isEditMode = false) {
-  const expeditionMunicipalities = getDepartmentMunicipalities(expeditionDepartment);
-  const birthMunicipalities      = getDepartmentMunicipalities(birthDepartment);
   const isAdmin = (state.currentUser?.role || "").toLowerCase() === "administrador";
   const locked  = isEditMode && !isAdmin;
   const lock    = locked ? "disabled" : "";
   const ro      = locked ? "readonly"  : "";
 
   return `
-    <section class="personnel-section">
+    <section class="personnel-section personnel-identification-layout">
       ${isEditMode && !isAdmin ? `
         <div class="id-lock-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2126,8 +2763,8 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
         </div>
       ` : ""}
 
-      ${buildFormInsetCard("Datos Personales", "", `
-        <div class="form-grid form-grid-4">
+      ${buildFormInsetCard("Nombres y Apellidos", "", `
+        <div class="personnel-compact-grid personnel-compact-grid-4">
           <label>
             <span>Primer Nombre *</span>
             <input name="firstName" data-only-letters type="text"
@@ -2151,48 +2788,109 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
         </div>
       `)}
 
-      ${buildFormInsetCard("Documento", "", `
-        <div class="form-grid form-grid-2">
-          <label>
-            <span>Tipo de Documento *</span>
-            <select name="documentType" ${lock} ${!isEditMode ? "required" : ""}>
-              ${renderOptions(["CC", "PA", "PPT", "CE", "NIT"], draftValue("documentType"), "Selecciona")}
-            </select>
-          </label>
-          <label>
-            <span>Numero de Documento *</span>
-            <input name="documentNumber" data-only-numbers type="text"
-              value="${escapeAttr(draftValue("documentNumber"))}" ${ro} ${!isEditMode ? "required" : ""} />
-          </label>
-        </div>
+      <div class="expediente-group-grid">
+        ${buildExpedienteSectionBlock("Identificación", `
+          <section class="personnel-section">
+            <div class="personnel-compact-stack">
+              <div class="personnel-compact-grid personnel-compact-grid-ident-main">
+                <label class="personnel-compact-field">
+                  <span>Documento *</span>
+                  <div class="personnel-inline-field personnel-inline-field--document">
+                    <input name="documentNumber" data-only-numbers type="text"
+                      value="${escapeAttr(draftValue("documentNumber"))}" ${ro} ${!isEditMode ? "required" : ""} />
+                    <select name="documentType" ${lock} ${!isEditMode ? "required" : ""}>
+                      ${renderOptions(["CC", "PA", "PPT", "CE", "NIT"], draftValue("documentType"), "Tipo")}
+                    </select>
+                  </div>
+                </label>
+                <label class="personnel-compact-field">
+                  <span>Fecha de Nacimiento</span>
+                  <div class="personnel-inline-date">
+                    <input name="birthDay" data-only-numbers type="text" maxlength="2"
+                      placeholder="DD"
+                      value="${escapeAttr(draftValue("birthDay"))}" ${ro} />
+                    <input name="birthMonth" data-only-numbers type="text" maxlength="2"
+                      placeholder="MM"
+                      value="${escapeAttr(draftValue("birthMonth"))}" ${ro} />
+                    <input name="birthYear" data-only-numbers type="text" maxlength="4"
+                      placeholder="AAAA"
+                      value="${escapeAttr(draftValue("birthYear"))}" ${ro} />
+                  </div>
+                </label>
+                <label class="personnel-compact-field">
+                  <span>Fecha de Expedición</span>
+                  <div class="personnel-inline-date">
+                    <input name="expeditionDay" data-only-numbers type="text" maxlength="2"
+                      placeholder="DD"
+                      value="${escapeAttr(draftValue("expeditionDay"))}" ${ro} />
+                    <input name="expeditionMonth" data-only-numbers type="text" maxlength="2"
+                      placeholder="MM"
+                      value="${escapeAttr(draftValue("expeditionMonth"))}" ${ro} />
+                    <input name="expeditionYear" data-only-numbers type="text" maxlength="4"
+                      placeholder="AAAA"
+                      value="${escapeAttr(draftValue("expeditionYear"))}" ${ro} />
+                  </div>
+                </label>
+              </div>
 
-        <div class="form-grid form-grid-date-5">
-          <label>
-            <span>Dia exp.</span>
-            <input name="expeditionDay" data-only-numbers type="text" maxlength="2"
-              placeholder="DD"
-              value="${escapeAttr(draftValue("expeditionDay"))}" ${ro} />
-          </label>
-          <label>
-            <span>Mes exp.</span>
-            <input name="expeditionMonth" data-only-numbers type="text" maxlength="2"
-              placeholder="MM"
-              value="${escapeAttr(draftValue("expeditionMonth"))}" ${ro} />
-          </label>
-          <label>
-            <span>Anio exp.</span>
-            <input name="expeditionYear" data-only-numbers type="text" maxlength="4"
-              placeholder="AAAA"
-              value="${escapeAttr(draftValue("expeditionYear"))}" ${ro} />
-          </label>
-          <label>
-            <span>Departamento expedicion *</span>
+              <div class="personnel-compact-grid personnel-compact-grid-ident-secondary">
+                <label class="personnel-compact-field">
+                  <span>Sexo *</span>
+                  <select name="biologicalSex" ${lock}>
+                    ${renderOptions(["F", "M"], draftValue("biologicalSex"), "Selecciona")}
+                  </select>
+                </label>
+                <label class="personnel-compact-field">
+                  <span>Grupo Sanguíneo *</span>
+                  <select name="bloodType" ${lock}>
+                    ${renderOptions(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"], draftValue("bloodType"), "Selecciona")}
+                  </select>
+                </label>
+                <label class="personnel-compact-field">
+                  <span>Estado Civil</span>
+                  <select name="civilStatus">
+                    ${renderOptions(
+                      ["soltero", "casado", "union_libre", "separado", "divorciado", "viudo"],
+                      draftValue("civilStatus"),
+                      "Selecciona"
+                    )}
+                  </select>
+                </label>
+                <label class="personnel-compact-field">
+                  <span>Nacionalidad</span>
+                  <input name="birthCountry" data-only-letters type="text"
+                    value="${escapeAttr(draftValue("birthCountry", "Colombia"))}" ${ro} />
+                </label>
+              </div>
+            </div>
+          </section>
+        `)}
+
+        ${buildExpedienteSectionBlock("Datos Personales", buildTabDatosPersonales(draftValue, draftValue("residenceMunicipality")))}
+      </div>
+    </section>
+  `;
+}
+
+function buildTabIdentificacionComplementary(draftValue, expeditionDepartment, birthDepartment, isEditMode = false) {
+  const expeditionMunicipalities = getDepartmentMunicipalities(expeditionDepartment);
+  const birthMunicipalities = getDepartmentMunicipalities(birthDepartment);
+  const isAdmin = (state.currentUser?.role || "").toLowerCase() === "administrador";
+  const locked = isEditMode && !isAdmin;
+  const lock = locked ? "disabled" : "";
+
+  return `
+    <section class="personnel-section">
+      <div class="personnel-compact-stack">
+        <div class="personnel-compact-grid personnel-compact-grid-2">
+          <label class="personnel-compact-field">
+            <span>Departamento de Expedición</span>
             <select name="expeditionDepartment" ${lock}>
               ${renderOptions(COLOMBIA_DEPARTMENTS, expeditionDepartment, "Selecciona")}
             </select>
           </label>
-          <label>
-            <span>Municipio expedicion *</span>
+          <label class="personnel-compact-field">
+            <span>Municipio de Expedición</span>
             <select name="expeditionMunicipality" ${lock}>
               ${renderOptions(
                 expeditionMunicipalities,
@@ -2202,41 +2900,16 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
             </select>
           </label>
         </div>
-      `)}
 
-      ${buildFormInsetCard("Nacimiento", "", `
-        <div class="form-grid form-grid-date-6">
-          <label>
-            <span>Dia nac.</span>
-            <input name="birthDay" data-only-numbers type="text" maxlength="2"
-              placeholder="DD"
-              value="${escapeAttr(draftValue("birthDay"))}" ${ro} />
-          </label>
-          <label>
-            <span>Mes nac.</span>
-            <input name="birthMonth" data-only-numbers type="text" maxlength="2"
-              placeholder="MM"
-              value="${escapeAttr(draftValue("birthMonth"))}" ${ro} />
-          </label>
-          <label>
-            <span>Anio nac.</span>
-            <input name="birthYear" data-only-numbers type="text" maxlength="4"
-              placeholder="AAAA"
-              value="${escapeAttr(draftValue("birthYear"))}" ${ro} />
-          </label>
-          <label>
-            <span>Pais nacimiento *</span>
-            <input name="birthCountry" data-only-letters type="text"
-              value="${escapeAttr(draftValue("birthCountry", "Colombia"))}" ${ro} />
-          </label>
-          <label>
-            <span>Departamento nacimiento *</span>
+        <div class="personnel-compact-grid personnel-compact-grid-2">
+          <label class="personnel-compact-field">
+            <span>Departamento de Nacimiento</span>
             <select name="birthDepartment" ${lock}>
               ${renderOptions(COLOMBIA_DEPARTMENTS, birthDepartment, "Selecciona")}
             </select>
           </label>
-          <label>
-            <span>Municipio nacimiento *</span>
+          <label class="personnel-compact-field">
+            <span>Municipio de Nacimiento</span>
             <select name="birthMunicipality" ${lock}>
               ${renderOptions(
                 birthMunicipalities,
@@ -2246,22 +2919,7 @@ function buildTabIdentificacion(draftValue, expeditionDepartment, birthDepartmen
             </select>
           </label>
         </div>
-
-        <div class="form-grid form-grid-2">
-          <label>
-            <span>Grupo Sanguineo *</span>
-            <select name="bloodType" ${lock}>
-              ${renderOptions(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"], draftValue("bloodType"), "Selecciona")}
-            </select>
-          </label>
-          <label>
-            <span>Sexo *</span>
-            <select name="biologicalSex" ${lock}>
-              ${renderOptions(["F", "M"], draftValue("biologicalSex"), "Selecciona")}
-            </select>
-          </label>
-        </div>
-      `)}
+      </div>
     </section>
   `;
 }
@@ -2489,62 +3147,44 @@ function buildTabDatosPersonales(draftValue, residenceMunicipality) {
   const municipalityOptions = getOperationalMunicipalityOptions();
   return `
     <section class="personnel-section">
-      <div class="form-grid form-grid-2">
-        <label>
-          <span>Celular *</span>
-          <input name="phone" data-only-numbers type="text"
-            value="${escapeAttr(draftValue("phone"))}" required />
-        </label>
-        <label>
-          <span>Correo Electrónico *</span>
-          <input name="email" type="email"
-            value="${escapeAttr(draftValue("email"))}" required />
-        </label>
-      </div>
+      <div class="personnel-compact-stack">
+        <div class="personnel-compact-grid personnel-compact-grid-contact-main">
+          <label class="personnel-compact-field">
+            <span>Teléfono *</span>
+            <input name="phone" data-only-numbers type="text"
+              value="${escapeAttr(draftValue("phone"))}" required />
+          </label>
+          <label class="personnel-compact-field">
+            <span>Correo Electrónico *</span>
+            <input name="email" type="email"
+              value="${escapeAttr(draftValue("email"))}" required />
+          </label>
+        </div>
 
-      <div class="form-grid form-grid-2">
-        <label>
-          <span>Estado Civil</span>
-          <select name="civilStatus">
-            ${renderOptions(
-              ["soltero", "casado", "union_libre", "separado", "divorciado", "viudo"],
-              draftValue("civilStatus"),
-              "Selecciona"
-            )}
-          </select>
-        </label>
-        <label>
-          <span>Barrio de Residencia</span>
-          <input name="neighborhood" type="text"
-            value="${escapeAttr(draftValue("neighborhood"))}" />
-        </label>
-      </div>
-
-      <div class="form-grid form-grid-1">
-        <label>
-          <span>Dirección de Residencia *</span>
-          <input name="address" type="text"
-            value="${escapeAttr(draftValue("address"))}" required />
-        </label>
-      </div>
-
-      <div class="form-grid form-grid-3">
-        <label>
-          <span>Departamento *</span>
-          <input name="residenceDepartment" type="text" value="Meta" readonly />
-        </label>
-        <label>
-          <span>Municipio *</span>
-          <select name="residenceMunicipality" required>
-            ${renderOptions(municipalityOptions, residenceMunicipality, "Selecciona municipio")}
-          </select>
-        </label>
-        <label>
-          <span>Zona de Residencia</span>
-          <select name="residenceZone">
-            ${renderOptions(["urbano", "rural"], draftValue("residenceZone"), "Selecciona")}
-          </select>
-        </label>
+        <div class="personnel-compact-grid personnel-compact-grid-contact-secondary">
+          <label class="personnel-compact-field">
+            <span>Dirección *</span>
+            <input name="address" type="text"
+              value="${escapeAttr(draftValue("address"))}" required />
+          </label>
+          <label class="personnel-compact-field">
+            <span>Barrio</span>
+            <input name="neighborhood" type="text"
+              value="${escapeAttr(draftValue("neighborhood"))}" />
+          </label>
+          <label class="personnel-compact-field">
+            <span>Municipio de Residencia *</span>
+            <select name="residenceMunicipality" required>
+              ${renderOptions(municipalityOptions, residenceMunicipality, "Selecciona municipio")}
+            </select>
+          </label>
+          <label class="personnel-compact-field">
+            <span>Zona</span>
+            <select name="residenceZone">
+              ${renderOptions(["urbano", "rural"], draftValue("residenceZone"), "Selecciona")}
+            </select>
+          </label>
+        </div>
       </div>
     </section>
   `;
@@ -3060,10 +3700,10 @@ function buildTabObservaciones(draftValue) {
           <div class="obs-item-meta">
             ${escapeHtml(o.date ? new Date(o.date).toLocaleString("es-CO") : "—")} · ${escapeHtml(o.user || "—")}
           </div>
-          <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
-          ${o.attachmentUrl
+        <div class="obs-item-text">${escapeHtml(o.text || "")}</div>
+        ${o.attachmentUrl
             ? `<div class="obs-item-attachment">
-                <a href="${escapeAttr(o.attachmentUrl)}" target="_blank" rel="noopener">
+                <a href="${escapeAttr(o.attachmentUrl)}" rel="noopener">
                   📎 ${escapeHtml(o.attachmentName || "Archivo adjunto")}
                 </a>
                </div>`
@@ -3081,18 +3721,15 @@ function buildTabObservaciones(draftValue) {
             placeholder="Escribe aquí la observación..."></textarea>
         </label>
         <label>
-          <span>Adjuntar archivo (PDF o imagen) — opcional</span>
-          <input id="obsAttachmentInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
-            style="margin-top:4px" />
+          <span>Adjuntar archivo</span>
           <span style="font-size:11px;color:var(--text-faint)">
-            El archivo se guarda en el historial laboral y no aparece en la hoja de vida.
+            Los adjuntos quedan deshabilitados en este flujo.
           </span>
         </label>
       </div>
 
       <div style="margin-top:10px">
         <button type="button" id="btnAddObservacion" class="btn btn-primary btn-row">Guardar observación</button>
-        <span id="obsUploadStatus" style="margin-left:.8rem;font-size:13px;color:var(--text-faint)"></span>
       </div>
 
       <div class="obs-history">${historyHtml}</div>
@@ -3118,6 +3755,9 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
   }
 
   if (!state.personnelDraft)      state.personnelDraft = {};
+  if (!state.personnelDraftBaselineData) {
+    state.personnelDraftBaselineData = clonePersonnelDraftSnapshot(state.personnelDraft);
+  }
   if (!state.personnelCreateTab)  state.personnelCreateTab = "identificacion";
   if (!state.personnelDraftBaselineFingerprint) {
     state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
@@ -3502,7 +4142,15 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     attachPersonnelFormValidation(form);
     syncPersonnelSaveStateDom();
     syncEmployeeHeaderFromDraft();
+    configurePersonnelFormForKeyboard(form, { focusFirst: isEditMode && activeTab === "identificacion" });
     form.addEventListener("submit", handlePersonnelFormSubmit);
+
+    document.getElementById("cancelPersonnelEdit")?.addEventListener("click", async () => {
+      await restorePersonnelDraftFromBaseline();
+      _refreshPersonnelSection();
+      syncPersonnelSaveStateDom();
+      configurePersonnelFormForKeyboard(document.getElementById("personnelForm"), { focusFirst: true });
+    });
 
     // ── Botones de sección — delegation sobre el form ─────────────────────
     form.addEventListener("click", (e) => {
@@ -3562,36 +4210,12 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
     form.addEventListener("click", async (e) => {
       if (!e.target.closest("#btnAddObservacion")) return;
       const txt      = (document.getElementById("newObservationText")?.value || "").trim();
-      const statusEl = document.getElementById("obsUploadStatus");
       if (!txt) { showWarning("Escribe la observación antes de guardar."); return; }
-
-      const fileInput = document.getElementById("obsAttachmentInput");
-      let attachmentUrl = "", attachmentName = "";
-      if (fileInput?.files?.length > 0) {
-        const file = fileInput.files[0];
-        attachmentName = file.name;
-        if (statusEl) statusEl.textContent = "Subiendo archivo...";
-        try {
-          const fd = new FormData();
-          fd.append("file", file);
-          fd.append("employeeId", state.personnelEditingId || state.personnelDraft.id || "");
-          const res  = await fetch("/documents/upload", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${state.token}` },
-            body: fd,
-          });
-          const data = await res.json();
-          if (data.ok && data.url) attachmentUrl = data.url;
-        } catch {
-          if (statusEl) statusEl.textContent = "No se pudo subir el archivo.";
-        }
-      }
       if (!Array.isArray(state.personnelDraft.observations)) state.personnelDraft.observations = [];
       state.personnelDraft.observations.push({
         text: txt,
         date: new Date().toISOString(),
         user: state.currentUser?.name || "Usuario",
-        ...(attachmentUrl ? { attachmentUrl, attachmentName } : {}),
       });
       state.personnelCreateTab = "historial_observaciones";
       _refreshPersonnelSection();
@@ -3655,21 +4279,24 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
 
         <div class="form-scroll-area">
           <form id="personnelForm" class="personnel-form-v2" novalidate>
-            <div id="personnelActiveSection" class="personnel-active-section personnel-active-section-${escapeAttr(activeTab)}">${activeSectionHtml}</div>
-
             <div class="personnel-form-actions">
               <div class="personnel-form-actions-meta">
                 <div id="personnelAgeSlot">${activeTab === "identificacion" ? buildAgeIndicator(draftValue("birthDay"), draftValue("birthMonth"), draftValue("birthYear")) : ""}</div>
                 <span id="personnelSaveState" class="personnel-save-state state-${saveState.tone}">${saveState.label}</span>
               </div>
-              <button type="submit" class="primary-soft-btn personnel-save-btn">
-                ${isEditMode
-                  ? "Guardar cambios"
-                  : _PRE_SUBMIT_TABS.has(activeTab)
-                    ? "Guardar y continuar →"
-                    : "Crear empleado"}
-              </button>
+              <div class="personnel-form-actions-buttons">
+                ${isEditMode ? `<button type="button" id="cancelPersonnelEdit" class="btn btn-secondary personnel-cancel-btn" data-personnel-primary-action>Cancelar</button>` : ""}
+                <button type="submit" class="primary-soft-btn personnel-save-btn" data-personnel-primary-action>
+                  ${isEditMode
+                    ? "Guardar cambios"
+                    : _PRE_SUBMIT_TABS.has(activeTab)
+                      ? "Guardar y continuar →"
+                      : "Crear empleado"}
+                </button>
+              </div>
             </div>
+
+            <div id="personnelActiveSection" class="personnel-active-section personnel-active-section-${escapeAttr(activeTab)}">${activeSectionHtml}</div>
           </form>
         </div>
       </article>
@@ -3798,7 +4425,25 @@ function hydratePersonnelDraft(found) {
     || String(findOfficialMunicipality(rawMunicipalityName, { includeFallback: true })?.id || "");
   const normalizedMunicipalityName = normalizedMunicipalityId
     ? getPersonnelMunicipalityNameById(normalizedMunicipalityId)
-    : String(rawMunicipalityName || "").trim();
+    : getMunicipalityName(rawMunicipalityName, null, "");
+  const normalizedExpeditionMunicipality = getNormalizedMunicipalityValue([
+    found.expedition_municipality_name,
+    found.expeditionMunicipalityName,
+    found.municipio_expedicion,
+    found.expeditionMunicipality,
+  ], "");
+  const normalizedBirthMunicipality = getNormalizedMunicipalityValue([
+    found.birth_municipality_name,
+    found.birthMunicipalityName,
+    found.municipio_nacimiento,
+    found.birthMunicipality,
+  ], "");
+  const normalizedResidenceMunicipality = getNormalizedMunicipalityValue([
+    found.residence_municipality_name,
+    found.residenceMunicipalityName,
+    found.municipio_residencia,
+    found.residenceMunicipality,
+  ], "");
 
   const draft = {
     fullName: found.full_name || found.fullName || found.nombre || "",
@@ -3828,14 +4473,14 @@ function hydratePersonnelDraft(found) {
     expeditionMonth:      found.fecha_expedicion_mes  || found.expeditionMonth      || "",
     expeditionYear:       found.fecha_expedicion_anio || found.expeditionYear       || "",
     expeditionDepartment: found.departamento_expedicion || found.expeditionDepartment || "",
-    expeditionMunicipality: found.municipio_expedicion  || found.expeditionMunicipality || "",
+    expeditionMunicipality: normalizedExpeditionMunicipality,
 
     birthDay:        found.fecha_nacimiento_dia  || found.birthDay        || "",
     birthMonth:      found.fecha_nacimiento_mes  || found.birthMonth      || "",
     birthYear:       found.fecha_nacimiento_anio || found.birthYear       || "",
     birthCountry:    found.pais_nacimiento  || found.birthCountry  || "Colombia",
     birthDepartment: found.departamento_nacimiento || found.birthDepartment || "",
-    birthMunicipality: found.municipio_nacimiento  || found.birthMunicipality || "",
+    birthMunicipality: normalizedBirthMunicipality,
 
     bloodType:    found.grupo_sanguineo || found.bloodType    || "",
     biologicalSex: found.sexo_biologico || found.biologicalSex || "",
@@ -3859,7 +4504,7 @@ function hydratePersonnelDraft(found) {
     email:              found.correo_electronico   || found.email              || "",
     address:            found.direccion_residencia || found.address            || "",
     neighborhood:       found.barrio_residencia    || found.neighborhood       || "",
-    residenceMunicipality: found.municipio_residencia || found.residenceMunicipality || "",
+    residenceMunicipality: normalizedResidenceMunicipality,
     civilStatus:        found.estado_civil  || found.civilStatus  || "",
     residenceZone:      found.zona_residencia || found.residenceZone || "",
 
@@ -4067,87 +4712,42 @@ export async function renderPersonnelTableModule() {
     `<option value="${escapeAttr(value)}" ${String(current) === String(value) ? "selected" : ""}>${escapeHtml(label)}</option>`;
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
-  const summary = calculatePersonnelDashboardFrontend(filteredRows, allDocuments);
-  const alerts  = calculateDocumentAlertsFrontend(filteredRows, allDocuments);
-
   if (!filteredRows.length) {
     state.personnelSelectedId = null;
   }
 
-  const selectedEmployee = state.personnelSelectedId === "__none__"
+  const selectedEmployeeRow = state.personnelSelectedId === "__none__"
     ? null
     : filteredRows.find((item) => String(item.id) === String(state.personnelSelectedId)) || null;
+  const selectedEmployee = selectedEmployeeRow
+    ? state.personnelDetailCache?.get(String(selectedEmployeeRow.id)) || selectedEmployeeRow
+    : null;
+  const selectedEmployeeDossier = selectedEmployeeRow
+    ? state.personnelDossierCache?.get(String(selectedEmployeeRow.id)) || null
+    : null;
+  const selectedEmployeeDocuments = selectedEmployeeRow
+    ? (state.personnelEmployeeDocumentsCache?.has(String(selectedEmployeeRow.id))
+      ? state.personnelEmployeeDocumentsCache.get(String(selectedEmployeeRow.id))
+      : null)
+    : null;
+  const canSelectFirstEmployee = filteredRows.length > 0;
 
-  // ── Filas de tabla ────────────────────────────────────────────────────────
-  const cuForTable = state.currentUser;
-  const isAdminTable = (cuForTable?.role || "").toLowerCase() === "administrador";
-  const tableRows = filteredRows.length
-    ? filteredRows.map((item) => {
-        const hv        = getPersonnelHvStatusFull(item, allDocuments);
-        const docMetrics = getPersonnelDocumentMetrics(item, allDocuments);
-        const isOffer   = item.presentedInOffer === true || item.presentedInOffer === "true" ||
-                          item.presented_in_offer === true || item.presented_in_offer === "true";
-        const roleClass = isOffer ? "role-offer" : "role-extra";
-        const itemStatus = String(item.status || item.estado || "ACTIVO").toUpperCase().trim();
-        const isInactive = itemStatus === "INACTIVO" || itemStatus === "RETIRADO";
-        const rowClass  = (hv.label === "No apto documental" ? "personnel-row-blocked " : "") + (isInactive ? "personnel-row-inactive" : "");
-
-        return `
-          <tr class="${rowClass} ${String(state.personnelSelectedId) === String(item.id) ? "selected" : ""}" data-select-personnel-id="${escapeAttr(item.id)}">
-            <td>${escapeHtml(getPersonnelDocument(item))}</td>
-            <td class="personnel-name-cell">
-              <div class="personnel-employee-cell">
-                <div class="personnel-avatar" style="${getPersonnelAvatarStyle(item)}">${escapeHtml(getPersonnelInitials(item))}</div>
-                <div class="personnel-employee-copy">
-                  <strong class="personnel-name-link" data-open-cv-id="${escapeAttr(item.id)}">${escapeHtml(getPersonnelFullName(item))}</strong>
-                  ${isInactive ? `<span class="badge-inactivo">INACTIVO</span>` : ""}
-                </div>
-              </div>
-            </td>
-            <td class="cargo-cell">
-              <span class="role-chip ${roleClass}">${escapeHtml(getPersonnelRole(item))}</span>
-            </td>
-            <td><span class="role-chip ${roleClass}">${isOffer ? "Oferta" : "Extra"}</span></td>
-            <td>${buildPersonnelStatusChip(getPersonnelWorkStatus(item))}</td>
-            <td>
-              <div class="personnel-doc-progress">
-                <span class="status-chip ${hv.className}">${escapeHtml(hv.label)}</span>
-                <div class="personnel-mini-progress"><span style="width:${Math.max(0, Math.min(100, docMetrics.percent))}%"></span></div>
-                <small>${docMetrics.validated}/${docMetrics.total} validados</small>
-              </div>
-            </td>
-            <td>${escapeHtml(getPersonnelMunicipality(item))}</td>
-            <td class="gestor-zona-cell">${escapeHtml(item.gestorZona || item.gestor_zona || "—")}</td>
-            <td>
-              <div class="personnel-row-actions">
-                <button type="button" class="personnel-icon-btn btn-icon-view" title="Ver hoja de vida"
-                  data-cv-personnel-id="${escapeAttr(item.id)}">
-                  <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                </button>
-                <button type="button" class="personnel-icon-btn btn-icon-edit" title="Editar empleado"
-                  data-edit-personnel-id="${escapeAttr(item.id)}">
-                  <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                </button>
-                <button type="button" class="personnel-icon-btn btn-icon-docs" title="Documentos"
-                  data-documents-personnel-id="${escapeAttr(item.id)}">
-                  <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                </button>
-                ${isAdminTable ? `
-                <button type="button" class="personnel-icon-btn btn-icon-delete" title="Eliminar empleado"
-                  data-delete-personnel-id="${escapeAttr(item.id)}"
-                  data-delete-personnel-name="${escapeAttr(getPersonnelFullName(item))}">
-                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                </button>` : ""}
-              </div>
-            </td>
-          </tr>
-        `;
-      }).join("")
-    : `<tr><td colspan="9"><div class="personnel-table-empty">${
-        hasAnyFilter
-          ? "No hay registros que coincidan con los filtros."
-          : "No hay personal registrado."
-      }</div></td></tr>`;
+  // ── Listado de colaboradores ──────────────────────────────────────────────
+  const listRows = filteredRows.length
+    ? filteredRows.map((item) => buildPersonnelWorkspaceListItem(
+        item,
+        String(state.personnelSelectedId) === String(item.id),
+        allDocuments
+      )).join("")
+    : `
+      <div class="personnel-dossier-list-empty">
+        ${escapeHtml(
+          hasAnyFilter
+            ? "No hay registros que coincidan con los filtros."
+            : "No hay personal registrado."
+        )}
+      </div>
+    `;
 
   // ── Event wiring (diferido) ───────────────────────────────────────────────
   setTimeout(() => {
@@ -4196,6 +4796,7 @@ export async function renderPersonnelTableModule() {
 
     document.getElementById("btnNewEmployee")?.addEventListener("click", async () => {
       state.personnelDraft          = {};
+      state.personnelDraftBaselineData = clonePersonnelDraftSnapshot(state.personnelDraft);
       state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
       state.personnelSaveState      = "clean";
       state.personnelDossier        = null;
@@ -4283,6 +4884,7 @@ export async function renderPersonnelTableModule() {
       ]);
       if (!found) return;
       state.personnelDraft = hydratePersonnelDraft(found);
+      state.personnelDraftBaselineData = clonePersonnelDraftSnapshot(state.personnelDraft);
       state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
       state.personnelSaveState = "clean";
       state.personnelDossier = dossier;
@@ -4322,20 +4924,32 @@ export async function renderPersonnelTableModule() {
 
     const pnlShellEl  = document.getElementById("personnelWorkspaceRoot");
     const pnlDetailEl = document.getElementById("pnlDetail");
+    const renderDetail = (employee, dossier, documents = null) => {
+      if (!pnlDetailEl) return;
+      pnlDetailEl.innerHTML = buildPersonnelDetailPanel(employee, documents, dossier, { canSelectFirst: canSelectFirstEmployee });
+      wireDetail(pnlDetailEl);
+    };
 
     const closeDetail = () => {
       state.personnelSelectedId = "__none__";
       pnlShellEl?.classList.remove("detail-open");
-      if (pnlDetailEl) pnlDetailEl.innerHTML = buildPersonnelDetailPanel(null, []);
-      document.querySelectorAll("[data-select-personnel-id]").forEach(r => r.classList.remove("selected"));
+      renderDetail(null, null, null);
+      document.querySelectorAll("[data-select-personnel-id]").forEach((row) => row.classList.remove("selected"));
     };
 
     const wireDetail = (container) => {
-      container.querySelectorAll("[data-clear-personnel-selection]").forEach(btn =>
+      container.querySelectorAll("[data-clear-personnel-selection]").forEach((btn) =>
         btn.addEventListener("click", closeDetail));
 
+      container.querySelectorAll("[data-open-first-personnel]").forEach((btn) =>
+        btn.addEventListener("click", async () => {
+          const firstRow = document.querySelector("[data-select-personnel-id]");
+          if (!firstRow?.dataset.selectPersonnelId) return;
+          await selectEmployee(firstRow.dataset.selectPersonnelId);
+        }));
+
       // Photo upload
-      container.querySelectorAll("[data-photo-upload-id]").forEach(wrap => {
+      container.querySelectorAll("[data-photo-upload-id]").forEach((wrap) => {
         const input = wrap.querySelector(".cv-photo-input");
         if (!input) return;
         wrap.addEventListener("click", () => input.click());
@@ -4371,52 +4985,79 @@ export async function renderPersonnelTableModule() {
           reader.readAsDataURL(file);
         });
       });
-      container.querySelectorAll("[data-edit-personnel-id]").forEach(btn => {
+      container.querySelectorAll("[data-edit-personnel-id]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           await openEmployeeEditor(btn.dataset.editPersonnelId);
         });
       });
-      container.querySelectorAll("[data-documents-personnel-id]").forEach(btn => {
+      container.querySelectorAll("[data-documents-personnel-id]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           await openEmployeeDocuments(btn.dataset.documentsPersonnelId);
         });
       });
-      container.querySelectorAll("[data-cv-personnel-id]").forEach(btn => {
+      container.querySelectorAll("[data-cv-personnel-id]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           await openEmployeeCv(btn.dataset.cvPersonnelId);
         });
       });
 
-      // Panel tab switching
-      container.querySelectorAll("[data-panel-tab]").forEach(btn => {
+      container.querySelectorAll("[data-expediente-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          const tab = btn.dataset.panelTab;
-          container.querySelectorAll("[data-panel-tab]").forEach(b => b.classList.remove("pnl-tab-active"));
-          container.querySelectorAll("[data-panel-section]").forEach(s => s.classList.remove("pnl-sec-active"));
-          btn.classList.add("pnl-tab-active");
-          container.querySelector(`[data-panel-section="${tab}"]`)?.classList.add("pnl-sec-active");
+          const tab = btn.dataset.expedienteTab;
+          state.personnelWorkspaceTab = tab;
+          container.querySelectorAll("[data-expediente-tab]").forEach((tabBtn) => {
+            tabBtn.classList.toggle("active", tabBtn.dataset.expedienteTab === tab);
+          });
+          container.querySelectorAll("[data-expediente-panel]").forEach((panel) => {
+            panel.classList.toggle("active", panel.dataset.expedientePanel === tab);
+          });
         });
       });
     };
 
-    document.querySelectorAll("[data-open-cv-id]").forEach((nameEl) => {
-      nameEl.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        const empId = nameEl.dataset.openCvId;
-        const found = await getFullEmployee(empId);
-        state.personnelSelectedId = empId;
-        document.querySelectorAll("[data-select-personnel-id]").forEach(r => r.classList.remove("selected"));
-        nameEl.closest("[data-select-personnel-id]")?.classList.add("selected");
-        if (!pnlShellEl || !pnlDetailEl) return;
-        pnlDetailEl.innerHTML = buildPersonnelDetailPanel(found, allDocuments);
-        pnlShellEl.classList.add("detail-open");
-        wireDetail(pnlDetailEl);
+    const selectEmployee = async (employeeId) => {
+      const key = String(employeeId || "").trim();
+      if (!key) return;
+      state.personnelSelectedId = key;
+      document.querySelectorAll("[data-select-personnel-id]").forEach((row) => {
+        row.classList.toggle("selected", row.dataset.selectPersonnelId === key);
+      });
+      pnlShellEl?.classList.add("detail-open");
+
+      const fallback = filteredRows.find((row) => String(row.id) === key) || rows.find((row) => String(row.id) === key) || null;
+      const cachedEmployee = state.personnelDetailCache?.get(key) || fallback;
+      const cachedDossier = state.personnelDossierCache?.get(key) || null;
+      const cachedDocuments = state.personnelEmployeeDocumentsCache?.has(key)
+        ? state.personnelEmployeeDocumentsCache.get(key)
+        : null;
+      renderDetail(cachedEmployee || fallback, cachedDossier, cachedDocuments);
+
+      try {
+        const [found, dossier, documents] = await Promise.all([
+          getFullEmployee(key),
+          getEmployeeDossierPayload(key).catch(() => null),
+          getEmployeeDocumentsCollection(key).catch(() => cachedDocuments),
+        ]);
+        if (String(state.personnelSelectedId) !== key) return;
+        renderDetail(found || cachedEmployee || fallback, dossier || cachedDossier, documents || cachedDocuments);
+      } catch {
+        if (String(state.personnelSelectedId) !== key) return;
+        renderDetail(cachedEmployee || fallback, cachedDossier, cachedDocuments);
+      }
+    };
+
+    document.querySelectorAll("[data-select-personnel-id]").forEach((row) => {
+      row.addEventListener("click", async () => {
+        await selectEmployee(row.dataset.selectPersonnelId);
       });
     });
 
     // Wire buttons inside the initially-rendered detail panel (pre-selected employee)
-    if (pnlDetailEl && pnlShellEl?.classList.contains("detail-open")) {
+    if (pnlDetailEl) {
       wireDetail(pnlDetailEl);
+    }
+    if (selectedEmployeeRow && (!state.personnelDetailCache?.has(String(selectedEmployeeRow.id)) || !state.personnelDossierCache?.has(String(selectedEmployeeRow.id)))) {
+      void selectEmployee(selectedEmployeeRow.id);
     }
   }, 0);
 
@@ -4444,39 +5085,16 @@ export async function renderPersonnelTableModule() {
   const totalPages = Number(currentPagination.totalPages || _totalPages || 0);
   const pageStart = _total ? ((currentPage - 1) * currentPageSize) + 1 : 0;
   const pageEnd = _total ? Math.min(_total, pageStart + rows.length - 1) : 0;
+  const visibleCount = rows.length || 0;
+  const totalCount = Number(_total || 0);
 
   // ── HTML ──────────────────────────────────────────────────────────────────
   return `
-    <div class="personnel-master-module personnel-workspace-shell pnl-shell${selectedEmployee ? " detail-open" : ""}" id="personnelWorkspaceRoot">
+    <div class="personnel-master-module personnel-workspace-shell personnel-dossier-shell pnl-shell${selectedEmployee ? " detail-open" : ""}" id="personnelWorkspaceRoot">
 
       ${contextBanner}
 
-      <!-- 1. KPIs -->
-      <section class="pnl-kpis">
-        <div class="pnl-kpi pnl-kpi-main">
-          <span class="pnl-kpi-label">Total personal</span>
-          <strong class="pnl-kpi-value">${_total || summary.total || 0}</strong>
-          <small class="pnl-kpi-sub">${filteredRows.length} mostrados</small>
-        </div>
-        <div class="pnl-kpi pnl-kpi-success">
-          <span class="pnl-kpi-label">HV completas</span>
-          <strong class="pnl-kpi-value">${summary.completa || 0}</strong>
-        </div>
-        <div class="pnl-kpi pnl-kpi-warning">
-          <span class="pnl-kpi-label">En revisión</span>
-          <strong class="pnl-kpi-value">${summary.revision || 0}</strong>
-        </div>
-        <div class="pnl-kpi pnl-kpi-neutral">
-          <span class="pnl-kpi-label">Incompletas</span>
-          <strong class="pnl-kpi-value">${summary.incompleta || 0}</strong>
-        </div>
-        <div class="pnl-kpi pnl-kpi-danger">
-          <span class="pnl-kpi-label">No aptos</span>
-          <strong class="pnl-kpi-value">${summary.noApto || 0}</strong>
-        </div>
-      </section>
-
-      <!-- 2. Acciones + Búsqueda + Filtros -->
+      <!-- 1. Acciones + Búsqueda + Filtros -->
       <section class="pnl-controls">
         <div class="pnl-actions">
           <button type="button" id="btnNewEmployee" class="btn btn-primary">+ Nuevo empleado</button>
@@ -4486,7 +5104,6 @@ export async function renderPersonnelTableModule() {
           <input id="personnelSearch" type="text" class="pnl-search-input"
             placeholder="Buscar por nombre, documento o cargo"
             value="${escapeAttr(f.search)}" />
-          <span class="pnl-count">${filteredRows.length} registros</span>
         </div>
         <div class="pnl-filters-row">
           <select id="personnelFilterStatus">
@@ -4536,37 +5153,38 @@ export async function renderPersonnelTableModule() {
         </div>
       </section>
 
-      <!-- 3. Tabla -->
-      <section class="pnl-body" id="pnlBody">
-        <div class="pnl-table-card">
-          <div class="personnel-table-wrap premium-table-wrap">
-            <table class="personnel-table">
-              <thead>
-                <tr>
-                  <th>Documento</th><th>Nombre completo</th><th>Cargo</th>
-                  <th>Tipo</th><th>Estado</th><th>HV</th>
-                  <th>Municipio</th><th>Gestor de Zona</th><th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>${tableRows}</tbody>
-            </table>
+      <!-- 2. Workspace de expediente -->
+      <section class="personnel-dossier-body" id="pnlBody">
+        <aside class="personnel-dossier-list-panel">
+          <div class="personnel-dossier-list-panel-head">
+            <div>
+              <p>Colaboradores</p>
+              <h3>Listado de expedientes</h3>
+              <span class="personnel-dossier-list-count">${visibleCount} visibles / ${totalCount} total</span>
+            </div>
           </div>
-          <div class="personnel-pagination" style="display:flex;gap:.75rem;align-items:center;justify-content:flex-end;padding:.75rem 1rem;border-top:1px solid var(--border);font-size:13px">
-            <span>${pageStart}-${pageEnd} de ${_total || 0}</span>
-            <select id="personnelPageSize" style="width:auto">
+
+          <div class="personnel-dossier-list-shell">
+            <div class="personnel-dossier-list-scroll">
+              ${listRows}
+            </div>
+          </div>
+
+          <div class="personnel-pagination personnel-dossier-pagination">
+            <span class="personnel-dossier-page-info">${pageStart}-${pageEnd} de ${_total || 0}</span>
+            <select id="personnelPageSize" class="personnel-dossier-page-size">
               ${[25, 50, 100].map((size) => `<option value="${size}" ${currentPageSize === size ? "selected" : ""}>${size}</option>`).join("")}
             </select>
-            <button type="button" id="personnelPrevPage" class="btn btn-secondary" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
-            <span>Página ${currentPage} de ${totalPages || 1}</span>
-            <button type="button" id="personnelNextPage" class="btn btn-secondary" ${totalPages && currentPage >= totalPages ? "disabled" : ""}>Siguiente</button>
+            <button type="button" id="personnelPrevPage" class="btn btn-secondary personnel-dossier-page-btn" ${currentPage <= 1 ? "disabled" : ""}>Anterior</button>
+            <span class="personnel-dossier-page-info">Página ${currentPage} de ${totalPages || 1}</span>
+            <button type="button" id="personnelNextPage" class="btn btn-secondary personnel-dossier-page-btn" ${totalPages && currentPage >= totalPages ? "disabled" : ""}>Siguiente</button>
           </div>
-        </div>
-      </section>
+        </aside>
 
-      <!-- 4. Expediente: panel lateral sobre todo el workspace -->
-      <aside class="pnl-detail" id="pnlDetail">
-        ${buildPersonnelDetailPanel(selectedEmployee, allDocuments)}
-      </aside>
+        <section class="pnl-detail personnel-dossier-detail-panel" id="pnlDetail">
+          ${buildPersonnelDetailPanel(selectedEmployee, selectedEmployeeDocuments, selectedEmployeeDossier, { canSelectFirst: canSelectFirstEmployee })}
+        </section>
+      </section>
     </div>
   `;
 }
@@ -4819,6 +5437,7 @@ export async function handlePersonnelFormSubmit(event) {
             state.personnelDetailCache.set(String(state.personnelEditingId), freshData);
           }
           state.personnelDraft = hydratePersonnelDraft(freshData);
+          state.personnelDraftBaselineData = clonePersonnelDraftSnapshot(state.personnelDraft);
           state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
         }
         state.personnelDossier = freshDossier;
@@ -4834,6 +5453,7 @@ export async function handlePersonnelFormSubmit(event) {
     } else {
       showSuccess("El empleado fue registrado en el sistema.", "Empleado creado");
       state.personnelDraft          = {};
+      state.personnelDraftBaselineData = clonePersonnelDraftSnapshot(state.personnelDraft);
       state.personnelDraftBaselineFingerprint = getPersonnelDraftFingerprint(state.personnelDraft);
       state.personnelSaveState      = "saved";
       state.personnelDossier        = null;
@@ -4946,818 +5566,101 @@ function _getRequiredDocsByEmployee(employee) {
 }
 
 function _resolveMunName(value) {
-  if (!value) return "—";
-  const found = findOfficialMunicipality(value, { includeFallback: true });
-  return found ? found.name : String(value);
+  return getMunicipalityName(value, null, "No registrado");
 }
 
-async function openBulkDocumentUploadModal() {
-  document.getElementById("bulkDocumentModal")?.remove();
-
-  let personnelPayload = {};
-  try {
-    personnelPayload = await apiFetch("/personnel?export=1&pageSize=5000");
-  } catch {
-    personnelPayload = {};
-  }
-
-  const employees = Array.isArray(personnelPayload.data)
-    ? personnelPayload.data
-    : Array.isArray(personnelPayload.personnel)
-      ? personnelPayload.personnel
-      : [];
-
-  const statusMeta = {
-    READY: { label: "Listo para cargar", color: "#15803d", bg: "#f0fdf4" },
-    REQUIRES_REVIEW: { label: "Requiere revision", color: "#b45309", bg: "#fffbeb" },
-    NOT_FOUND: { label: "No encontrado", color: "#b91c1c", bg: "#fef2f2" },
-    TYPE_UNRECOGNIZED: { label: "Tipo no reconocido", color: "#1d4ed8", bg: "#eff6ff" },
-    ERROR: { label: "Error", color: "#991b1b", bg: "#fef2f2" },
-    OMITTED: { label: "Omitido", color: "#64748b", bg: "#f8fafc" },
-    DUPLICATE: { label: "Duplicado", color: "#7c3aed", bg: "#f5f3ff" },
-    PHYSICAL_WITHOUT_DB: { label: "Fisico sin BD", color: "#92400e", bg: "#fff7ed" },
-    EMPLOYEE_NOT_FOUND_OR_OTHER_COMPANY: { label: "Empleado invalido", color: "#b91c1c", bg: "#fef2f2" },
-    DOCUMENT_TYPE_NULL: { label: "Tipo faltante", color: "#b45309", bg: "#fffbeb" },
-    DOCUMENT_TYPE_NOT_FOUND: { label: "Tipo invalido", color: "#1d4ed8", bg: "#eff6ff" },
-    MATCHED: { label: "Asociado", color: "#15803d", bg: "#f0fdf4" },
-    NO_MATCH: { label: "Sin coincidencia", color: "#b91c1c", bg: "#fef2f2" },
-  };
-
-  const modal = document.createElement("div");
-  modal.id = "bulkDocumentModal";
-  modal.className = "modal-overlay";
-  modal.innerHTML = `
-    <div class="modal-card" style="max-width:1320px">
-      <div class="modal-header">
-        <h3>Auditoria y carga documental masiva</h3>
-        <button type="button" class="modal-close" id="closeBulkDocumentModal">x</button>
-      </div>
-      <div class="modal-body">
-        <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,280px) auto auto auto;gap:.75rem;align-items:end;margin-bottom:1rem">
-          <label style="font-size:13px;font-weight:600">Archivos PDF / JPG / PNG
-            <input id="bulkDocumentFiles" type="file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
-          </label>
-          <label style="font-size:13px;font-weight:600">Archivo ZIP
-            <input id="bulkDocumentZip" type="file" accept=".zip,application/zip" style="display:block;width:100%;margin-top:.35rem;padding:.5rem;border:1px solid var(--border);border-radius:6px" />
-          </label>
-          <button type="button" class="btn btn-secondary" id="previewBulkDocuments">Analizar lote</button>
-          <button type="button" class="btn btn-secondary" id="auditBulkDocuments">Auditar fisicos/BD</button>
-          <button type="button" class="btn btn-secondary" id="repairBulkDocuments">Previsualizar reparacion</button>
-        </div>
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:.75rem;flex-wrap:wrap">
-          <div id="bulkDocumentSummary" style="font-size:13px;color:#475569;line-height:1.7"></div>
-          <a id="bulkDocumentReportLink" href="#" download style="display:none;font-size:12px;font-weight:700;color:#1d4ed8;text-decoration:none">Descargar reporte CSV</a>
-        </div>
-        <div style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px">
-          <table style="width:100%;border-collapse:collapse;font-size:12px">
-            <thead style="position:sticky;top:0;background:var(--panel);z-index:1">
-              <tr>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Archivo</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo detectado</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Trabajador detectado</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Documento</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Estado</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Trabajador manual</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Tipo manual</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Documento existente</th>
-                <th style="text-align:left;padding:.55rem;border-bottom:1px solid var(--border)">Accion</th>
-              </tr>
-            </thead>
-            <tbody id="bulkDocumentRows">
-              <tr><td colspan="9" style="padding:1rem;color:#64748b">Selecciona archivos sueltos o un ZIP para previsualizar la asociacion.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="downloadBulkAudit" disabled>Descargar Excel</button>
-        <button type="button" class="btn btn-primary" id="uploadBulkDocuments" disabled>Confirmar carga</button>
-        <button type="button" class="btn btn-primary" id="applyBulkRepair" disabled>Aplicar reparacion</button>
-        <button type="button" class="btn btn-secondary" id="cancelBulkDocumentModal">Cerrar</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-
-  const fileInput = modal.querySelector("#bulkDocumentFiles");
-  const zipInput = modal.querySelector("#bulkDocumentZip");
-  const rowsBody = modal.querySelector("#bulkDocumentRows");
-  const summaryEl = modal.querySelector("#bulkDocumentSummary");
-  const reportLink = modal.querySelector("#bulkDocumentReportLink");
-  const uploadBtn = modal.querySelector("#uploadBulkDocuments");
-  const repairApplyBtn = modal.querySelector("#applyBulkRepair");
-  const downloadBtn = modal.querySelector("#downloadBulkAudit");
-  let reviewRows = [];
-  let documentTypes = [];
-  let lastCommitSummary = null;
-  let mode = "upload";
-
-  const close = () => modal.remove();
-  modal.querySelector("#closeBulkDocumentModal")?.addEventListener("click", close);
-  modal.querySelector("#cancelBulkDocumentModal")?.addEventListener("click", close);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) close();
-  });
-
-  const buildUploadFormData = (rowsPayload = null) => {
-    const formData = new FormData();
-    Array.from(fileInput?.files || []).forEach((file) => formData.append("documents", file));
-    const zipFile = zipInput?.files?.[0];
-    if (zipFile) formData.append("zipFile", zipFile);
-    if (rowsPayload) formData.append("rows", JSON.stringify(rowsPayload));
-    return formData;
-  };
-
-  const renderSummary = (summary, summaryMode = "preview") => {
-    if (!summaryEl) return;
-    if (!summary) {
-      summaryEl.textContent = "";
-      return;
-    }
-
-    if (summaryMode === "commit") {
-      summaryEl.innerHTML = `
-        <strong>Resultado final</strong><br>
-        Total recibidos: <b>${summary.totalReceived || 0}</b> ·
-        Asociados correctamente: <b>${summary.associatedCorrectly || 0}</b> ·
-        Pendientes por revision: <b>${summary.pendingReview || 0}</b> ·
-        No encontrados: <b>${summary.notFound || 0}</b> ·
-        Con error: <b>${summary.errors || 0}</b> ·
-        Omitidos: <b>${summary.omitted || 0}</b>
-      `;
-      return;
-    }
-
-    if (summaryMode === "audit") {
-      summaryEl.innerHTML = `
-        <strong>Auditoria documental</strong><br>
-        Total archivos fisicos: <b>${summary.totalPhysicalFiles || 0}</b> ·
-        Total registros documentos: <b>${summary.totalDocumentRecords || 0}</b> ·
-        Vinculados a empleados: <b>${summary.totalLinkedToEmployees || 0}</b> ·
-        Huerfanos: <b>${summary.totalOrphans || 0}</b> ·
-        Fisicos sin registro: <b>${summary.totalPhysicalWithoutDbRecord || 0}</b>
-      `;
-      return;
-    }
-
-    if (summary.statuses) {
-      summaryEl.innerHTML = `
-        <strong>Previsualizacion</strong><br>
-        Total: <b>${summary.total || 0}</b> ·
-        Listos: <b>${summary.statuses.READY || 0}</b> ·
-        Requieren revision: <b>${summary.statuses.REQUIRES_REVIEW || 0}</b> ·
-        No encontrados: <b>${summary.statuses.NOT_FOUND || 0}</b> ·
-        Tipo no reconocido: <b>${summary.statuses.TYPE_UNRECOGNIZED || 0}</b> ·
-        Con error: <b>${summary.statuses.ERROR || 0}</b> ·
-        Con documento previo: <b>${summary.withConflicts || 0}</b>
-      `;
-      return;
-    }
-
-    const processed = summary.processed ?? summary.total ?? 0;
-    const linked = summary.linked ?? summary.matched ?? 0;
-    const unmatched = summary.unmatched ?? summary.notFound ?? 0;
-    const duplicates = summary.duplicates ?? 0;
-    const errors = summary.errors ?? 0;
-    summaryEl.innerHTML =
-      `<strong>Revision</strong><br>` +
-      `Archivos procesados: <b>${processed}</b> · ` +
-      `Vinculados correctamente: <b>${linked}</b> · ` +
-      `Sin coincidencia: <b>${unmatched}</b> · ` +
-      `Duplicados: <b>${duplicates}</b> · ` +
-      `Errores: <b>${errors}</b>`;
-  };
-
-  const buildEmployeeOptions = (selectedId, detectedEmployee = null) => {
-    const options = [...employees];
-    if (detectedEmployee?.id && !options.some((emp) => String(emp.id) === String(detectedEmployee.id))) {
-      options.unshift({
-        id: detectedEmployee.id,
-        fullName: detectedEmployee.fullName,
-        documentNumber: detectedEmployee.documentNumber,
-      });
-    }
-
-    return [
-      `<option value="">Selecciona trabajador</option>`,
-      ...options.map((emp) => {
-        const id = String(emp.id);
-        const selected = id === String(selectedId || "") ? " selected" : "";
-        const label = `${getPersonnelFullName(emp)} - ${getPersonnelDocument(emp)}`;
-        return `<option value="${escapeAttr(id)}"${selected}>${escapeHtml(label)}</option>`;
-      }),
-    ].join("");
-  };
-
-  const buildTypeOptions = (selectedId) => {
-    return [
-      `<option value="">Selecciona tipo</option>`,
-      ...documentTypes.map((docType) => {
-        const id = String(docType.id);
-        const selected = id === String(selectedId || "") ? " selected" : "";
-        const label = docType.name || docType.code || `Tipo ${id}`;
-        return `<option value="${escapeAttr(id)}"${selected}>${escapeHtml(label)}</option>`;
-      }),
-    ].join("");
-  };
-
-  const renderRows = () => {
-    if (!reviewRows.length) {
-      rowsBody.innerHTML = `<tr><td colspan="9" style="padding:1rem;color:#64748b">Sin resultados.</td></tr>`;
-      uploadBtn.disabled = true;
-      repairApplyBtn.disabled = true;
-      downloadBtn.disabled = true;
-      return;
-    }
-
-    rowsBody.innerHTML = reviewRows.map((row, index) => {
-      const meta = statusMeta[row.status] || statusMeta.REQUIRES_REVIEW;
-      const detectedEmployee = row.detectedEmployee || null;
-      const detectedName = detectedEmployee?.fullName || row.employeeName || "";
-      const detectedDoc = detectedEmployee?.documentNumber || row.documentNumber || row.employeeDocumentNumber || "";
-      const candidates = Array.isArray(row.candidates) ? row.candidates.slice(0, 3) : [];
-      const candidateHint = candidates.length
-        ? `<div style="margin-top:4px;color:#64748b;font-size:11px">Sugerencias: ${escapeHtml(candidates.map((candidate) => `${candidate.fullName} (${candidate.documentNumber || "sin doc"})`).join(" · "))}</div>`
-        : "";
-      const existingConflict = row.existingConflict && row.existingDocument
-        ? `
-          <div style="display:grid;gap:6px">
-            <div style="font-size:11px;color:#64748b">
-              Ya existe: <b>${escapeHtml(row.existingDocument.originalFileName || row.existingDocument.fileName || "Documento previo")}</b><br>
-              Version actual: <b>${Number(row.existingDocument.version || 1)}</b>
-            </div>
-            <select data-bulk-duplicate-strategy="${index}" style="width:180px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
-              <option value="keep_both"${String(row.duplicateStrategy || "") === "keep_both" ? " selected" : ""}>Conservar ambos</option>
-              <option value="replace"${String(row.duplicateStrategy || "") === "replace" ? " selected" : ""}>Reemplazar logico</option>
-              <option value="new_version"${String(row.duplicateStrategy || "") === "new_version" ? " selected" : ""}>Marcar nueva version</option>
-            </select>
-          </div>`
-        : `<span style="color:#94a3b8">No aplica</span>`;
-
-      return `<tr data-bulk-row="${index}">
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <div style="font-weight:600;color:#0f172a;max-width:220px;word-break:break-word">${escapeHtml(row.fileName || "")}</div>
-          <div style="margin-top:4px;font-size:11px;color:#64748b">${escapeHtml(row.archiveEntryName || row.extractedName || row.documentNumber || row.fileKey || "")}</div>
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <div>${escapeHtml(row.documentTypeName || row.documentTypeCode || "Sin detectar")}</div>
-          <div style="margin-top:4px;color:#64748b;font-size:11px">${escapeHtml(row.documentTypeCode || "")}</div>
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <div>${escapeHtml(detectedName || "Sin asociacion automatica")}</div>
-          <div style="margin-top:4px;color:#64748b;font-size:11px">${escapeHtml(detectedDoc || "—")}</div>
-          ${candidateHint}
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${escapeHtml(detectedDoc || row.documentNumber || "—")}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;background:${meta.bg};color:${meta.color}">
-            ${escapeHtml(meta.label)}
-          </span>
-          ${row.errorMessage || row.error ? `<div style="margin-top:6px;font-size:11px;color:#991b1b">${escapeHtml(row.errorMessage || row.error)}</div>` : ""}
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <select data-bulk-employee-select="${index}" style="width:230px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
-            ${buildEmployeeOptions(row.employeeId, detectedEmployee)}
-          </select>
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <select data-bulk-type-select="${index}" style="width:220px;padding:.35rem;border:1px solid var(--border);border-radius:6px">
-            ${buildTypeOptions(row.documentTypeId || row.documentType_id)}
-          </select>
-        </td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">${existingConflict}</td>
-        <td style="padding:.55rem;border-bottom:1px solid var(--border)">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
-            <input type="checkbox" data-bulk-omit="${index}" ${row.status === "ERROR" || row.status === "OMITTED" ? "checked" : ""}>
-            Omitir
-          </label>
-        </td>
-      </tr>`;
-    }).join("");
-
-    uploadBtn.disabled = mode !== "upload";
-    repairApplyBtn.disabled = mode !== "repair";
-    downloadBtn.disabled = reviewRows.length === 0;
-  };
-
-  const selectedRows = () => reviewRows.map((row, index) => ({
-    ...row,
-    employeeId: modal.querySelector(`[data-bulk-employee-select="${index}"]`)?.value || "",
-    documentTypeId: modal.querySelector(`[data-bulk-type-select="${index}"]`)?.value || row.documentTypeId || row.documentType_id || "",
-    duplicateStrategy: modal.querySelector(`[data-bulk-duplicate-strategy="${index}"]`)?.value || row.duplicateStrategy || "keep_both",
-    omit: modal.querySelector(`[data-bulk-omit="${index}"]`)?.checked || false,
-  }));
-
-  const downloadRows = (rows, name) => {
-    exportToExcel(
-      [
-        "Archivo", "File key", "Tipo", "Documento extraido", "Empleado",
-        "Estado", "Confianza", "Almacenado", "Vinculado", "Error",
-      ],
-      rows.map((row) => [
-        row.fileName || "",
-        row.fileKey || row.sourceKey || "",
-        row.documentTypeName || row.documentTypeCode || "",
-        row.documentNumber || row.extractedName || "",
-        row.detectedEmployee?.fullName || row.employeeName || row.employeeId || "",
-        row.status || "",
-        row.confidence || 0,
-        row.stored ? "SI" : "",
-        row.linked ? "SI" : "",
-        row.error || row.errorMessage || "",
-      ]),
-      name
-    );
-  };
-
-  modal.querySelector("#previewBulkDocuments")?.addEventListener("click", async () => {
-    const files = Array.from(fileInput?.files || []);
-    const zipFile = zipInput?.files?.[0] || null;
-    if (!files.length && !zipFile) {
-      showWarning("Selecciona archivos sueltos o un ZIP.");
-      return;
-    }
-    try {
-      mode = "upload";
-      lastCommitSummary = null;
-      uploadBtn.disabled = true;
-      reportLink.style.display = "none";
-      reportLink.removeAttribute("href");
-      const res = await apiFetch("/documents/bulk/preview", {
-        method: "POST",
-        body: buildUploadFormData(),
-      });
-      reviewRows = res.data?.rows || [];
-      documentTypes = Array.isArray(res.data?.documentTypes) ? res.data.documentTypes : [];
-      renderSummary(res.data?.summary || null, "preview");
-      renderRows();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-
-  modal.querySelector("#auditBulkDocuments")?.addEventListener("click", async () => {
-    try {
-      mode = "audit";
-      reportLink.style.display = "none";
-      reportLink.removeAttribute("href");
-      const res = await apiFetch("/documents/bulk-audit", { skipDedupe: true });
-      const data = res.data || {};
-      const summary = data.summary || {};
-      const missing = data.physical?.missingDbRows || [];
-      const relations = data.relations || [];
-      reviewRows = [
-        ...missing.map((row) => ({
-          fileName: row.fileName,
-          fileKey: row.fileKey,
-          status: "PHYSICAL_WITHOUT_DB",
-          confidence: 0,
-          error: "Archivo fisico sin registro en documentos",
-        })),
-        ...relations.map((row) => ({
-          fileName: row.file_name,
-          fileKey: row.file_url,
-          employeeId: row.employee_id || "",
-          documentTypeId: row.document_type_id || "",
-          status: row.relation_status,
-          confidence: 0,
-          error: row.relation_status,
-        })),
-      ];
-      renderSummary(summary, "audit");
-      renderRows();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-
-  modal.querySelector("#repairBulkDocuments")?.addEventListener("click", async () => {
-    try {
-      mode = "repair";
-      reportLink.style.display = "none";
-      reportLink.removeAttribute("href");
-      const files = Array.from(fileInput?.files || []);
-      const body = files.length
-        ? { files: files.map((file) => ({ fileName: file.name, fileKey: `documents/${file.name}` })) }
-        : {};
-      const res = await apiFetch("/documents/bulk-repair/preview", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      reviewRows = res.data?.rows || [];
-      documentTypes = Array.isArray(res.data?.documentTypes) ? res.data.documentTypes : documentTypes;
-      renderSummary(res.data?.summary || {}, "repair");
-      renderRows();
-    } catch (err) {
-      showError(err.message);
-    }
-  });
-
-  downloadBtn.addEventListener("click", () => {
-    downloadRows(selectedRows(), `auditoria_documentos_${new Date().toISOString().slice(0, 10)}`);
-  });
-
-  uploadBtn.addEventListener("click", async () => {
-    if (!reviewRows.length) {
-      showWarning("Primero analiza el lote.");
-      return;
-    }
-
-    const rowsPayload = selectedRows().map((row) => ({
-      sourceKey: row.sourceKey,
-      fileName: row.fileName,
-      status: row.status,
-      documentTypeName: row.documentTypeName,
-      employeeId: row.employeeId,
-      documentTypeId: row.documentTypeId,
-      duplicateStrategy: row.duplicateStrategy || "keep_both",
-      omit: row.omit === true,
-    }));
-
-    if (!rowsPayload.some((row) => !row.omit)) {
-      showWarning("No hay archivos marcados para cargar.");
-      return;
-    }
-
-    try {
-      uploadBtn.disabled = true;
-      uploadBtn.textContent = "Procesando...";
-      const res = await apiFetch("/documents/bulk/commit", {
-        method: "POST",
-        body: buildUploadFormData(rowsPayload),
-      });
-      lastCommitSummary = res.data?.summary || null;
-      renderSummary(lastCommitSummary, "commit");
-      if (res.data?.reportCsvBase64) {
-        reportLink.href = res.data.reportCsvBase64;
-        reportLink.download = `reporte_carga_masiva_documentos_${new Date().toISOString().slice(0, 10)}.csv`;
-        reportLink.style.display = "";
-      }
-      reviewRows = (res.data?.rows || []).map((row, index) => ({
-        ...reviewRows[index],
-        status: row.result === "CARGADO" ? "READY" : row.status,
-        error: row.message || "",
-      }));
-      renderRows();
-      showSuccess("Carga masiva procesada.");
-      uploadBtn.textContent = "Carga procesada";
-      modal.querySelector("#cancelBulkDocumentModal").textContent = "Cerrar y recargar";
-      modal.querySelector("#cancelBulkDocumentModal").onclick = async () => {
-        close();
-        await openModule("gestion_personal");
-      };
-    } catch (err) {
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = "Confirmar carga";
-      showError(err.message);
-    }
-  });
-
-  repairApplyBtn.addEventListener("click", async () => {
-    const rows = selectedRows()
-      .filter((row) => row.employeeId && row.fileKey && row.documentTypeId && !row.omit)
-      .map((row) => ({
-        fileName: row.fileName,
-        fileKey: row.fileKey,
-        employeeId: row.employeeId,
-        documentTypeId: row.documentTypeId,
-      }));
-
-    if (!rows.length) {
-      showWarning("Selecciona empleados y tipos validos para reparar.");
-      return;
-    }
-
-    try {
-      const res = await apiFetch("/documents/bulk-repair/apply", {
-        method: "POST",
-        body: JSON.stringify({ rows }),
-      });
-      reviewRows = res.data?.rows || [];
-      renderSummary(res.data?.summary || {}, "repair");
-      renderRows();
-      downloadRows(reviewRows, `resultado_reparacion_documentos_${new Date().toISOString().slice(0, 10)}`);
-      showSuccess("Reparacion documental procesada.");
-      await openModule("gestion_personal");
-    } catch (err) {
-      showError(err.message);
-    }
-  });
+async function openDocumentCenterModule() {
+  console.log("[documents] NEW FLOW ACTIVE");
+  await openModule("centro_documentos");
 }
 
-export async function loadEmployeeDocumentsModule() {
-  const employee = state.personnelDocumentsEmployee;
-
-  if (!employee) {
-    return `<article class="info-card"><h3>Error</h3><p>No se encontró el empleado.</p></article>`;
-  }
-
-  let documents = [];
-  try {
-    const res = await apiFetch(`/documents?employeeId=${employee.id}`);
-    documents = Array.isArray(res.data) ? res.data : [];
-  } catch (error) {
-    return `<article class="info-card"><h3>Error cargando documentos</h3><p>${escapeHtml(error.message)}</p></article>`;
-  }
-
-  const requiredDocuments = _getRequiredDocsByEmployee(employee);
-  const norm = (v) => String(v || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const findUploaded = (req) =>
-    documents
-      .filter((d) => sameDocumentType(d.documentType, req.name))
+function renderStableEmployeeDocuments(employee, documents, requiredDocuments) {
+  const rowsHtml = requiredDocuments.map((req) => {
+    const found = documents
+      .filter((doc) => sameDocumentType(doc.document_type_name || doc.documentType || doc.docTypeName || "", req.name))
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
-
-  const getStatus = (req) => {
-    const found = findUploaded(req);
-    if (!found || !found.fileUrl) {
-      return req.required
-        ? { label: "Faltante",  className: "danger",  icon: "✕", isOk: false }
-        : { label: "Opcional",  className: "neutral", icon: "—", isOk: true  };
-    }
-    const vs = norm(found.validationStatus || found.status);
-    if (vs === "RECHAZADO") return { label: "Rechazado",        className: "danger",  icon: "✕", isOk: false };
-    if (req.issueDateRequired && !found.issueDate)
-      return { label: "Falta expedición",  className: "warning", icon: "!", isOk: false };
-    if (req.expirationDateRequired && !found.expirationDate)
-      return { label: "Falta vencimiento", className: "warning", icon: "!", isOk: false };
-    if (req.expirationDateRequired && found.expirationDate) {
-      const diff = Math.ceil((new Date(found.expirationDate).setHours(0,0,0,0) - today) / 86_400_000);
-      if (diff < 0)  return { label: "Vencido",    className: "danger",  icon: "!", isOk: false };
-      if (diff <= 30) return { label: "Por vencer", className: "warning", icon: "!", isOk: false };
-    }
-    if (vs !== "VALIDADO") return { label: "En revisión", className: "warning", icon: "!", isOk: false };
-    return { label: "Validado", className: "success", icon: "✓", isOk: true };
-  };
-
-  const docRows = requiredDocuments.map((req) => {
-    const found = findUploaded(req);
-    const status = getStatus(req);
-    const vs = norm(found?.validationStatus || found?.status);
-    const canValidate = found?.fileUrl && vs !== "VALIDADO" && vs !== "RECHAZADO";
-    return { req, found, status, canValidate };
-  });
-
-  const reqRows    = docRows.filter((r) => r.req.required);
-  const totalReq   = reqRows.length;
-  const completedReq   = reqRows.filter((r) => r.status.isOk).length;
-  const missingReq     = reqRows.filter((r) => r.status.label === "Faltante").length;
-  const warningReq     = reqRows.filter((r) => r.status.className === "warning").length;
-  const rejectedOrExp  = reqRows.filter((r) => r.status.label === "Rechazado" || r.status.label === "Vencido").length;
-  const compliancePct  = totalReq ? Math.round((completedReq / totalReq) * 100) : 100;
-  const generalStatus  =
-    rejectedOrExp > 0 ? { label: "No apto documental", className: "danger" }
-    : missingReq > 0  ? { label: "Incompleto",          className: "danger" }
-    : warningReq > 0  ? { label: "Requiere revisión",   className: "warning" }
-    :                   { label: "Completo",             className: "success" };
-
-  const rowsHtml = docRows.map(({ req, found, status, canValidate }) => `
-    <div class="document-check-row">
-      <div class="document-check-name">
-        <span class="document-check-icon ${status.className}">${escapeHtml(status.icon)}</span>
-        <div>
-          <strong>${escapeHtml(req.name)}</strong>
-          <small>${escapeHtml(req.group || "GENERAL")}</small>
-          ${found?.validationStatus === "RECHAZADO" && found?.rejectionReason
-            ? `<p class="document-rejection">Motivo: ${escapeHtml(found.rejectionReason)}</p>` : ""}
-          ${found?.validatedBy ? `<p class="document-reviewed">Revisado por: ${escapeHtml(found.validatedBy)}</p>` : ""}
+    const uploaded = Boolean(found);
+    return `
+      <div class="document-check-row">
+        <div class="document-check-name">
+          <span class="document-check-icon ${uploaded ? "success" : (req.required ? "danger" : "neutral")}">${uploaded ? "✓" : "—"}</span>
+          <div>
+            <strong>${escapeHtml(req.name)}</strong>
+            <small>${escapeHtml(req.group || "GENERAL")}</small>
+          </div>
         </div>
+        <div class="document-check-conditional">
+          <span class="status-chip ${req.required ? "danger" : "neutral"}">${req.required ? "Obligatorio" : "Opcional"}</span>
+        </div>
+        <div class="document-check-date-cell">${req.issueDateRequired ? `<strong>${escapeHtml(found?.uploaded_at || found?.uploadedAt || "Pendiente")}</strong>` : `<span class="doc-na">No aplica</span>`}</div>
+        <div class="document-check-date-cell">${req.expirationDateRequired ? `<strong>${escapeHtml(found?.expirationDate || "Pendiente")}</strong>` : `<span class="doc-na">No aplica</span>`}</div>
+        <div class="document-check-status"><span class="status-chip ${uploaded ? "success" : "warning"}">${uploaded ? "Cargado" : "Pendiente"}</span></div>
+        <div class="document-check-actions">${found ? `<button type="button" class="btn btn-secondary btn-row" data-document-action="view" data-document-id="${escapeAttr(found.id)}">Ver</button>` : ""}</div>
       </div>
-      <div class="document-check-conditional">
-        <span class="status-chip ${req.required ? "danger" : "neutral"}">${req.required ? "Obligatorio" : "Opcional"}</span>
-      </div>
-      <div class="document-check-date-cell">
-        ${req.issueDateRequired
-          ? `<strong>${escapeHtml(found?.issueDate || "Pendiente")}</strong>`
-          : `<span class="doc-na">No aplica</span>`}
-      </div>
-      <div class="document-check-date-cell">
-        ${req.expirationDateRequired
-          ? `<strong>${escapeHtml(found?.expirationDate || "Pendiente")}</strong>`
-          : `<span class="doc-na">No aplica</span>`}
-      </div>
-      <div class="document-check-status">
-        <span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>
-      </div>
-      <div class="document-check-actions">
-        ${found?.fileUrl ? `<button type="button" class="btn btn-secondary btn-row" data-view-document-url="${escapeAttr(found.fileUrl)}" data-view-document-name="${escapeAttr(req.name)}">Ver</button>` : ""}
-        ${canValidate ? `
-          <button type="button" class="btn btn-primary btn-row" data-validate-document-id="${escapeAttr(found.id)}">Validar</button>
-          <button type="button" class="btn btn-danger btn-row" data-reject-document-id="${escapeAttr(found.id)}">Rechazar</button>
-        ` : ""}
-      </div>
-    </div>
-  `).join("");
+    `;
+  }).join("");
 
-  setTimeout(() => {
-    const docTypeInput        = document.getElementById("docType");
-    const issueDateInput      = document.getElementById("docIssueDate");
-    const expirationDateInput = document.getElementById("docExpirationDate");
-    const fileInput           = document.getElementById("docFile");
-
-    const syncDateVis = () => {
-      const rule = requiredDocuments.find((d) => norm(d.name) === norm(docTypeInput?.value));
-      if (!issueDateInput || !expirationDateInput) return;
-      if (!rule) {
-        issueDateInput.classList.add("hidden");
-        expirationDateInput.classList.add("hidden");
-        issueDateInput.value = "";
-        expirationDateInput.value = "";
-        return;
-      }
-      issueDateInput.classList.toggle("hidden", !rule.issueDateRequired);
-      expirationDateInput.classList.toggle("hidden", !rule.expirationDateRequired);
-      if (!rule.issueDateRequired) issueDateInput.value = "";
-      if (!rule.expirationDateRequired) expirationDateInput.value = "";
-    };
-
-    if (docTypeInput) { docTypeInput.addEventListener("change", syncDateVis); syncDateVis(); }
-
-    document.getElementById("backToPersonnel")?.addEventListener("click", async () => {
-      state.personnelViewMode   = "table";
-      state.personnelSelectedId = "__none__";
-      state.personnelDocumentsEmployee = null;
-      await openModule("gestion_personal");
-    });
-
-    document.getElementById("openBulkDocumentUpload")?.addEventListener("click", () => {
-      openBulkDocumentUploadModal();
-    });
-
-    document.getElementById("saveDoc")?.addEventListener("click", async () => {
-      const type  = docTypeInput?.value || "";
-      const issue = issueDateInput?.value || "";
-      const exp   = expirationDateInput?.value || "";
-      const rule  = requiredDocuments.find((d) => norm(d.name) === norm(type));
-
-      if (!type) { showWarning("Debes seleccionar un documento."); return; }
-      if (rule?.issueDateRequired && !issue) { showWarning("Este documento requiere fecha de expedición."); return; }
-      if (rule?.expirationDateRequired && !exp) { showWarning("Este documento requiere fecha de vencimiento."); return; }
-      if (!fileInput?.files?.length) { showWarning("Debes subir el documento en PDF."); return; }
-      const file = fileInput.files[0];
-      if (file.type !== "application/pdf") { showWarning("Solo se permiten archivos PDF."); return; }
-
-      try {
-        const fileBase64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-        });
-        await apiFetch("/documents", {
-          method: "POST",
-          body: JSON.stringify({
-            employeeId: employee.id,
-            documentType: type,
-            issueDate:      rule?.issueDateRequired      ? issue : "",
-            expirationDate: rule?.expirationDateRequired ? exp   : "",
-            fileBase64,
-            fileName: file.name,
-            validationStatus: "PENDIENTE_VALIDACION",
-            uploadedBy: state.currentUser?.name || "Usuario",
-          }),
-        });
-        await openModule("gestion_personal");
-      } catch { showError("No fue posible guardar el documento."); }
-    });
-
-    document.querySelectorAll("[data-view-document-url]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const url  = btn.dataset.viewDocumentUrl;
-        const name = btn.dataset.viewDocumentName || "Documento";
-        const overlay = document.createElement("div");
-        overlay.className = "pdf-preview-overlay";
-        overlay.innerHTML = `
-          <div class="pdf-preview-header">
-            <span class="pdf-preview-title">${escapeHtml(name)}</span>
-            <a href="${escapeAttr(url)}" download class="pdf-preview-close" style="margin-right:8px">Descargar</a>
-            <button type="button" class="pdf-preview-close" id="closePdfPreview">Cerrar ✕</button>
-          </div>
-          <iframe class="pdf-preview-frame" src="${escapeAttr(url)}" title="${escapeAttr(name)}"></iframe>
-        `;
-        document.body.appendChild(overlay);
-        overlay.querySelector("#closePdfPreview")?.addEventListener("click", () => overlay.remove());
-        overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") overlay.remove(); });
-        overlay.setAttribute("tabindex", "-1");
-        overlay.focus();
-      });
-    });
-
-    document.querySelectorAll("[data-validate-document-id]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const docId = btn.dataset.validateDocumentId;
-        const overlay = document.createElement("div");
-        overlay.className = "empiria-modal-overlay";
-        overlay.innerHTML = `
-          <div class="empiria-modal">
-            <h3>Validar documento</h3>
-            <p>¿Confirmas que este documento fue revisado y es válido? Esta acción quedará registrada.</p>
-            <div class="empiria-modal-actions">
-              <button type="button" id="btnCancelValidate" class="btn btn-secondary">Cancelar</button>
-              <button type="button" id="btnConfirmValidate" class="btn btn-primary">Sí, validar</button>
+  const loadedHtml = documents.length
+    ? documents.map((doc) => {
+        const docTypeKey = doc.document_type_key || doc.docTypeCode || "";
+        return `
+          <article class="document-loaded-card">
+            <div class="document-loaded-main">
+              <div>
+                <strong>${escapeHtml(doc.document_type_name || doc.docTypeName || doc.documentType || "Documento")}</strong>
+                <p>${escapeHtml(doc.original_filename || doc.originalFileName || doc.stored_filename || doc.storedFileName || "Archivo")}</p>
+              </div>
+              <span class="status-chip success">Cargado</span>
             </div>
-          </div>
-        `;
-        document.body.appendChild(overlay);
-        overlay.querySelector("#btnCancelValidate")?.addEventListener("click", () => overlay.remove());
-        overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-        overlay.querySelector("#btnConfirmValidate")?.addEventListener("click", async () => {
-          overlay.remove();
-          try {
-            await apiFetch("/documents/validate", {
-              method: "PUT",
-              body: JSON.stringify({ id: docId, userName: state.currentUser?.name || "Usuario" }),
-            });
-            showSuccess("Documento validado correctamente.", "Documento validado");
-            await openModule("gestion_personal");
-          } catch { showError("No fue posible validar el documento."); }
-        });
-      });
-    });
-
-    document.querySelectorAll("[data-reject-document-id]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.rejectDocumentId;
-        const overlay = document.createElement("div");
-        overlay.className = "empiria-modal-overlay";
-        overlay.innerHTML = `
-          <div class="empiria-modal">
-            <h3>Rechazar documento</h3>
-            <p>Escribe el motivo del rechazo. Esta razón quedará visible en el expediente del empleado.</p>
-            <textarea id="rejectReasonInput" placeholder="Motivo del rechazo..."></textarea>
-            <div class="empiria-modal-actions">
-              <button type="button" id="btnCancelReject" class="btn btn-secondary">Cancelar</button>
-              <button type="button" id="btnConfirmReject" class="btn btn-primary">Rechazar</button>
+            <div class="document-loaded-actions">
+              <button type="button" class="btn btn-secondary btn-row" data-document-action="view" data-document-id="${escapeAttr(doc.id)}">Ver</button>
+              <button type="button" class="btn btn-secondary btn-row" data-document-action="download" data-document-id="${escapeAttr(doc.id)}">Descargar</button>
+              <button type="button" class="btn btn-primary btn-row" data-document-action="replace" data-document-id="${escapeAttr(doc.id)}" data-document-type-key="${escapeAttr(docTypeKey)}">Reemplazar</button>
+              <button type="button" class="btn btn-danger btn-row" data-document-action="delete" data-document-id="${escapeAttr(doc.id)}">Eliminar</button>
             </div>
-          </div>
+          </article>
         `;
-        document.body.appendChild(overlay);
-        document.getElementById("rejectReasonInput")?.focus();
-        document.getElementById("btnCancelReject")?.addEventListener("click", () => overlay.remove());
-        overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-        document.getElementById("btnConfirmReject")?.addEventListener("click", async () => {
-          const reason = (document.getElementById("rejectReasonInput")?.value || "").trim();
-          if (!reason) { showWarning("Debes escribir un motivo de rechazo."); return; }
-          overlay.remove();
-          try {
-            await apiFetch("/documents/reject", {
-              method: "PUT",
-              body: JSON.stringify({ id, reason, userName: state.currentUser?.name || "Usuario" }),
-            });
-            await openModule("gestion_personal");
-          } catch { showError("No fue posible rechazar el documento."); }
-        });
-      });
-    });
-  }, 0);
+      }).join("")
+    : `<div class="documents-loaded-empty">No hay documentos cargados para este empleado.</div>`;
 
   return `
-    <div class="documents-audit-module">
-      <article class="documents-audit-card">
+    <div class="documents-workspace" data-employee-id="${escapeAttr(employee.id)}">
+      <article class="documents-audit-panel">
         <section class="documents-audit-hero">
           <div>
-            <span class="personnel-premium-eyebrow">Auditoría documental</span>
-            <h2>Documentos del empleado</h2>
-            <p>${escapeHtml(getPersonnelFullName(employee))}</p>
+            <span class="personnel-premium-eyebrow">Documentos</span>
+            <h2>${escapeHtml(getPersonnelFullName(employee))}</h2>
+            <p>Flujo estable sin preview automático.</p>
           </div>
           <div style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end">
-            <button id="openBulkDocumentUpload" class="btn btn-primary">Carga masiva de documentos</button>
-            <button id="backToPersonnel" class="btn btn-secondary">Volver</button>
+            <button type="button" id="openBulkDocumentUpload" class="btn btn-primary">Abrir Centro Documental</button>
+            <button type="button" id="backToPersonnel" class="btn btn-secondary">Volver</button>
           </div>
-        </section>
-
-        <section class="documents-audit-summary">
-          <div class="documents-audit-score">
-            <span>Cumplimiento</span>
-            <strong>${compliancePct}%</strong>
-            <small>${completedReq} de ${totalReq} obligatorios validados</small>
-          </div>
-          <div class="documents-audit-status ${generalStatus.className}">
-            <span>Estado documental</span>
-            <strong>${escapeHtml(generalStatus.label)}</strong>
-            <small>Según vencimientos, faltantes y validaciones.</small>
-          </div>
-          <div class="documents-audit-mini"><span>Faltantes</span><strong>${missingReq}</strong></div>
-          <div class="documents-audit-mini"><span>Alertas</span><strong>${warningReq + rejectedOrExp}</strong></div>
         </section>
 
         <section class="documents-upload-card">
           <div>
             <h3>Cargar documento</h3>
-            <p>Selecciona el tipo documental. Empiria solicitará fechas cuando sean obligatorias.</p>
+            <p>Selecciona un tipo documental y luego el PDF. Máximo 10 MB.</p>
           </div>
           <div class="documents-upload-form">
-            <select id="docType">
+            <select id="employeeDocumentTypeSelect">
               <option value="">Selecciona documento</option>
-              ${requiredDocuments.map((d) => `<option value="${escapeAttr(d.name)}">${escapeHtml(d.name)}${d.required ? "" : " (Opcional)"}</option>`).join("")}
+              ${requiredDocuments.map((d) => `<option value="${escapeAttr(d.name)}">${escapeHtml(d.name)}</option>`).join("")}
             </select>
-            <input id="docIssueDate" type="date" class="hidden" />
-            <input id="docExpirationDate" type="date" class="hidden" />
-            <input id="docFile" type="file" accept="application/pdf" />
-            <button id="saveDoc" class="btn btn-primary">Guardar documento</button>
+            <input type="file" id="employeeDocumentFileInput" accept="application/pdf,.pdf" style="display:none" />
+            <button type="button" id="employeeDocumentUploadButton" class="btn btn-primary btn-upload-document">Cargar documento</button>
           </div>
+        </section>
+
+        <section class="documents-loaded-card">
+          <div class="documents-loaded-head">
+            <div>
+              <h3>Documentos cargados</h3>
+              <p>Solo activos: no eliminados y no reemplazados.</p>
+            </div>
+          </div>
+          <div class="documents-loaded-grid">${loadedHtml}</div>
         </section>
 
         <section class="documents-checklist-card">
@@ -5776,17 +5679,238 @@ export async function loadEmployeeDocumentsModule() {
   `;
 }
 
+function bindEmployeeDocumentHandlers() {
+  if (employeeDocumentHandlersBound) return;
+  employeeDocumentHandlersBound = true;
+
+  document.addEventListener("click", async (event) => {
+    const actionButton = event.target.closest("[data-document-action]");
+    if (actionButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = actionButton.dataset.documentAction;
+      const docId = actionButton.dataset.documentId;
+      const typeKey = actionButton.dataset.documentTypeKey || "";
+
+      if (action === "view" || action === "download") {
+        try {
+          const vtRes = await apiFetch(`/documents/${encodeURIComponent(docId)}/view-token`, { method: "POST" });
+          if (!vtRes?.token) throw new Error("Sin token");
+          const suffix = action === "download" ? "download" : "view";
+          window.open(`/documents/${encodeURIComponent(docId)}/${suffix}?vt=${encodeURIComponent(vtRes.token)}`, "_blank", "noopener");
+        } catch {
+          alert("No se pudo abrir el documento. Intenta de nuevo.");
+        }
+        return;
+      }
+      if (action === "replace") {
+        EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentId = docId;
+        EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentTypeKey = typeKey;
+        const typeSelect = document.getElementById("employeeDocumentTypeSelect");
+        if (typeSelect && typeKey) typeSelect.value = typeKey;
+        document.getElementById("employeeDocumentFileInput")?.click();
+        return;
+      }
+      if (action === "delete") {
+        if (!confirm("¿Eliminar este documento? Esta acción no se puede deshacer.")) return;
+        await apiFetch(`/documents/${encodeURIComponent(docId)}`, { method: "DELETE" });
+        state.personnelEmployeeDocumentsCache?.delete?.(String(EMPLOYEE_DOCUMENT_UI_STATE.employeeId || ""));
+        await openModule("gestion_personal");
+      }
+      return;
+    }
+
+    if (event.target.closest("#employeeDocumentUploadButton")) {
+      event.preventDefault();
+      event.stopPropagation();
+      console.log("[documents] click upload");
+      document.getElementById("employeeDocumentFileInput")?.click();
+      return;
+    }
+
+    if (event.target.closest("#openBulkDocumentUpload")) {
+      event.preventDefault();
+      event.stopPropagation();
+      await openDocumentCenterModule();
+      return;
+    }
+
+    if (event.target.closest("#backToPersonnel")) {
+      event.preventDefault();
+      event.stopPropagation();
+      state.personnelViewMode = "table";
+      state.personnelSelectedId = "__none__";
+      state.personnelDocumentsEmployee = null;
+      await openModule("gestion_personal");
+    }
+  });
+
+  document.addEventListener("change", async (event) => {
+    const fileInput = event.target;
+    if (!(fileInput instanceof HTMLInputElement) || fileInput.id !== "employeeDocumentFileInput") return;
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    console.log("[documents] file selected", file.name);
+
+    const employeeId = EMPLOYEE_DOCUMENT_UI_STATE.employeeId || state.personnelDocumentsEmployee?.id || "";
+    const typeSelect = document.getElementById("employeeDocumentTypeSelect");
+    const documentTypeKey = String(typeSelect?.value || EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentTypeKey || "").trim();
+    if (!employeeId) { fileInput.value = ""; showError("No hay empleado seleccionado."); return; }
+    if (!documentTypeKey) { fileInput.value = ""; showError("Selecciona un tipo documental."); return; }
+    if (file.type !== "application/pdf" && !/\.pdf$/i.test(file.name || "")) { fileInput.value = ""; showError("Solo se permiten archivos PDF."); return; }
+    if (file.size > 10 * 1024 * 1024) { fileInput.value = ""; showError("El archivo supera el límite de 10 MB."); return; }
+
+    const uploadButton = document.getElementById("employeeDocumentUploadButton");
+    const originalText = uploadButton?.textContent || "Cargar documento";
+    const isReplace = Boolean(EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentId);
+    try {
+      if (uploadButton) { uploadButton.disabled = true; uploadButton.textContent = "Subiendo..."; }
+      console.log("[documents] uploading multipart");
+      const formData = new FormData();
+      formData.append("employee_id", employeeId);
+      formData.append("document_type_key", documentTypeKey);
+      formData.append("file", file);
+
+      const endpoint = isReplace
+        ? `/documents/${encodeURIComponent(EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentId)}/replace`
+        : "/documents/upload";
+      const response = await apiFetch(endpoint, { method: isReplace ? "PUT" : "POST", body: formData, noContentType: true });
+      state.personnelEmployeeDocumentsCache?.delete?.(String(employeeId));
+      state.personnelDossierCache?.delete?.(String(employeeId));
+      EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentId = null;
+      EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentTypeKey = "";
+      fileInput.value = "";
+      showSuccess(response.message || "Documento cargado correctamente.");
+      await openModule("gestion_personal");
+    } catch (error) {
+      showError(error.message || "No se pudo guardar el documento.");
+    } finally {
+      fileInput.value = "";
+      if (uploadButton) { uploadButton.disabled = false; uploadButton.textContent = originalText; }
+    }
+  });
+}
+
+export async function loadEmployeeDocumentsModule() {
+  const employee = state.personnelDocumentsEmployee;
+  if (!employee) {
+    return `<article class="info-card"><h3>Error</h3><p>No se encontró el empleado.</p></article>`;
+  }
+
+  let documents = [];
+  try {
+    documents = await getEmployeeDocumentsCollection(employee.id, { force: true });
+  } catch (error) {
+    return `<article class="info-card"><h3>Error cargando documentos</h3><p>${escapeHtml(error.message)}</p></article>`;
+  }
+
+  EMPLOYEE_DOCUMENT_UI_STATE.employeeId = String(employee.id);
+  console.log("[documents-personnel] NEW EXPEDIENTE FLOW ACTIVE");
+  bindEmployeeDocumentHandlers();
+  return renderStableEmployeeDocuments(employee, documents, _getRequiredDocsByEmployee(employee));
+}
+
 export function renderPersonnelCvModule() {
   const d = state.personnelDraft || {};
   const fullName = [d.firstName, d.secondName, d.firstLastName, d.secondLastName]
     .filter(Boolean).join(" ").toUpperCase() || "SIN NOMBRE";
   const initials = [d.firstName, d.firstLastName].filter(Boolean).map((n) => n[0]).join("").toUpperCase() || "?";
-  const fmtDate = (v) =>
-    v ? new Date(v + "T00:00:00").toLocaleDateString("es-CO", { day: "2-digit", month: "long", year: "numeric" }) : "—";
-  const val = (v) => escapeHtml(v || "—");
+  const photoUrl = d.photoUrl || "";
+  const role = String(d.cargo_real || d.offerPosition || "CARGO NO REGISTRADO").toUpperCase();
+  const now = new Date();
+  const generationDate = now.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  const generationTime = now.toLocaleTimeString("es-CO", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 
-  const estudios     = Array.isArray(d.studies) ? d.studies : [];
-  const experiencias = Array.isArray(d.workExperience) ? d.workExperience : [];
+  const joinDateParts = (day, month, year) => {
+    const dd = String(day || "").trim().padStart(2, "0");
+    const mm = String(month || "").trim().padStart(2, "0");
+    const yyyy = String(year || "").trim();
+    if (!dd || !mm || !yyyy) return "—";
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const cleanValue = (value) => {
+    const text = String(value || "").trim();
+    return text || "—";
+  };
+
+  const normalizeLevelLabel = (study = {}) => {
+    const level = String(study.educationLevel || study.level || "").trim();
+    if (level) return level;
+    const degree = String(study.degree || "").trim();
+    return degree || "No registra";
+  };
+
+  const formatExperiencePeriod = (experience = {}) => {
+    const start = String(experience.fechaInicio || experience.startDate || "").trim();
+    const end = String(experience.fechaFin || experience.endDate || "").trim();
+    const startYear = start ? (start.match(/\d{4}/)?.[0] || start) : "";
+    const endYear = end ? (end.match(/\d{4}/)?.[0] || end) : "";
+    if (startYear && endYear) return `${startYear} - ${endYear}`;
+    if (startYear && !endYear) return `${startYear} - ACTUAL`;
+    if (!startYear && endYear) return `HASTA ${endYear}`;
+    return "PERIODO NO REGISTRADO";
+  };
+
+  const sortExperiences = (items = []) =>
+    items.slice().sort((left, right) => {
+      const leftEnd = String(left.fechaFin || left.endDate || "").trim();
+      const rightEnd = String(right.fechaFin || right.endDate || "").trim();
+      const leftStart = String(left.fechaInicio || left.startDate || "").trim();
+      const rightStart = String(right.fechaInicio || right.startDate || "").trim();
+      const leftKey = leftEnd || leftStart || "";
+      const rightKey = rightEnd || rightStart || "";
+      return rightKey.localeCompare(leftKey);
+    });
+
+  const buildFunctionBullets = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return ["Sin funciones registradas"];
+    const parts = raw
+      .split(/\r?\n|•|;|(?<=\.)\s+(?=[A-ZÁÉÍÓÚÑ])/)
+      .map((item) => item.replace(/^[\s\-–—•]+/, "").trim())
+      .filter(Boolean);
+    return parts.length ? parts.slice(0, 5) : [raw];
+  };
+
+  const birthDate = joinDateParts(d.birthDay, d.birthMonth, d.birthYear);
+  const birthPlace = [
+    _resolveMunName(d.birthMunicipality),
+    cleanValue(d.birthDepartment) !== "—" ? cleanValue(d.birthDepartment) : "",
+  ].filter((item) => item && item !== "—").join(", ") || "—";
+  const municipality = _resolveMunName(d.residenceMunicipality);
+  const documentLabel = [cleanValue(d.documentType), cleanValue(d.documentNumber)]
+    .filter((item) => item !== "—")
+    .join(" ");
+  const isProfessional = (Array.isArray(d.studies) ? d.studies : []).some((study) => {
+    const level = normalizeLevelLabel(study).toLowerCase();
+    return ["profes", "especial", "maestr", "doctor", "tecnolog"].some((token) => level.includes(token));
+  }) || /(profesional|ingenier|coordinador|analista|psicolog|contador|abogado|supervisor)/i.test(role);
+
+  const personalRows = [
+    ["Documento", documentLabel || "—"],
+    ["Fecha de nacimiento", birthDate],
+    ["Lugar de nacimiento", birthPlace],
+    ["Dirección", cleanValue(d.address)],
+    ["Municipio de residencia", municipality || "—"],
+    ["Teléfono", cleanValue(d.phone)],
+    ["Correo electrónico", cleanValue(d.email)],
+  ];
+
+  const estudios = (Array.isArray(d.studies) ? d.studies : [])
+    .filter((study) => String(study.degree || study.educationLevel || study.institution || study.year || "").trim());
+  const experiencias = sortExperiences(
+    (Array.isArray(d.workExperience) ? d.workExperience : [])
+      .filter((experience) => String(experience.empresa || experience.cargo || experience.funciones || experience.fechaInicio || experience.fechaFin || "").trim())
+  );
 
   setTimeout(() => {
     document.getElementById("btnBackFromCv")?.addEventListener("click", async () => {
@@ -5809,103 +5933,109 @@ export function renderPersonnelCvModule() {
         <button id="btnPrintCv" type="button" class="btn btn-secondary">Imprimir</button>
         <button id="btnSavePdfCv" type="button" class="btn btn-primary">Guardar como PDF</button>
       </div>
-      <div class="cv-shell" id="cvPrintArea">
-        <div class="cv-header">
-          <div class="cv-avatar">${escapeHtml(initials)}</div>
-          <div class="cv-header-info">
-            <h2>${escapeHtml(fullName)}</h2>
-            <p>${val(d.cargo_real)}${d.offerPosition && d.presentedInOffer === "true" ? " · Cargo licitación: " + escapeHtml(d.offerPosition) : ""}</p>
-            <p style="margin-top:4px;opacity:.7">${val(d.documentType)} ${val(d.documentNumber)}</p>
+      <div class="cv-print-shell ${isProfessional ? "cv-print-shell-professional" : "cv-print-shell-operational"}" id="cvPrintArea">
+        <header class="cv-print-header">
+          <div class="cv-print-accent" aria-hidden="true">
+            <span class="cv-print-accent-blue"></span>
+            <span class="cv-print-accent-green"></span>
           </div>
-        </div>
-        <div class="cv-body">
-
-          <div class="cv-section">
-            <div class="cv-section-title">Identificación</div>
-            <div class="cv-grid">
-              <div class="cv-field"><span>Tipo de documento</span><strong>${val(d.documentType)}</strong></div>
-              <div class="cv-field"><span>Número de documento</span><strong>${val(d.documentNumber)}</strong></div>
-              <div class="cv-field"><span>Fecha de expedición</span><strong>${val([d.expeditionDay, d.expeditionMonth, d.expeditionYear].filter(Boolean).join("/"))}</strong></div>
-              <div class="cv-field"><span>Lugar de expedición</span><strong>${val(d.expeditionMunicipality)} · ${val(d.expeditionDepartment)}</strong></div>
-              <div class="cv-field"><span>Fecha de nacimiento</span><strong>${val([d.birthDay, d.birthMonth, d.birthYear].filter(Boolean).join("/"))}</strong></div>
-              <div class="cv-field"><span>Lugar de nacimiento</span><strong>${escapeHtml(_resolveMunName(d.birthMunicipality))} · ${val(d.birthDepartment)}</strong></div>
-              <div class="cv-field"><span>Grupo sanguíneo</span><strong>${val(d.bloodType)}</strong></div>
-              <div class="cv-field"><span>Sexo biológico</span><strong>${val(d.biologicalSex)}</strong></div>
+          <div class="cv-print-header-layout">
+            <div class="cv-print-photo-wrap">
+              ${photoUrl
+                ? `<img src="${escapeAttr(photoUrl)}" alt="Foto del colaborador" class="cv-print-photo-img" />`
+                : `<div class="cv-print-photo-fallback">${escapeHtml(initials)}</div>`}
             </div>
-          </div>
-
-          <div class="cv-section">
-            <div class="cv-section-title">Datos de Contacto</div>
-            <div class="cv-grid">
-              <div class="cv-field"><span>Celular</span><strong>${val(d.phone)}</strong></div>
-              <div class="cv-field"><span>Correo electrónico</span><strong>${val(d.email)}</strong></div>
-              <div class="cv-field"><span>Dirección</span><strong>${val(d.address)}</strong></div>
-              <div class="cv-field"><span>Barrio</span><strong>${val(d.neighborhood)}</strong></div>
-              <div class="cv-field"><span>Municipio de residencia</span><strong>${escapeHtml(_resolveMunName(d.residenceMunicipality))}</strong></div>
-              <div class="cv-field"><span>Estado civil</span><strong>${val(d.civilStatus)}</strong></div>
-            </div>
-          </div>
-
-          <div class="cv-section">
-            <div class="cv-section-title">Seguridad Social</div>
-            <div class="cv-grid">
-              <div class="cv-field"><span>EPS</span><strong>${val(d.eps)}</strong></div>
-              <div class="cv-field"><span>Fondo de pensiones</span><strong>${val(d.pensionFund)}</strong></div>
-            </div>
-          </div>
-
-          ${estudios.length ? `
-          <div class="cv-section">
-            <div class="cv-section-title">Formación Académica</div>
-            ${estudios.map((s) => `
-              <div class="cv-study-item">
-                <strong>${escapeHtml(s.degree || "Sin título")}</strong>
-                <span>${escapeHtml(s.educationLevel || "")}${s.institution ? " · " + escapeHtml(s.institution) : ""}${s.year ? " · " + escapeHtml(String(s.year)) : ""}</span>
+            <div class="cv-print-header-copy">
+              <h1>${escapeHtml(fullName)}</h1>
+              <p class="cv-print-document">${escapeHtml(documentLabel || "DOCUMENTO NO REGISTRADO")}</p>
+              <p class="cv-print-role">${escapeHtml(role)}</p>
+              <div class="cv-print-contact-inline">
+                <span class="cv-print-contact-phone">${escapeHtml(cleanValue(d.phone))}</span>
+                <span class="cv-print-contact-email">${escapeHtml(cleanValue(d.email))}</span>
+                <span class="cv-print-contact-municipality">${escapeHtml(municipality || "—")}</span>
               </div>
-            `).join("")}
-          </div>
-          ` : ""}
-
-          ${experiencias.length ? `
-          <div class="cv-section">
-            <div class="cv-section-title">Experiencia Laboral</div>
-            ${experiencias.map((exp) => `
-              <div class="cv-study-item">
-                <strong>${escapeHtml(exp.empresa || "Empresa sin nombre")}</strong>
-                <span>${escapeHtml(exp.cargo || "")}${exp.fechaInicio ? " · " + escapeHtml(exp.fechaInicio) : ""}${exp.fechaFin ? " → " + escapeHtml(exp.fechaFin) : exp.fechaInicio ? " (actual)" : ""}</span>
-                ${exp.funciones ? `<span style="font-size:12px;opacity:.75">${escapeHtml(exp.funciones)}</span>` : ""}
-              </div>
-            `).join("")}
-          </div>
-          ` : ""}
-
-          ${(d.foodHandlingCourseIssueDate || d.foodHandlingExamIssueDate) ? `
-          <div class="cv-section">
-            <div class="cv-section-title">Manipulación de Alimentos</div>
-            <div class="cv-grid">
-              ${d.foodHandlingCourseIssueDate      ? `<div class="cv-field"><span>Curso — Expedición</span><strong>${fmtDate(d.foodHandlingCourseIssueDate)}</strong></div>` : ""}
-              ${d.foodHandlingCourseExpirationDate  ? `<div class="cv-field"><span>Curso — Vencimiento</span><strong>${fmtDate(d.foodHandlingCourseExpirationDate)}</strong></div>` : ""}
-              ${d.foodHandlingExamIssueDate         ? `<div class="cv-field"><span>Examen — Expedición</span><strong>${fmtDate(d.foodHandlingExamIssueDate)}</strong></div>` : ""}
-              ${d.foodHandlingExamExpirationDate    ? `<div class="cv-field"><span>Examen — Vencimiento</span><strong>${fmtDate(d.foodHandlingExamExpirationDate)}</strong></div>` : ""}
             </div>
           </div>
-          ` : ""}
+        </header>
 
-          <div class="cv-signature-block">
-            <p class="cv-signature-declaration">
-              Toda la información contenida en este formato corresponde a datos suministrados por el trabajador
-              y son de su entera responsabilidad. El trabajador certifica que dicha información es verídica y
-              autoriza a la empresa a verificarla en cualquier momento.
-            </p>
-            <div class="cv-signature-single">
-              <div class="cv-signature-line"></div>
-              <span class="cv-signature-label">Firma del trabajador</span>
-              <span class="cv-signature-name">${escapeHtml(fullName)}</span>
-              <span class="cv-signature-doc">${val(d.documentType)} ${val(d.documentNumber)}</span>
+        <main class="cv-print-body">
+          <section class="cv-print-section">
+            <div class="cv-print-section-head">
+              <span class="cv-print-section-number">1.</span>
+              <h2>INFORMACIÓN PERSONAL</h2>
             </div>
-          </div>
+            <table class="cv-print-info-table">
+              <tbody>
+                ${personalRows.map(([label, value]) => `
+                  <tr>
+                    <th>${escapeHtml(label)}</th>
+                    <td>${escapeHtml(cleanValue(value))}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </section>
 
-        </div>
+          <section class="cv-print-section">
+            <div class="cv-print-section-head">
+              <span class="cv-print-section-number">2.</span>
+              <h2>EXPERIENCIA LABORAL</h2>
+            </div>
+            <div class="cv-print-timeline">
+              ${experiencias.length ? experiencias.map((exp) => `
+                <article class="cv-print-timeline-item">
+                  <div class="cv-print-timeline-marker" aria-hidden="true"></div>
+                  <div class="cv-print-timeline-period">${escapeHtml(formatExperiencePeriod(exp))}</div>
+                  <div class="cv-print-timeline-content">
+                    <h3>${escapeHtml(String(exp.cargo || "Cargo no registrado").toUpperCase())}</h3>
+                    <p class="cv-print-timeline-company">${escapeHtml(String(exp.empresa || "Empresa no registrada").toUpperCase())}</p>
+                    <ul>
+                      ${buildFunctionBullets(exp.funciones).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+                    </ul>
+                  </div>
+                </article>
+              `).join("") : `
+                <article class="cv-print-empty-note">
+                  No registra experiencia laboral.
+                </article>
+              `}
+            </div>
+          </section>
+
+          <section class="cv-print-section">
+            <div class="cv-print-section-head">
+              <span class="cv-print-section-number">3.</span>
+              <h2>FORMACIÓN ACADÉMICA</h2>
+            </div>
+            <table class="cv-print-education-table">
+              <thead>
+                <tr>
+                  <th>Nivel</th>
+                  <th>Institución</th>
+                  <th>Año</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${estudios.length ? estudios.map((study) => `
+                  <tr>
+                    <td>${escapeHtml(cleanValue(normalizeLevelLabel(study)))}</td>
+                    <td>${escapeHtml(cleanValue(study.institution))}</td>
+                    <td>${escapeHtml(cleanValue(study.year))}</td>
+                  </tr>
+                `).join("") : `
+                  <tr>
+                    <td colspan="3" class="cv-print-table-empty">No registra formación académica.</td>
+                  </tr>
+                `}
+              </tbody>
+            </table>
+          </section>
+        </main>
+
+        <footer class="cv-print-footer">
+          <p>Hoja de Vida generada automáticamente</p>
+          <p>Fecha de generación: ${escapeHtml(`${generationDate} ${generationTime}`)}</p>
+        </footer>
       </div>
     </div>
   `;

@@ -4,14 +4,29 @@ const fs = require("fs");
 const multer = require("multer");
 const { s3Client, isR2Configured } = require("../config/storage");
 
-const ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".docx"]);
-const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".docx"]);
+const DEFAULT_MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+
+function buildFileFilter(allowedExt = DEFAULT_ALLOWED_EXT) {
+  const allowed = new Set((Array.isArray(allowedExt) ? allowedExt : [...allowedExt]).map((value) => String(value || "").toLowerCase()));
+  return function fileFilter(req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!allowed.has(ext)) {
+      const err = new Error(
+        `Tipo de archivo no permitido: "${ext}". Permitidos: ${[...allowed].join(", ")}`
+      );
+      err.status = 400;
+      return cb(err, false);
+    }
+    cb(null, true);
+  };
+}
 
 function fileFilter(req, file, cb) {
   const ext = path.extname(file.originalname).toLowerCase();
-  if (!ALLOWED_EXT.has(ext)) {
+  if (!DEFAULT_ALLOWED_EXT.has(ext)) {
     const err = new Error(
-      `Tipo de archivo no permitido: "${ext}". Permitidos: ${[...ALLOWED_EXT].join(", ")}`
+      `Tipo de archivo no permitido: "${ext}". Permitidos: ${[...DEFAULT_ALLOWED_EXT].join(", ")}`
     );
     err.status = 400;
     return cb(err, false);
@@ -28,7 +43,10 @@ function fileFilter(req, file, cb) {
  * Key en R2:   {folder}/{company_id}/{YYYY-MM-DD}/{8-byte-hex}{ext}
  * Ruta local:  uploads/{folder}/{8-byte-hex}{ext}   (fallback sin R2)
  */
-function upload(folder) {
+function upload(folder, options = {}) {
+  const allowedExt = options.allowedExtensions || DEFAULT_ALLOWED_EXT;
+  const maxSize = Number(options.maxSize) > 0 ? Number(options.maxSize) : DEFAULT_MAX_SIZE;
+  const filter = options.fileFilter || buildFileFilter(allowedExt);
   if (isR2Configured()) {
     const multerS3 = require("multer-s3");
 
@@ -45,8 +63,8 @@ function upload(folder) {
           cb(null, `${folder}/${companyId}/${date}/${hash}${ext}`);
         },
       }),
-      limits: { fileSize: MAX_SIZE },
-      fileFilter,
+      limits: { fileSize: maxSize },
+      fileFilter: filter,
     });
   }
 
@@ -65,8 +83,8 @@ function upload(folder) {
         cb(null, `${hash}${ext}`);
       },
     }),
-    limits: { fileSize: MAX_SIZE },
-    fileFilter,
+    limits: { fileSize: maxSize },
+    fileFilter: filter,
   });
 }
 
@@ -83,9 +101,13 @@ function normalizeUploadedFile(file) {
   if (!file) return null;
 
   const isR2 = Boolean(file.key); // multer-s3 pone .key; disco local pone .filename
+  const storedFileName = isR2
+    ? path.basename(file.key)
+    : file.filename;
   return {
     key: isR2 ? file.key : `${path.basename(path.dirname(file.path))}/${file.filename}`,
     fileName: file.originalname,
+    storedFileName,
     fileSize: file.size,
     isLocal: !isR2,
   };

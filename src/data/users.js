@@ -14,6 +14,7 @@ const path = require("path");
 const repo = require("../db/users.repository");
 
 const LEGACY_USERS_PATH = path.join(__dirname, "..", "..", "data", "users.json");
+const IS_DIAG = process.env.EMPIRIA_DIAG === "1";
 
 // ── Caché en memoria ──────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ function upsertCachedUser(user) {
 }
 
 async function refreshCache() {
+  if (IS_DIAG) return true;
   if (_refreshInFlight) return _refreshInFlight;
 
   _refreshInFlight = (async () => {
@@ -128,6 +130,7 @@ function scheduleRefresh(delayMs = 5_000) {
 }
 
 function startBackgroundRefresh() {
+  if (IS_DIAG) return;
   if (startBackgroundRefresh.started) return;
   startBackgroundRefresh.started = true;
   scheduleRefresh();

@@ -451,7 +451,21 @@ function shell() {
   return `
 <style>
 /* ── Shell ───────────────────────────────────────────────────────────── */
-.nm-pay-shell{display:flex;flex-direction:column;min-height:0}
+.module-nomina .main-panel:has(.nm-pay-card-main--operational),
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace,
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace,
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace > .submodule-content,
+.module-nomina .submodule-content:has(.nm-pay-card-main--operational){min-height:0!important;overflow:hidden!important}
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace,
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace,
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace > .submodule-content,
+.module-nomina .submodule-content:has(.nm-pay-card-main--operational),
+.module-nomina .submodule-content:has(.nm-pay-card-main--operational) .nm-pay-shell,
+.module-nomina .submodule-content:has(.nm-pay-card-main--operational) #nmPayRoot{display:flex!important;flex:1 1 0!important;flex-direction:column!important;height:100%!important;max-height:100%!important;min-height:0!important;overflow:hidden!important}
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace.workspace-panel{padding:12px!important;overflow:hidden!important}
+.module-nomina .main-panel:has(.nm-pay-card-main--operational) > .workspace > #workspace > .submodule-content{padding:0!important}
+.nm-pay-shell{display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}
+#nmPayRoot{display:flex;flex:1 1 auto;min-height:0;height:100%;overflow:hidden}
 .nm-pay-card-main{display:flex;flex-direction:column;min-height:0;overflow:hidden;height:calc(100vh - 100px);background:#fff;border:1px solid #E2E8F0;border-radius:8px}
 
 /* ── Encabezado: UNA SOLA FILA compacta, sin wrap ────────────────────── */
@@ -921,7 +935,7 @@ function shell() {
 @media (max-width:640px){.nm-pay-head--dashboard{padding:16px}.nm-pay-head--dashboard .nm-pay-title{font-size:24px}.nm-pay-kpis--premium{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 16px 14px}.nm-pay-kpi-card--hero{grid-column:1/-1}.nm-pay-cargo-tabs--dashboard,.nm-pay-subtabs,.nm-pay-scope-tabs,.nm-pay-filterbar,.nm-pay-workspace,.nm-pay-scroll-body{padding-left:16px;padding-right:16px}.nm-pay-filterbar__grid{grid-template-columns:1fr}.nm-pay-filterbar__actions{width:100%}.nm-pay-filterbar__actions .nm-pay-btn{flex:1 1 0}.nm-items-fbar__status{width:100%;justify-content:flex-start}}
 
 /* Operational refactor */
-.nm-pay-card-main--operational{height:calc(100vh - 78px);display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#F7FAFF;border:1px solid #E5EAF3;border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.04);font-family:Inter,system-ui,sans-serif}
+.nm-pay-card-main--operational{display:flex;flex:1 1 auto;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden;background:#F7FAFF;border:1px solid #E5EAF3;border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.04);font-family:Inter,system-ui,sans-serif}
 .nm-pay-operational-head{display:flex;flex-direction:column;gap:6px;flex:0 0 auto;padding:8px;border-bottom:1px solid #E5EAF3;background:#F7FAFF;overflow:visible;min-height:0}
 .nm-pay-toolbar-chip{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 10px;border:1px solid #E5EAF3;border-radius:999px;background:#FFFFFF;color:#0F172A;font-size:11px;font-weight:700}
 .nm-pay-filterbar--operational{display:grid;gap:0;padding:0;min-width:0}
@@ -962,6 +976,10 @@ function shell() {
 .nm-pay-workspace{display:flex;flex:1;min-height:0;padding:6px;gap:0;background:transparent;overflow:hidden}
 .nm-pay-content--full{display:flex;flex:1;flex-direction:column;min-height:0;overflow:hidden;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
 .nm-pay-scroll-body--operational{display:flex;flex:1;flex-direction:column;gap:4px;min-height:0;padding:6px;overflow:hidden}
+.nm-pay-panel{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
+.nm-pay-panel__header{display:flex;flex:0 0 auto;flex-direction:column;gap:6px;min-height:0}
+.nm-pay-panel__body{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
+.nm-pay-panel__body--scroll{overflow:auto}
 .nm-pay-section-strip{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px}
 .nm-pay-section-strip__main{display:grid;gap:3px}
 .nm-pay-section-strip__title{font-size:12px;font-weight:800;color:#0F172A}
@@ -971,6 +989,7 @@ function shell() {
 .nm-detail-tabs--operational{display:flex;flex-wrap:wrap;gap:4px;flex:0 0 auto;margin:0;padding:2px;background:#F2F6FC;border:0;border-radius:11px}
 .nm-detail-tabs--operational .nm-detail-tab{min-height:32px;padding:5px 10px;border-radius:8px;border-bottom:0;margin-bottom:0;font-size:11px}
 .nm-detail-tabs--operational .nm-detail-tab.active{background:#FFFFFF;color:#0F172A;box-shadow:0 4px 10px rgba(15,23,42,.05)}
+.nm-pay-card-main--operational .nm-pay-table-wrap,
 .nm-pay-card-main--operational .nm-pay-table-wrap--dashboard{flex:1 1 auto;min-height:0;height:auto;max-height:none;overflow:auto;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF;box-shadow:none}
 .nm-pay-table--operational{min-width:980px}
 .nm-pay-table--operational thead th{position:sticky;top:0;z-index:2;padding:7px 8px;background:#FFFFFF;color:#64748B;text-transform:uppercase;font-size:9.5px;letter-spacing:.08em;border-bottom:1px solid #E5EAF3;white-space:nowrap}
@@ -996,15 +1015,53 @@ function shell() {
 .nm-pay-row-menu__item{display:flex;align-items:center;width:100%;min-height:36px;padding:8px 10px;border:0;border-radius:10px;background:transparent;color:#0F172A;font-size:12px;font-weight:600;text-align:left;cursor:pointer}
 .nm-pay-row-menu__item:hover{background:#F5F9FF}
 .nm-pay-row-menu__item:disabled{opacity:.45;cursor:not-allowed}
-.nm-pay-tab-panel--table{display:flex;flex:1;flex-direction:column;gap:6px;min-height:0;overflow:hidden}
+.nm-pay-tab-panel--table{display:flex;flex:1 1 auto;flex-direction:column;gap:6px;min-height:0;overflow:hidden}
 .nm-pay-tab-panel--table .nm-bulk-bar{flex:0 0 auto;gap:8px;margin:0;padding:6px 8px}
 .nm-pay-tab-panel--table .nm-pay-table-wrap--dashboard{flex:1 1 auto;min-height:0;height:auto}
 .nm-pay-tab-panel--table .nm-pay-pagination{flex:0 0 auto;gap:8px;padding:4px 0 0}
-.nm-turn-summary-wrap{height:100%;display:flex;flex-direction:column;overflow:auto}
+.nm-turn-summary-wrap{height:100%;display:flex;flex:1 1 auto;flex-direction:column;min-height:0;max-height:none;overflow:auto}
 .nm-turn-summary-wrap .nm-pay-table thead th{position:sticky;top:0;z-index:3;background:#0F172A;color:#FFFFFF;border-bottom:1px solid #1E293B;padding:7px 8px}
 .nm-turn-summary-wrap .nm-pay-table tbody tr{height:48px}
 .nm-turn-summary-wrap .nm-pay-table td{padding:6px 8px;vertical-align:middle}
 .nm-turn-summary-wrap .nm-pay-table td.num,.nm-turn-summary-wrap .nm-pay-table th.num{text-align:right}
+.nm-pay-kpi-card--turn{justify-content:flex-start;gap:6px;min-height:64px}
+.nm-pay-kpi-card--turn .nm-pay-kpi-card__meta{font-size:10px;line-height:1.25;color:#64748B}
+.nm-pay-kpi-card--turn-people .nm-pay-kpi-card__label i{background:#0B7CFF}
+.nm-pay-kpi-card--turn-shifts .nm-pay-kpi-card__label i{background:#7C3AED}
+.nm-pay-kpi-card--turn-value .nm-pay-kpi-card__label i{background:#16A34A}
+.nm-pay-kpi-card--turn-docs-ok .nm-pay-kpi-card__label i{background:#14B8A6}
+.nm-pay-kpi-card--turn-docs-pending .nm-pay-kpi-card__label i{background:#F59E0B}
+.nm-pay-kpi-card--turn-charge .nm-pay-kpi-card__label i{background:#EF4444}
+.nm-turns-shell{display:flex;flex:1 1 auto;flex-direction:column;gap:14px;min-height:0}
+.nm-turn-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:18px 20px;border:1px solid #E5EAF3;border-radius:20px;background:linear-gradient(135deg,#FFFFFF 0%,#F8FBFF 52%,#EFF6FF 100%);box-shadow:0 12px 30px rgba(15,23,42,.05)}
+.nm-turn-hero__copy{display:grid;gap:12px}
+.nm-turn-hero__eyebrow{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748B}
+.nm-turn-hero h3{margin:0;font-size:24px;line-height:1;font-weight:900;letter-spacing:-.04em;color:#0F172A}
+.nm-turn-hero p{margin:0;font-size:12px;color:#64748B}
+.nm-turn-hero__stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.nm-turn-hero__stats div{display:grid;gap:5px;padding:12px 14px;border:1px solid rgba(229,234,243,.95);border-radius:16px;background:rgba(255,255,255,.86)}
+.nm-turn-hero__stats span{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#64748B}
+.nm-turn-hero__stats strong{font-size:15px;line-height:1.15;font-weight:800;color:#0F172A}
+.nm-turn-hero__actions{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.nm-turn-hero__btn{min-height:38px;padding:0 14px;border-radius:12px}
+.nm-turns-table-wrap{flex:1 1 auto;min-height:0;overflow:auto;padding:4px;border:1px solid #E5EAF3;border-radius:20px;background:linear-gradient(180deg,#FFFFFF 0%,#FBFDFF 100%)}
+.nm-turns-table{width:100%;min-width:980px;border-collapse:separate;border-spacing:0}
+.nm-turns-table thead th{position:sticky;top:0;z-index:2;padding:12px 16px;border-bottom:1px solid #E8EEF6;background:rgba(248,250,252,.96);backdrop-filter:blur(10px);font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#64748B;text-align:left}
+.nm-turns-table thead th.is-number{text-align:right}
+.nm-turns-table thead th.is-actions{text-align:center}
+.nm-turns-table tbody tr{background:#FFFFFF;transition:background .15s ease,box-shadow .15s ease}
+.nm-turns-table tbody td{padding:14px 16px;border-bottom:1px solid #EEF2F7;vertical-align:middle;height:60px}
+.nm-turns-table tbody tr:hover td{background:#FBFDFF}
+.nm-turn-person-cell{display:grid;gap:4px}
+.nm-turn-person-cell strong{font-size:13px;line-height:1.15;font-weight:800;color:#0F172A;text-transform:uppercase;letter-spacing:.01em}
+.nm-turn-person-cell span{font-size:11px;color:#64748B}
+.nm-turn-count-cell{display:grid;gap:2px;justify-content:flex-start}
+.nm-turn-count-cell strong{font-size:22px;line-height:1;font-weight:900;color:#0F172A}
+.nm-turn-count-cell span{font-size:11px;color:#64748B;text-transform:lowercase}
+.nm-turn-modality-list{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.nm-turn-modality-badge{display:inline-flex;align-items:center;justify-content:center;min-height:26px;padding:0 10px;border:1px solid #DCE6F2;border-radius:999px;background:#F8FBFF;color:#24415F;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.nm-turn-value-cell{text-align:right}
+.nm-turn-value-cell strong{display:block;font-size:18px;line-height:1;font-weight:800;color:#0F172A;font-variant-numeric:tabular-nums}
 .nm-turn-compliance{display:flex;flex-direction:column;gap:4px;min-width:150px;max-width:220px}
 .nm-turn-compliance__bar{position:relative;height:6px;border-radius:999px;background:#E5EAF3;overflow:hidden}
 .nm-turn-compliance__bar span{position:absolute;left:0;top:0;bottom:0;border-radius:999px}
@@ -1012,11 +1069,29 @@ function shell() {
 .nm-turn-compliance--warn .nm-turn-compliance__bar span{background:#F59E0B}
 .nm-turn-compliance--ok .nm-turn-compliance__bar span{background:#16A34A}
 .nm-turn-compliance__meta{font-size:10px;line-height:1.1;color:#64748B;white-space:nowrap}
+.nm-turn-doc-cell{display:grid;gap:7px;min-width:180px}
+.nm-turn-doc-cell__head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.nm-turn-doc-cell__head strong{font-size:11px;font-weight:800}
+.nm-turn-doc-cell__head span{font-size:10px;color:#64748B;white-space:nowrap}
+.nm-turn-doc-cell__bar{position:relative;height:5px;border-radius:999px;background:#EEF2F7;overflow:hidden}
+.nm-turn-doc-cell__bar span{position:absolute;left:0;top:0;bottom:0;border-radius:999px}
+.nm-turn-doc-cell--ok .nm-turn-doc-cell__head strong{color:#15803D}
+.nm-turn-doc-cell--ok .nm-turn-doc-cell__bar span{background:#22C55E}
+.nm-turn-doc-cell--warn .nm-turn-doc-cell__head strong{color:#B45309}
+.nm-turn-doc-cell--warn .nm-turn-doc-cell__bar span{background:#F59E0B}
+.nm-turn-doc-cell--bad .nm-turn-doc-cell__head strong{color:#B91C1C}
+.nm-turn-doc-cell--bad .nm-turn-doc-cell__bar span{background:#EF4444}
 .nm-turn-actions{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
-.nm-turn-action-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid #E5EAF3;border-radius:10px;background:#FFFFFF;color:#0F172A;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease,transform .15s ease}
+.nm-turn-actions-wrap{display:flex;align-items:center;justify-content:center}
+.nm-turn-action-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid #E5EAF3;border-radius:10px;background:#FFFFFF;color:#0F172A;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.04);transition:background .15s ease,border-color .15s ease,color .15s ease,transform .15s ease,box-shadow .15s ease}
 .nm-turn-action-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
-.nm-turn-action-btn:hover:not(:disabled){background:#F5F9FF;border-color:#BFD4FF;color:#0B7CFF;transform:translateY(-1px)}
+.nm-turn-action-btn:hover:not(:disabled){background:#F5F9FF;border-color:#BFD4FF;color:#0B7CFF;transform:translateY(-1px);box-shadow:0 8px 18px rgba(11,124,255,.12)}
 .nm-turn-action-btn:disabled{opacity:.4;cursor:not-allowed}
+.nm-turn-empty-state{display:grid;place-items:center;gap:14px;padding:26px;border:1px dashed #D8E3EE;border-radius:20px;background:linear-gradient(180deg,#FFFFFF 0%,#F8FBFF 100%);text-align:center}
+.nm-turn-empty-state__copy{display:grid;gap:6px}
+.nm-turn-empty-state__eyebrow{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#94A3B8}
+.nm-turn-empty-state strong{font-size:18px;line-height:1.2;color:#0F172A}
+.nm-turn-empty-state p{margin:0;font-size:12px;color:#64748B}
 .nm-turn-detail-summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;color:#64748B}
 .nm-turn-detail-summary b{color:#0F172A}
 .nm-turn-detail-stack{display:grid;gap:10px}
@@ -1057,10 +1132,10 @@ function shell() {
 .module-nomina.nm-pay-fullscreen .dashboard{grid-template-columns:0 minmax(0,1fr)!important}
 .module-nomina.nm-pay-fullscreen .sidebar{display:none!important;width:0!important;min-width:0!important;max-width:0!important;padding:0!important;border:0!important}
 .module-nomina.nm-pay-fullscreen .topbar-pro{left:0!important;padding-left:20px!important;width:100%!important}
-.module-nomina.nm-pay-fullscreen .nm-pay-card-main--operational{height:calc(100vh - 64px)}
-@media (max-width:1200px){.nm-pay-kpis-row{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:900px){.nm-pay-card-main--operational{height:auto}.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}}
-@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-kpis-row,.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}}
+.module-nomina.nm-pay-fullscreen .nm-pay-card-main--operational{height:100%}
+@media (max-width:1200px){.nm-pay-kpis-row{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-turn-hero{grid-template-columns:1fr}.nm-turn-hero__actions{justify-content:flex-start}.nm-turn-hero__stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:900px){.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}.nm-turn-hero__stats{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-turns-table{min-width:860px}}
+@media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-kpis-row,.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}.nm-turn-hero{padding:16px}.nm-turn-hero__stats{grid-template-columns:1fr}.nm-turn-hero__actions{width:100%}.nm-turn-hero__btn{flex:1 1 100%}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -1518,7 +1593,7 @@ ${recalcBanner}
       Novedades <span class="nm-pay-count">${novelties.length}</span>
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">
-      Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${activeGroupTurns.filter((t) => t.cover_type === "EXTERNA").length}</span>` : ""}
+      Turnos${activeGroupTurns !== null ? ` <span class="nm-pay-count">${countExternalTurns(activeGroupTurns)}</span>` : ""}
     </button>
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">
       Soportes${totals.pending_supports > 0 ? ` <span class="nm-pay-count" style="background:#FEF3C7;color:#92400E">${totals.pending_supports} pend.</span>` : (supports && supports.length ? ` <span class="nm-pay-count">${supports.length}</span>` : "")}
@@ -2123,8 +2198,8 @@ function renderTurnosSection(turns, isClosed) {
   const { search, hasCuentaCobro } = turnosFilter;
 
   // Solo coberturas externas
-  const totalExt = (turns || []).filter((t) => t.cover_type === "EXTERNA").length;
-  let rows = (turns || []).filter((t) => t.cover_type === "EXTERNA");
+  const totalExt = countExternalTurns(turns);
+  let rows = filterExternalTurns(turns);
 
   if (search) {
     const q = normalized(search);
@@ -7618,29 +7693,35 @@ renderNominaPanel = function renderNominaPanelIntegral() {
   const totals = municipalityTotals();
   const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
   const supporting = activeGroupDetail ? getFilteredSupportingData(filteredItems) : { novelties: [], supports: [] };
-  const summaryItems = [
-    { label: "Empleados", value: totals.employees, tone: "employees" },
-    { label: "Pendientes", value: totals.items_pending, tone: "pending" },
-    { label: "Devengado", value: fmtCOP(totals.total_devengado), tone: "earned" },
-    { label: "Deducciones", value: fmtCOP(totals.total_deducciones), tone: "deductions" },
-    { label: "Neto", value: fmtCOP(totals.neto), tone: "net" },
-    { label: "Sin soporte", value: totals.pending_supports, tone: "support" },
-  ];
+  const turnSummary = activeDetailTab === "turnos" ? getTurnWorkspaceSummary(activeGroupTurns) : null;
+  const summaryItems = activeDetailTab === "turnos"
+    ? [
+      { label: "Turnistas externos", value: turnSummary?.peopleCount || 0, meta: "Personas consolidadas en la vista", tone: "turn-people", variant: "turn" },
+      { label: "Total turnos", value: turnSummary?.totalTurns || 0, meta: "Coberturas externas visibles", tone: "turn-shifts", variant: "turn" },
+      { label: "Valor total a pagar", value: fmtCOP(turnSummary?.totalValue || 0), meta: "Liquidación oficial de turnos", tone: "turn-value", variant: "turn" },
+      { label: "Documentación completa", value: turnSummary?.completeDocs || 0, meta: "Personas con 100% de documentos", tone: "turn-docs-ok", variant: "turn" },
+      { label: "Pendientes documentos", value: turnSummary?.pendingDocs || 0, meta: "Personas con faltantes documentales", tone: "turn-docs-pending", variant: "turn" },
+      { label: "Cuentas de cobro pendientes", value: turnSummary?.pendingCharges || 0, meta: "Pendientes por completar o emitir", tone: "turn-charge", variant: "turn" },
+    ]
+    : [
+      { label: "Empleados", value: totals.employees, meta: "Base visible del municipio o área", tone: "employees" },
+      { label: "Pendientes", value: totals.items_pending, meta: "Registros por revisar", tone: "pending" },
+      { label: "Devengado", value: fmtCOP(totals.total_devengado), meta: "Total acumulado visible", tone: "earned" },
+      { label: "Deducciones", value: fmtCOP(totals.total_deducciones), meta: "Descuentos y ajustes", tone: "deductions" },
+      { label: "Neto", value: fmtCOP(totals.neto), meta: "Cierre estimado del período", tone: "net" },
+      { label: "Sin soporte", value: totals.pending_supports, meta: "Faltantes documentales", tone: "support" },
+    ];
   return `
 <div class="nm-pay-operational-head">
   <div class="nm-pay-kpis-row">
-    ${summaryItems.map((metric) => `
-    <article class="nm-pay-kpi-card nm-pay-kpi-card--${metric.tone}">
-      <span class="nm-pay-kpi-card__label"><i></i>${escapeHtml(metric.label)}</span>
-      <b class="nm-pay-kpi-card__value">${escapeHtml(String(metric.value))}</b>
-    </article>`).join("")}
+    ${summaryItems.map((metric) => renderTurnMetricCard(metric.label, metric.value, metric.meta, metric.tone, metric.variant === "turn")).join("")}
   </div>
   ${renderPayrollFilterBar()}
   ${renderCargoTabsBar()}
   <div class="nm-detail-tabs nm-detail-tabs--operational">
     <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
     <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
-    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${countExternalTurns(activeGroupTurns)}</span>` : ""}</button>
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
   </div>
 </div>
@@ -7676,7 +7757,7 @@ renderGroupDetail = function renderGroupDetailIntegral() {
   <div class="nm-detail-tabs nm-detail-tabs--operational">
     <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
     <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
-    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${countExternalTurns(activeGroupTurns)}</span>` : ""}</button>
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
   </div>
   ${activeDetailTab === "nomina"
@@ -7706,7 +7787,7 @@ ${!canManageGroup ? `<div class="nm-banner nm-banner--reopened" style="margin:14
   <div class="nm-detail-tabs">
     <button class="nm-detail-tab ${activeDetailTab === "nomina" ? "active" : ""}" data-detail-tab="nomina">Nomina <span class="nm-pay-count">${filteredItems.length}</span></button>
     <button class="nm-detail-tab ${activeDetailTab === "novedades" ? "active" : ""}" data-detail-tab="novedades">Novedades <span class="nm-pay-count">${supporting.novelties.length}</span></button>
-    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${activeGroupTurns.length}</span>` : ""}</button>
+    <button class="nm-detail-tab ${activeDetailTab === "turnos" ? "active" : ""}" data-detail-tab="turnos">Turnos${activeGroupTurns ? ` <span class="nm-pay-count">${countExternalTurns(activeGroupTurns)}</span>` : ""}</button>
     <button class="nm-detail-tab ${activeDetailTab === "soportes" ? "active" : ""}" data-detail-tab="soportes">Soportes${supporting.supports.length ? ` <span class="nm-pay-count">${supporting.supports.length}</span>` : ""}</button>
   </div>
   ${activeDetailTab === "nomina" ? `${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}` : activeDetailTab === "novedades" ? renderNoveltiesWithFilter(supporting.novelties) : activeDetailTab === "soportes" ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || []) : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos…</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
@@ -7721,16 +7802,25 @@ renderGroupDetail = function renderGroupDetailOperationalLayout() {
   const group = activeGroupDetail.group || {};
   const canManageGroup = activeScopeGroupIds.length === 1 && activeGroupId;
   const isClosed = canManageGroup && isGroupClosed(group);
+  const detailBodyClass = activeDetailTab === "nomina" || activeDetailTab === "turnos"
+    ? "nm-pay-panel__body"
+    : "nm-pay-panel__body nm-pay-panel__body--scroll";
   return `
 <div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
-  ${!canManageGroup ? `<div class="nm-pay-inline-warning">&#9888; Vista agrupada: seleccione un municipio o area puntual para calcular o cerrar.</div>` : ""}
-  ${activeDetailTab === "nomina"
-    ? `<div class="nm-pay-tab-panel--table">${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}</div>`
-    : activeDetailTab === "novedades"
-      ? renderNoveltiesWithFilter(supporting.novelties)
-      : activeDetailTab === "soportes"
-        ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || [])
-        : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos...</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
+  <div class="nm-pay-panel">
+    <div class="nm-pay-panel__header">
+      ${!canManageGroup ? `<div class="nm-pay-inline-warning">&#9888; Vista agrupada: seleccione un municipio o area puntual para calcular o cerrar.</div>` : ""}
+    </div>
+    <div class="${detailBodyClass}">
+      ${activeDetailTab === "nomina"
+        ? `<div class="nm-pay-tab-panel--table">${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}</div>`
+        : activeDetailTab === "novedades"
+          ? renderNoveltiesWithFilter(supporting.novelties)
+          : activeDetailTab === "soportes"
+            ? renderSupportsSection(supporting.supports, isClosed, activeGroupDetail.covers || [])
+            : (activeGroupTurns === null ? `<div class="nm-pay-empty">Cargando turnos...</div>` : renderTurnosSection(activeGroupTurns, isClosed))}
+    </div>
+  </div>
 </div>`;
 };
 
@@ -7751,19 +7841,196 @@ function renderPayrollRowActionsMenu(item, { groupLocked = false, canCfgSalary =
 </details>`;
 }
 
+function isExternalTurn(turn = {}) {
+  if (!turn || typeof turn !== "object") return false;
+
+  const booleanFlags = [
+    turn.es_externo,
+    turn.external,
+    turn.is_external,
+  ];
+  for (const flag of booleanFlags) {
+    if (flag === true) return true;
+    if (flag === false) return false;
+    const normalizedFlag = normalized(flag);
+    if (["TRUE", "1", "SI", "S", "YES"].includes(normalizedFlag)) return true;
+    if (["FALSE", "0", "NO", "N"].includes(normalizedFlag)) return false;
+  }
+
+  const externalTokens = new Set(["EXTERNA", "EXTERNO", "EXTERNAL", "EXT"]);
+  const internalTokens = new Set(["INTERNA", "INTERNO", "INTERNAL", "INT"]);
+  const typeFields = [
+    turn.cover_type,
+    turn.covered_by_type,
+    turn.replacement_type,
+    turn.shift_type,
+    turn.tipo_turno,
+    turn.worker_type,
+    turn.quien_cubre,
+  ];
+  for (const rawValue of typeFields) {
+    const value = normalized(rawValue);
+    if (!value) continue;
+    if (externalTokens.has(value)) return true;
+    if (internalTokens.has(value)) return false;
+    if (value.includes("EXTERN")) return true;
+    if (value.includes("INTERN")) return false;
+  }
+
+  const hasExternalIdentity = Boolean(firstDefinedValue(
+    turn.external_worker_id,
+    turn.external_worker_name,
+    turn.external_document,
+    turn.external_worker_doc,
+    turn.external_account_number
+  ));
+  const hasInternalIdentity = Boolean(firstDefinedValue(
+    turn.internal_cover_employee_id,
+    turn.internal_cover_name,
+    turn.internal_cover_doc
+  ));
+  if (hasExternalIdentity && !hasInternalIdentity) return true;
+  if (hasInternalIdentity && !hasExternalIdentity) return false;
+
+  return false;
+}
+
+function filterExternalTurns(turns = []) {
+  return (Array.isArray(turns) ? turns : []).filter((turn) => isExternalTurn(turn));
+}
+
+function countExternalTurns(turns = []) {
+  return filterExternalTurns(turns).length;
+}
+
+function formatTurnModalityLabel(modality = "") {
+  const token = normalized(modality).replace(/\s+/g, "");
+  if (!token) return "-";
+  const map = {
+    CAA1: "CAA 1",
+    CAA2: "CAA 2",
+    RI: "RI",
+    CAARESTC: "CAARES TC",
+    CAARESMT: "CAARES MT",
+    CAARES1: "CAARES TC",
+    CAARES2: "CAARES MT",
+    CAARES3: "CAARES TC",
+    CAARES4: "CAARES MT",
+  };
+  return map[token] || String(modality || "").trim() || "-";
+}
+
+function getTurnComplianceStatus(compliance) {
+  if ((compliance?.percentage || 0) >= 100) return { label: "Completo", tone: "ok" };
+  if ((compliance?.percentage || 0) >= 50) return { label: "Incompleto", tone: "warn" };
+  return { label: "Pendiente", tone: "bad" };
+}
+
+function hasPendingTurnCharge(group) {
+  return getTurnDocumentCompliance(group).missingLabels.some((label) => normalized(label).includes("CUENTA DE COBRO"));
+}
+
+function getTurnWorkspaceSummary(turns = []) {
+  const groups = buildTurnPersonGroups(turns);
+  let totalTurns = 0;
+  let totalValue = 0;
+  let completeDocs = 0;
+  let pendingDocs = 0;
+  let pendingCharges = 0;
+
+  for (const group of groups) {
+    const compliance = getTurnDocumentCompliance(group);
+    totalTurns += group.turns.length;
+    totalValue += Number(group.totalToPay || 0);
+    if (compliance.percentage >= 100) completeDocs += 1;
+    else pendingDocs += 1;
+    if (hasPendingTurnCharge(group)) pendingCharges += 1;
+  }
+
+  return {
+    groups,
+    peopleCount: groups.length,
+    totalTurns,
+    totalValue,
+    completeDocs,
+    pendingDocs,
+    pendingCharges,
+  };
+}
+
 function buildTurnPersonGroups(turns = []) {
+  const TURN_OFFICIAL_RATES = Object.freeze({
+    CAARES_TC: 119600,
+    CAARES_MT: 71100,
+    CAA_1: 113200,
+    CAA_2: 85000,
+    RI: 56700,
+  });
+  const normalizeTurnTariffToken = (value) => normalized(value).replace(/\s+/g, "");
+  const resolveOfficialTurnRate = (turn = {}) => {
+    const tariffToken = normalizeTurnTariffToken(firstDefinedValue(
+      turn.tariff_category,
+      turn.origin_category,
+      turn.origin_salary_category,
+      turn.salary_category,
+      turn.covered_salary_category
+    ));
+    const modalityToken = normalizeTurnTariffToken(firstDefinedValue(
+      turn.modality,
+      turn.origin_modality,
+      turn.work_modality,
+      turn.novelty_type
+    ));
+    const workTimeToken = normalizeTurnTariffToken(firstDefinedValue(
+      turn.work_time_type,
+      turn.origin_work_time_type,
+      turn.workTimeType
+    ));
+
+    if (tariffToken === "RI" || modalityToken === "RI") return TURN_OFFICIAL_RATES.RI;
+    if (tariffToken === "CAA1") return TURN_OFFICIAL_RATES.CAA_1;
+    if (tariffToken === "CAA2") return TURN_OFFICIAL_RATES.CAA_2;
+    if (tariffToken === "CAARES1" || tariffToken === "CAARES3" || tariffToken === "CAARESTC") return TURN_OFFICIAL_RATES.CAARES_TC;
+    if (tariffToken === "CAARES2" || tariffToken === "CAARES4" || tariffToken === "CAARESMT") return TURN_OFFICIAL_RATES.CAARES_MT;
+    if (modalityToken === "CAA") {
+      if (workTimeToken === "TC") return TURN_OFFICIAL_RATES.CAA_1;
+      if (workTimeToken === "MT") return TURN_OFFICIAL_RATES.CAA_2;
+    }
+    if (modalityToken === "CAARES") {
+      if (workTimeToken === "TC") return TURN_OFFICIAL_RATES.CAARES_TC;
+      if (workTimeToken === "MT") return TURN_OFFICIAL_RATES.CAARES_MT;
+    }
+    return null;
+  };
+  const getTurnOfficialTotalValue = (turn = {}) => {
+    const quantity = Number(firstDefinedValue(turn.covered_days, turn.days, turn.novelty_days, 1)) || 0;
+    const rate = resolveOfficialTurnRate(turn);
+    if (rate === null) {
+      console.warn("[payroll][turnos] No se pudo detectar la tarifa oficial del turno.", {
+        turnId: firstDefinedValue(turn.turn_cover_id, turn.id, null),
+        workerId: firstDefinedValue(turn.external_worker_id, turn.internal_cover_employee_id, turn.internal_employee_id, null),
+        workerName: firstDefinedValue(turn.external_worker_name, turn.internal_cover_name, turn.cover_employee_name, turn.employee_name, turn.origin_employee_name, ""),
+        modality: firstDefinedValue(turn.modality, turn.origin_modality, turn.work_modality, ""),
+        workTimeType: firstDefinedValue(turn.work_time_type, turn.origin_work_time_type, turn.workTimeType, ""),
+        tariffCategory: firstDefinedValue(turn.tariff_category, turn.origin_category, turn.origin_salary_category, turn.salary_category, ""),
+      });
+      return 0;
+    }
+    return quantity * rate;
+  };
+
   const filters = payrollViewState?.appliedFilters || {};
   const nameQuery = normalized(filters.name || "");
   const docQuery = normalized(filters.document || "");
   const groups = new Map();
 
-  for (const turn of Array.isArray(turns) ? turns : []) {
+  for (const turn of filterExternalTurns(turns)) {
     const workerId = firstDefinedValue(turn.external_worker_id, turn.internal_cover_employee_id, turn.internal_employee_id);
     const name = firstDefinedValue(turn.external_worker_name, turn.internal_cover_name, turn.cover_employee_name, turn.employee_name, turn.origin_employee_name, "-");
     const document = firstDefinedValue(turn.external_document, turn.external_worker_doc, turn.internal_cover_doc, turn.document_number, turn.origin_document);
     const municipality = firstDefinedValue(turn.municipality_name, "-");
     const days = Number(firstDefinedValue(turn.covered_days, turn.days, 1)) || 0;
-    const modality = firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-");
+    const modality = formatTurnModalityLabel(firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-"));
     const key = String(workerId || `${document || name}|${municipality}`);
 
     if (!groups.has(key)) {
@@ -7778,6 +8045,7 @@ function buildTurnPersonGroups(turns = []) {
         modalities: new Set(),
         turns: [],
         totalDays: 0,
+        totalToPay: 0,
         bank: firstDefinedValue(turn.external_bank, turn.bank),
         accountType: firstDefinedValue(turn.external_account_type, turn.account_type, "AHORROS"),
         accountNumber: firstDefinedValue(turn.external_account_number, turn.account_number),
@@ -7787,6 +8055,7 @@ function buildTurnPersonGroups(turns = []) {
     const group = groups.get(key);
     group.turns.push(turn);
     group.totalDays += days;
+    group.totalToPay += getTurnOfficialTotalValue(turn);
     if (municipality && municipality !== "-") group.municipalities.add(municipality);
     if (modality && modality !== "-") group.modalities.add(modality);
     if (!group.coverId) group.coverId = Number(turn.turn_cover_id || turn.id || 0) || null;
@@ -7799,6 +8068,7 @@ function buildTurnPersonGroups(turns = []) {
   let list = Array.from(groups.values()).map((group) => ({
     ...group,
     municipality: group.municipalities.size > 1 ? "Varios" : (Array.from(group.municipalities)[0] || group.municipality || "-"),
+    modalitiesList: Array.from(group.modalities).filter(Boolean),
     modalitiesLabel: Array.from(group.modalities).filter(Boolean).join(", ") || "-",
   }));
 
@@ -7876,6 +8146,70 @@ function getTurnDocumentCompliance(group) {
   return { uploadedCount, requiredCount, percentage, missingLabels, title, tone };
 }
 
+function openTurnSummaryChargeAccount() {
+  const groups = turnPersonGroupsCache.length ? turnPersonGroupsCache : buildTurnPersonGroups(activeGroupTurns);
+  const target = groups.find((group) => group.coverId && hasPendingTurnCharge(group))
+    || groups.find((group) => group.coverId)
+    || null;
+  if (!target) {
+    showError("No hay cuentas de cobro disponibles para turnos externos en esta vista.");
+    return;
+  }
+  openChargeAccount(Number(target.coverId));
+}
+
+function renderTurnMetricCard(label, value, meta, tone, isTurn = false) {
+  const variantClass = isTurn ? " nm-pay-kpi-card--turn" : "";
+  return `
+  <article class="nm-pay-kpi-card${variantClass} nm-pay-kpi-card--${tone}">
+    <span class="nm-pay-kpi-card__label"><i></i>${escapeHtml(label)}</span>
+    <b class="nm-pay-kpi-card__value">${escapeHtml(String(value))}</b>
+    <small class="nm-pay-kpi-card__meta">${escapeHtml(meta)}</small>
+  </article>`;
+}
+
+function renderTurnSummaryHero(summary) {
+  const exportDisabled = summary.peopleCount === 0 ? "disabled" : "";
+  const chargesDisabled = !summary.groups.some((group) => group.coverId) ? "disabled" : "";
+  return `
+<section class="nm-turn-hero">
+  <div class="nm-turn-hero__copy">
+    <span class="nm-turn-hero__eyebrow">Turnos externos</span>
+    <h3>Turnos externos</h3>
+    <p>Resumen consolidado del período seleccionado.</p>
+    <div class="nm-turn-hero__stats">
+      <div><span>Personas externas</span><strong>${summary.peopleCount}</strong></div>
+      <div><span>Total turnos realizados</span><strong>${summary.totalTurns}</strong></div>
+      <div><span>Valor total a pagar</span><strong>${fmtCOP(summary.totalValue)}</strong></div>
+      <div><span>Documentos completos</span><strong>${summary.completeDocs}</strong></div>
+      <div><span>Documentos pendientes</span><strong>${summary.pendingDocs}</strong></div>
+    </div>
+  </div>
+  <div class="nm-turn-hero__actions">
+    <button type="button" class="nm-pay-btn nm-pay-btn--compact nm-turn-hero__btn" id="nmTurnExportSummary" ${exportDisabled}>Exportar turnos externos</button>
+    <button type="button" class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact nm-turn-hero__btn" id="nmTurnGenerateCharges" ${chargesDisabled}>Generar cuentas de cobro</button>
+  </div>
+</section>`;
+}
+
+function renderTurnModalityBadges(group) {
+  const modalities = Array.isArray(group.modalitiesList) ? group.modalitiesList : [];
+  if (!modalities.length) return `<span class="nm-turn-modality-badge">Sin modalidad</span>`;
+  return modalities.map((modality) => `<span class="nm-turn-modality-badge">${escapeHtml(modality)}</span>`).join("");
+}
+
+function renderTurnDocumentationCell(compliance) {
+  const status = getTurnComplianceStatus(compliance);
+  return `
+<div class="nm-turn-doc-cell nm-turn-doc-cell--${status.tone}" title="${escapeHtml(compliance.title)}">
+  <div class="nm-turn-doc-cell__head">
+    <strong>${status.label}</strong>
+    <span>${compliance.uploadedCount}/${compliance.requiredCount} documentos · ${compliance.percentage}%</span>
+  </div>
+  <div class="nm-turn-doc-cell__bar"><span style="width:${compliance.percentage}%"></span></div>
+</div>`;
+}
+
 function turnActionIcon(action) {
   const icons = {
     detail: `
@@ -7941,7 +8275,7 @@ function openTurnPersonDetailDrawer(groupKey) {
   if (!modal) return;
 
   const detailRows = group.turns.map((turn) => {
-    const modality = firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-");
+    const modality = formatTurnModalityLabel(firstDefinedValue(turn.modality, turn.origin_category, turn.origin_salary_category, turn.salary_category, turn.work_modality, turn.novelty_type, "-"));
     const observations = firstDefinedValue(turn.observations, turn.description, turn.notes, "-");
     const replacement = firstDefinedValue(turn.origin_employee_name, turn.replacement_employee_name, "-");
     const supportLinks = [
@@ -7997,7 +8331,7 @@ renderTurnosSection = function renderTurnosSectionOperational(turns) {
   const groups = buildTurnPersonGroups(turns);
   turnPersonGroupsCache = groups;
   if (!groups.length) {
-    return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty">No hay turnos registrados para este período y filtros seleccionados.</div></div>`;
+    return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty">No hay turnos externos registrados para este período y filtros seleccionados.</div></div>`;
   }
   return `
 <div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
@@ -8124,47 +8458,72 @@ openTurnPersonDetailDrawer = function openTurnPersonDetailDrawerOperational(grou
 };
 
 renderTurnosSection = function renderTurnosSectionOperational(turns) {
-  const groups = buildTurnPersonGroups(turns);
+  const summary = getTurnWorkspaceSummary(turns);
+  const groups = summary.groups;
   turnPersonGroupsCache = groups;
   if (!groups.length) {
-    return `<div class="nm-pay-scroll-body nm-pay-scroll-body--operational"><div class="nm-pay-empty">No hay turnos registrados para este período y filtros seleccionados.</div></div>`;
+    return `
+<div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
+  <div class="nm-turn-empty-state">
+    <div class="nm-turn-empty-state__copy">
+      <span class="nm-turn-empty-state__eyebrow">Turnos externos</span>
+      <strong>No hay turnos externos registrados para este período.</strong>
+      <p>Revisa novedades o coberturas del período seleccionado para continuar.</p>
+    </div>
+    <button type="button" class="nm-pay-btn nm-pay-btn--compact" id="nmTurnReviewNovelties">Revisar novedades</button>
+  </div>
+</div>`;
   }
   return `
 <div class="nm-pay-scroll-body nm-pay-scroll-body--operational">
-  <div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard nm-turn-summary-wrap">
-    <table class="nm-pay-table nm-pay-table--operational">
-      <thead>
-        <tr>
-          <th>Nombre</th>
-          <th>Cedula</th>
-          <th>Municipio</th>
-          <th class="num">Dias turnos</th>
-          <th>Modalidades</th>
-          <th>Cumplimiento documental</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${groups.map((group) => {
-          const compliance = getTurnDocumentCompliance(group);
-          return `
-        <tr>
-          <td><div class="nm-pay-employee-cell"><strong>${escapeHtml(group.name || "-")}</strong></div></td>
-          <td>${escapeHtml(group.document || "-")}</td>
-          <td>${escapeHtml(group.municipality || "-")}</td>
-          <td class="num">${group.totalDays}</td>
-          <td title="${escapeHtml(group.modalitiesLabel)}">${escapeHtml(group.modalitiesLabel)}</td>
-          <td>
-            <div class="nm-turn-compliance nm-turn-compliance--${compliance.tone}" title="${escapeHtml(compliance.title)}">
-              <div class="nm-turn-compliance__bar"><span style="width:${compliance.percentage}%"></span></div>
-              <div class="nm-turn-compliance__meta">${compliance.uploadedCount}/${compliance.requiredCount} documentos · ${compliance.percentage}%</div>
-            </div>
-          </td>
-          <td class="nm-pay-actions-cell">${renderTurnPersonActionsMenu(group)}</td>
-        </tr>`;
-        }).join("")}
-      </tbody>
-    </table>
+  <div class="nm-turns-shell">
+    ${renderTurnSummaryHero(summary)}
+    <div class="nm-turns-table-wrap">
+      <table class="nm-turns-table">
+        <thead>
+          <tr>
+            <th>Persona</th>
+            <th>Turnos</th>
+            <th>Modalidades</th>
+            <th class="is-number">Valor total</th>
+            <th>Documentación</th>
+            <th class="is-actions">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${groups.map((group) => {
+            const compliance = getTurnDocumentCompliance(group);
+            return `
+          <tr>
+            <td>
+              <div class="nm-turn-person-cell">
+                <strong>${escapeHtml(group.name || "-")}</strong>
+                <span>CC ${escapeHtml(group.document || "Sin documento")} · ${escapeHtml(group.municipality || "-")}</span>
+              </div>
+            </td>
+            <td>
+              <div class="nm-turn-count-cell">
+                <strong>${group.turns.length}</strong>
+                <span>${group.turns.length === 1 ? "turno" : "turnos"}</span>
+              </div>
+            </td>
+            <td>
+              <div class="nm-turn-modality-list" title="${escapeHtml(group.modalitiesLabel)}">${renderTurnModalityBadges(group)}</div>
+            </td>
+            <td class="is-number">
+              <div class="nm-turn-value-cell">
+                <strong>${fmtCOP(group.totalToPay)}</strong>
+              </div>
+            </td>
+            <td>${renderTurnDocumentationCell(compliance)}</td>
+            <td class="is-actions">
+              <div class="nm-turn-actions-wrap">${renderTurnPersonActionsMenu(group)}</div>
+            </td>
+          </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>`;
 };
@@ -8255,6 +8614,12 @@ wireStaticEvents = function wireStaticEventsIntegral() {
   }));
   document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
   document.getElementById("nmPayExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmTurnExportSummary")?.addEventListener("click", openExportModal);
+  document.getElementById("nmTurnGenerateCharges")?.addEventListener("click", openTurnSummaryChargeAccount);
+  document.getElementById("nmTurnReviewNovelties")?.addEventListener("click", () => {
+    activeDetailTab = "novedades";
+    render();
+  });
   document.getElementById("nmPayOpenSlip")?.addEventListener("click", openSelectedPayslip);
   document.getElementById("nmPayFullscreen")?.addEventListener("click", () => {
     togglePayrollFullscreen();

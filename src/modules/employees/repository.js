@@ -55,7 +55,33 @@ async function resolveMunicipalityId(value) {
   return result.rows[0]?.id || null;
 }
 
+function getResolvedMunicipalityValue(rawValue, resolvedName) {
+  const normalizedName = String(resolvedName || "").trim();
+  if (normalizedName) return normalizedName;
+
+  const raw = String(rawValue || "").trim();
+  if (!raw || /^\d+$/.test(raw)) return "";
+  return raw;
+}
+
 function mapEmployee(row) {
+  const workMunicipality = getResolvedMunicipalityValue(
+    row.municipality_id,
+    row.municipality_name
+  );
+  const residenceMunicipality = getResolvedMunicipalityValue(
+    row.residence_municipality,
+    row.residence_municipality_name
+  );
+  const expeditionMunicipality = getResolvedMunicipalityValue(
+    row.expedition_municipality,
+    row.expedition_municipality_name
+  );
+  const birthMunicipality = getResolvedMunicipalityValue(
+    row.birth_municipality,
+    row.birth_municipality_name
+  );
+
   return {
     id: row.id,
     legacyJsonId: row.legacy_json_id ? String(row.legacy_json_id) : null,
@@ -130,14 +156,16 @@ function mapEmployee(row) {
 
     municipalityId: row.municipality_id || null,
     municipality_id: row.municipality_id || null,
-    municipalityName: row.municipality_name || "",
-    municipality_name: row.municipality_name || "",
+    municipalityName: workMunicipality,
+    municipality_name: workMunicipality,
 
-    municipality: row.municipality_name || row.municipality_id || "",
-    municipio: row.municipality_name || row.municipality_id || "",
+    municipality: workMunicipality,
+    municipio: workMunicipality,
 
-    residenceMunicipality: row.residence_municipality || "",
-    municipio_residencia:  row.residence_municipality || "",
+    residenceMunicipality: residenceMunicipality,
+    residenceMunicipalityName: residenceMunicipality,
+    residence_municipality_name: residenceMunicipality,
+    municipio_residencia:  residenceMunicipality,
     residenceZone:         row.residence_zone         || "",
     zona_residencia:       row.residence_zone         || "",
 
@@ -184,25 +212,29 @@ function mapEmployee(row) {
     expeditionMonth:        row.expedition_month != null ? String(row.expedition_month) : "",
     expeditionYear:         row.expedition_year  != null ? String(row.expedition_year)  : "",
     expeditionDepartment:   row.expedition_department   || "",
-    expeditionMunicipality: row.expedition_municipality || "",
+    expeditionMunicipality: expeditionMunicipality,
+    expeditionMunicipalityName: expeditionMunicipality,
+    expedition_municipality_name: expeditionMunicipality,
     fecha_expedicion_dia:   row.expedition_day   != null ? String(row.expedition_day)   : "",
     fecha_expedicion_mes:   row.expedition_month != null ? String(row.expedition_month) : "",
     fecha_expedicion_anio:  row.expedition_year  != null ? String(row.expedition_year)  : "",
     departamento_expedicion: row.expedition_department   || "",
-    municipio_expedicion:    row.expedition_municipality || "",
+    municipio_expedicion:    expeditionMunicipality,
 
     birthDay:          row.birth_day   != null ? String(row.birth_day)   : "",
     birthMonth:        row.birth_month != null ? String(row.birth_month) : "",
     birthYear:         row.birth_year  != null ? String(row.birth_year)  : "",
     birthCountry:      row.birth_country     || "Colombia",
     birthDepartment:   row.birth_department  || "",
-    birthMunicipality: row.birth_municipality || "",
+    birthMunicipality: birthMunicipality,
+    birthMunicipalityName: birthMunicipality,
+    birth_municipality_name: birthMunicipality,
     fecha_nacimiento_dia:   row.birth_day   != null ? String(row.birth_day)   : "",
     fecha_nacimiento_mes:   row.birth_month != null ? String(row.birth_month) : "",
     fecha_nacimiento_anio:  row.birth_year  != null ? String(row.birth_year)  : "",
     pais_nacimiento:         row.birth_country     || "Colombia",
     departamento_nacimiento: row.birth_department  || "",
-    municipio_nacimiento:    row.birth_municipality || "",
+    municipio_nacimiento:    birthMunicipality,
   };
 }
 
@@ -211,10 +243,37 @@ async function listEmployeesFromRepository(filters = {}) {
     SELECT 
       e.*,
       m.name AS municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '') ~ '^[0-9]+$' THEN bm.name
+        ELSE NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '')
+      END AS birth_municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '') ~ '^[0-9]+$' THEN em.name
+        ELSE NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '')
+      END AS expedition_municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '') ~ '^[0-9]+$' THEN rm.name
+        ELSE NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '')
+      END AS residence_municipality_name,
       i.name AS institution_name,
       s.name AS site_name
     FROM employees e
     LEFT JOIN municipalities m ON m.id = e.municipality_id
+    LEFT JOIN municipalities bm ON bm.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '')::int
+      ELSE NULL
+    END
+    LEFT JOIN municipalities em ON em.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '')::int
+      ELSE NULL
+    END
+    LEFT JOIN municipalities rm ON rm.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '')::int
+      ELSE NULL
+    END
     LEFT JOIN institutions i ON i.id = e.institution_id
     LEFT JOIN educational_sites s ON s.id = e.site_id
   `;
@@ -263,10 +322,37 @@ async function getEmployeeByIdFromRepository(id) {
     SELECT 
       e.*,
       m.name AS municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '') ~ '^[0-9]+$' THEN bm.name
+        ELSE NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '')
+      END AS birth_municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '') ~ '^[0-9]+$' THEN em.name
+        ELSE NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '')
+      END AS expedition_municipality_name,
+      CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '') ~ '^[0-9]+$' THEN rm.name
+        ELSE NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '')
+      END AS residence_municipality_name,
       i.name AS institution_name,
       s.name AS site_name
     FROM employees e
     LEFT JOIN municipalities m ON m.id = e.municipality_id
+    LEFT JOIN municipalities bm ON bm.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.birth_municipality, '')), '')::int
+      ELSE NULL
+    END
+    LEFT JOIN municipalities em ON em.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.expedition_municipality, '')), '')::int
+      ELSE NULL
+    END
+    LEFT JOIN municipalities rm ON rm.id = CASE
+      WHEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '') ~ '^[0-9]+$'
+        THEN NULLIF(BTRIM(COALESCE(e.residence_municipality, '')), '')::int
+      ELSE NULL
+    END
     LEFT JOIN institutions i ON i.id = e.institution_id
     LEFT JOIN educational_sites s ON s.id = e.site_id
     WHERE e.id = $1

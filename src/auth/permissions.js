@@ -35,6 +35,9 @@ const MODULES = Object.freeze({
   RESUME_REPOSITORY: "repositorio_hojas_vida",
   HV_REPOSITORY: "repositorio_hojas_vida",
 
+  DOCUMENT_CENTER: "centro_documentos",
+  DOCUMENT_AUDIT: "centro_documentos",
+
   DASHBOARD_HR: "dashboard_hr",
 
   DOTACION: "gestion_dotacion",
@@ -361,6 +364,15 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.NOVELTIES]: NOVELTIES_PERMISSIONS,
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
       [MODULES.DOTACION]: DOTACION_PERMISSIONS_FULL,
+      [MODULES.DOCUMENT_CENTER]: {
+        allowedActions: [ACTIONS.VIEW, ACTIONS.CREATE, ACTIONS.EXPORT, ACTIONS.AUDIT],
+        features: Object.freeze([
+          "carga_masiva_documental",
+          "historial_cargas_documentales",
+          "auditoria_documental",
+          "repositorio_documental",
+        ]),
+      },
       [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_FULL,
     },
   },

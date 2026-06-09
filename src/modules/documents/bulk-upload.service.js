@@ -291,6 +291,7 @@ function buildBulkReviewRow(source, employees, documentTypes, existingDocumentsI
     documentNumber: parsed.documentNumber,
     format: parsed.format,
     employeeId: status === PREVIEW_STATUS.READY ? detectedEmployee?.id || null : null,
+    companyId: detectedEmployee?.companyId || detectedEmployee?.company_id || null,
     documentTypeResolved: Boolean(documentType),
     detectedEmployee,
     candidates: status === PREVIEW_STATUS.READY ? [] : [...exactMatches, ...partialMatches].slice(0, 8),

@@ -200,6 +200,10 @@ export function getModuleMeta(moduleKey) {
       // Briefcase — portal de gestión
       icon: iconSvg(`<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="12" stroke-width="3" stroke-linecap="round"/><path d="M2 12h20"/>`),
     },
+    centro_documentos: {
+      label: "Centro de Documentos",
+      icon: iconSvg(`<path d="M7 3h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/><path d="M9 9h2"/>`),
+    },
   };
   return moduleMap[moduleKey] || { label: prettyLabel(moduleKey), icon: iconSvg(`<circle cx="12" cy="12" r="3"></circle>`) };
 }
@@ -313,6 +317,25 @@ export function findOfficialMunicipality(value, { includeFallback = false } = {}
   ) || null;
 }
 
+export function getMunicipalityName(value, municipalitiesCatalog = null, fallback = "No registrado") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return fallback;
+
+  const catalog = Array.isArray(municipalitiesCatalog)
+    ? municipalitiesCatalog.filter(Boolean)
+    : getOfficialMunicipalities({ includeFallback: true });
+  const normalized = normalizeMunicipalityText(raw);
+  const found = catalog.find((item) =>
+    String(item?.id ?? "").trim() === raw
+    || normalizeMunicipalityText(item?.name || "") === normalized
+    || normalizeMunicipalityText(item?.normalized_name || "") === normalized
+  );
+
+  if (String(found?.name || "").trim()) return String(found.name).trim();
+  if (/^\d+$/.test(raw)) return fallback;
+  return raw;
+}
+
 // ── Personnel data helpers ────────────────────────────────────────────────────
 
 export function getPersonnelFullName(item) {
@@ -330,13 +353,11 @@ export function getPersonnelRole(item) {
 }
 
 export function getPersonnelMunicipality(item = {}) {
-  const explicitName = item.municipalityName || item.municipality_name || "";
-  if (String(explicitName || "").trim()) return String(explicitName).trim();
+  const explicitName = getMunicipalityName(item.municipalityName || item.municipality_name || "", null, "");
+  if (explicitName) return explicitName;
 
   const value = item.municipalityId || item.municipality_id || item.municipio_id || item.municipality || item.municipio || "";
-  if (!value) return "-";
-  const found = findOfficialMunicipality(value);
-  return found ? found.name : String(value);
+  return getMunicipalityName(value, null, "No registrado");
 }
 
 // ── Personnel form helpers ────────────────────────────────────────────────────
