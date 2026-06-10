@@ -45,6 +45,11 @@ const {
   handlePeriodFullExport,
   handleEmployeeSalaryConfig,
   handleNoveltiesTemplate,
+  handleEmployeePayrollSlips,
+  handleCorrections,
+  handleCorrectionById,
+  handleCorrectionStatus,
+  handleCorrectionsSummary,
 } = require("./payroll.controller");
 
 async function handlePayrollRoutes(req, res, url) {
@@ -56,6 +61,25 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/employee-salary-config\/\d+$/.test(pathname) && req.method === "DELETE") {
     await handleEmployeeSalaryConfig(req, res, url); return true;
+  }
+
+  // ── Lista de desprendibles de un empleado (todos los períodos) ──────────────
+  if (/^\/payroll\/employees\/[^/]+\/slips$/.test(pathname)) {
+    await handleEmployeePayrollSlips(req, res, url); return true;
+  }
+
+  // ── Correcciones de nómina (064) ────────────────────────────────────────────
+  if (pathname === "/payroll/corrections/summary") {
+    await handleCorrectionsSummary(req, res, url); return true;
+  }
+  if (/^\/payroll\/corrections\/\d+\/status$/.test(pathname)) {
+    await handleCorrectionStatus(req, res, url); return true;
+  }
+  if (/^\/payroll\/corrections\/\d+$/.test(pathname)) {
+    await handleCorrectionById(req, res, url); return true;
+  }
+  if (pathname === "/payroll/corrections") {
+    await handleCorrections(req, res, url); return true;
   }
 
   // ── Nuevas rutas (033) ──────────────────────────────────────────────────────

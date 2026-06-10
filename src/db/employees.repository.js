@@ -717,11 +717,11 @@ function buildEmployeeListWhere(filters = {}) {
   if (filters.personnelType) {
     const type = normalize(filters.personnelType);
     if (type === "OPERARIO") {
-      values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-      conditions.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) = $${values.length}`);
+      values.push("%OPERARIO MANIPULADOR DE ALIMENTOS%");
+      conditions.push(`e.real_position ILIKE $${values.length}`);
     } else if (type === "EQUIPO") {
-      values.push("OPERARIO MANIPULADOR DE ALIMENTOS");
-      conditions.push(`UPPER(TRIM(COALESCE(e.real_position, ''))) <> $${values.length}`);
+      values.push("%OPERARIO MANIPULADOR DE ALIMENTOS%");
+      conditions.push(`COALESCE(e.real_position,'') NOT ILIKE $${values.length}`);
     }
   }
   if (filters.role || filters.position) {

@@ -43,6 +43,8 @@ const MODULES = Object.freeze({
   DOTACION: "gestion_dotacion",
 
   PORTAL_COLABORADOR: "portal_colaborador",
+
+  EVALUACION_DESEMPENO_TH: "evaluacion_desempeno_th",
 });
 
 const ACTIONS = Object.freeze({
@@ -374,6 +376,10 @@ const ROLE_PERMISSIONS = Object.freeze({
         ]),
       },
       [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_FULL,
+      [MODULES.EVALUACION_DESEMPENO_TH]: {
+        allowedActions: [ACTIONS.VIEW],
+        features: Object.freeze(["ver_evaluacion_coordinadores", "ver_detalle_municipios"]),
+      },
     },
   },
 
@@ -429,6 +435,10 @@ const ROLE_PERMISSIONS = Object.freeze({
       [MODULES.RESUME_REPOSITORY]: RESUME_REPOSITORY_PERMISSIONS,
       [MODULES.DOTACION]: DOTACION_PERMISSIONS_HR,
       [MODULES.PORTAL_COLABORADOR]: PORTAL_PERMISSIONS_TH,
+      [MODULES.EVALUACION_DESEMPENO_TH]: {
+        allowedActions: [ACTIONS.VIEW],
+        features: Object.freeze(["ver_evaluacion_coordinadores", "ver_detalle_municipios"]),
+      },
     },
   },
 

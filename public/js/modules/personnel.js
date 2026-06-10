@@ -15,6 +15,7 @@ import {
 } from '../constants.js';
 import { showError, showSuccess, showWarning } from '../toast.js';
 import { openModule } from '../nav.js';
+import { openDocViewer } from '../doc-viewer.js';
 
 const DOC_TYPE_EQUIVALENTS = [
   ["cedula", "cc", "cedula de ciudadania", "fotocopia del documento de identidad"],
@@ -1548,6 +1549,13 @@ function buildPersonnelDocumentsTab(employee, dossierSummary, docMetrics) {
       : "Incompleto";
   const documentItems = Array.isArray(dossierSummary.documents.items) ? dossierSummary.documents.items : [];
 
+  // Donut chart SVG para completitud
+  const _r = 24, _cx = 32, _cy = 32, _circ = +(2 * Math.PI * _r).toFixed(2);
+  const _offset = +(_circ - (Math.min(summary.percent, 100) / 100) * _circ).toFixed(2);
+  const _fillMap = { success: "#16a34a", warning: "#f59e0b", danger: "#ef4444" };
+  const _fill = _fillMap[progressTone] || "#3b82f6";
+  const _donut = `<svg class="personnel-doc-donut-svg" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="${_cx}" cy="${_cy}" r="${_r}" fill="none" stroke="rgba(226,232,240,0.7)" stroke-width="7"/><circle cx="${_cx}" cy="${_cy}" r="${_r}" fill="none" stroke="${_fill}" stroke-width="7" stroke-dasharray="${_circ}" stroke-dashoffset="${_offset}" stroke-linecap="round" transform="rotate(-90 ${_cx} ${_cy})"/></svg>`;
+
   const itemsHtml = buildPersonnelExpedienteCollection(
     documentItems,
     "La matriz documental detallada estará disponible cuando el expediente tenga soportes vinculados.",
@@ -1590,19 +1598,19 @@ function buildPersonnelDocumentsTab(employee, dossierSummary, docMetrics) {
       `
         <div class="personnel-expediente-doc-summary">
           <div class="personnel-expediente-doc-hero">
-            <div class="personnel-expediente-doc-meter">
-              <strong>${summary.percent}%</strong>
-              <span>${escapeHtml(progressLabel)}</span>
+            <div class="personnel-doc-donut-wrap">
+              ${_donut}
+              <div class="personnel-doc-donut-legend">
+                <strong>${summary.percent}%</strong>
+                <span>${escapeHtml(progressLabel)}</span>
+              </div>
             </div>
             <span class="status-chip ${hvStatus.className}">${escapeHtml(hvStatus.label)}</span>
           </div>
-          <div class="personnel-expediente-doc-progress tone-${escapeAttr(progressTone)}">
-            <span style="width:${summary.percent}%"></span>
-          </div>
           <div class="personnel-expediente-metrics personnel-expediente-metrics-4">
-            ${buildPersonnelExpedienteField("Cargados", escapeHtml(`${summary.uploaded || docMetrics.uploaded || 0}/${summary.total || 0}`), { tone: "success" })}
+            ${buildPersonnelExpedienteField("Cargados", escapeHtml(`${summary.uploaded || docMetrics.uploaded || 0}/${summary.total || 0}`), { tone: "info" })}
             ${buildPersonnelExpedienteField("Pendientes", escapeHtml(String(summary.pending + summary.missing)), { tone: "warning" })}
-            ${buildPersonnelExpedienteField("Por vencer", escapeHtml(String(summary.expiring)), { tone: "warning" })}
+            ${buildPersonnelExpedienteField("Por vencer", escapeHtml(String(summary.expiring)), { tone: "caution" })}
             ${buildPersonnelExpedienteField("Vencidos / rechazados", escapeHtml(String(summary.expired + summary.rejected)), { tone: "danger" })}
           </div>
           <div class="personnel-expediente-doc-actions">
@@ -1610,12 +1618,19 @@ function buildPersonnelDocumentsTab(employee, dossierSummary, docMetrics) {
               <strong>${escapeHtml(`${summary.approved || 0} validados`)}</strong>
               <span>${escapeHtml(summary.total ? `${summary.total} requisitos en matriz` : "Sin matriz documental cargada")}</span>
             </div>
-            <button type="button" class="btn btn-secondary" data-documents-personnel-id="${escapeAttr(employee.id)}">Gestionar documentos</button>
+            <button type="button" class="btn btn-gestionar-docs" data-documents-personnel-id="${escapeAttr(employee.id)}">Gestionar documentos →</button>
           </div>
         </div>
         ${checklistHtml}
       `,
       "personnel-expediente-section-docs"
+    ),
+    buildPersonnelExpedienteSection(
+      "Desprendibles de nómina",
+      `<div class="personnel-payroll-slips-shell" data-slips-employee-id="${escapeAttr(String(employee.id))}">
+        <div class="personnel-expediente-empty">Consultando desprendibles…</div>
+      </div>`,
+      "personnel-expediente-section-slips"
     ),
   ].join("");
 }
@@ -2025,7 +2040,7 @@ function buildPersonnelDetailPanel(employee, allDocuments = null, dossier = null
           </div>
           <div class="employee-dossier-title-row personnel-expediente-title-row">
             <div class="employee-dossier-identity personnel-expediente-identity">
-            <div class="personnel-expediente-photo" data-photo-upload-id="${escapeAttr(employee.id)}">
+            <div class="personnel-expediente-photo ring-${escapeAttr(statusBadge.tone)}" data-photo-upload-id="${escapeAttr(employee.id)}">
               ${photoHtml}
               <div class="cv-photo-overlay">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3894,7 +3909,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
         state.personnelCreateTab  = "identificacion";
         state.personnelSelectedId = "__none__";
         state.personnelSavedTabs  = null;
-        await openModule("gestion_personal");
+        await openModule(state.activeModule || "gestion_personal");
       });
     }
 
@@ -3924,7 +3939,7 @@ export async function loadPersonnelModule(moduleConfig, submoduleKey) {
           state.personnelEditingId = found.id || employeeId || null;
           state.personnelSelectedId = found.id || employeeId || null;
           state.personnelDocumentsEmployee = found;
-          await openModule("gestion_personal");
+          await openModule(state.activeModule || "gestion_personal");
           return;
         }
 
@@ -4608,6 +4623,8 @@ export async function renderPersonnelTableModule() {
     if (f.institution) params.set("institution", f.institution);
     if (f.site) params.set("site", f.site);
     if (f.modality) params.set("modality", f.modality);
+    if (state.personnelTipo === "operarios") params.set("personnelType", "OPERARIO");
+    if (state.personnelTipo === "equipo")    params.set("personnelType", "EQUIPO");
     return params;
   };
 
@@ -4769,7 +4786,7 @@ export async function renderPersonnelTableModule() {
         sort:         document.getElementById("personnelSort")?.value              || "",
       };
       state.personnelPagination = { ...(state.personnelPagination || {}), page: 1 };
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     };
 
     ["personnelFilterStatus","personnelFilterRole","personnelFilterHvStatus",
@@ -4791,7 +4808,7 @@ export async function renderPersonnelTableModule() {
         companyId:"", contractId:"", gestorZona:"", institution:"", site:"", modality:"", sort:"" };
       state.personnelPagination = { page: 1, pageSize: state.personnelPagination?.pageSize || 25, total: 0, totalPages: 0 };
       state.personnelSelectedId = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
 
     document.getElementById("btnNewEmployee")?.addEventListener("click", async () => {
@@ -4805,7 +4822,7 @@ export async function renderPersonnelTableModule() {
       state.personnelEditingId      = null;
       state.personnelSelectedId     = null;
       state.personnelDocumentsEmployee = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
 
     document.getElementById("btnExportPersonnel")?.addEventListener("click", async () => {
@@ -4824,7 +4841,7 @@ export async function renderPersonnelTableModule() {
       if (current <= 1) return;
       state.personnelPagination = { ...(state.personnelPagination || {}), page: current - 1 };
       state.personnelSelectedId = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
 
     document.getElementById("personnelNextPage")?.addEventListener("click", async () => {
@@ -4833,7 +4850,7 @@ export async function renderPersonnelTableModule() {
       if (totalPages && current >= totalPages) return;
       state.personnelPagination = { ...(state.personnelPagination || {}), page: current + 1 };
       state.personnelSelectedId = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
 
     document.getElementById("personnelPageSize")?.addEventListener("change", async (event) => {
@@ -4843,7 +4860,7 @@ export async function renderPersonnelTableModule() {
         pageSize: Number(event.target.value) || 25,
       };
       state.personnelSelectedId = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
 
     document.getElementById("btnImportPersonnel")?.addEventListener("click", () => {
@@ -4862,7 +4879,7 @@ export async function renderPersonnelTableModule() {
       state.personnelViewMode = "cv";
       state.personnelEditingId = found.id || null;
       state.personnelSelectedId = found.id || null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     };
 
     const openEmployeeDocuments = async (employeeId) => {
@@ -4874,7 +4891,7 @@ export async function renderPersonnelTableModule() {
       state.personnelEditingId = found.id || null;
       state.personnelSelectedId = found.id || null;
       state.personnelDocumentsEmployee = found;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     };
 
     const openEmployeeEditor = async (employeeId) => {
@@ -4894,7 +4911,7 @@ export async function renderPersonnelTableModule() {
       state.personnelSelectedId = "__none__";
       state.personnelDocumentsEmployee = null;
       state.personnelSavedTabs = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     };
 
     document.querySelectorAll("[data-cv-personnel-id]").forEach((btn) => {
@@ -5012,6 +5029,81 @@ export async function renderPersonnelTableModule() {
             panel.classList.toggle("active", panel.dataset.expedientePanel === tab);
           });
         });
+      });
+
+      container.querySelectorAll(".personnel-payroll-slips-shell[data-slips-employee-id]").forEach((shell) => {
+        const empId = shell.dataset.slipsEmployeeId;
+        if (!empId) return;
+        fetch(`/payroll/employees/${encodeURIComponent(empId)}/slips`)
+          .then((r) => r.json())
+          .then(({ ok, data }) => {
+            if (!ok || !Array.isArray(data) || !data.length) {
+              shell.innerHTML = `<div class="personnel-expediente-empty">Sin desprendibles de nómina registrados.</div>`;
+              return;
+            }
+            const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-CO", { year: "numeric", month: "short", day: "numeric" }) : "—";
+            shell.innerHTML = `<div class="personnel-payroll-slips-list">${data.map((s) => `
+              <article class="personnel-payroll-slip-row">
+                <div class="personnel-payroll-slip-info">
+                  <strong>${escapeHtml(s.period_label || "Período")}</strong>
+                  <span>${escapeHtml(fmtDate(s.period_start))} – ${escapeHtml(fmtDate(s.period_end))}</span>
+                </div>
+                <div class="personnel-payroll-slip-amount">
+                  <span>Neto a pagar</span>
+                  <strong>${escapeHtml(formatCurrencyValue(s.neto_pagar))}</strong>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline"
+                  data-print-slip-employee="${escapeAttr(String(empId))}"
+                  data-print-slip-period="${escapeAttr(String(s.period_id))}">Imprimir</button>
+              </article>
+            `).join("")}</div>`;
+            shell.querySelectorAll("[data-print-slip-period]").forEach((btn) => {
+              btn.addEventListener("click", async () => {
+                const periodId = btn.dataset.printSlipPeriod;
+                const employeeIdBtn = btn.dataset.printSlipEmployee;
+                try {
+                  const resp = await fetch(`/payroll/employees/${encodeURIComponent(employeeIdBtn)}/slip?periodId=${periodId}`);
+                  const { ok: slipOk, data: slipData } = await resp.json();
+                  if (!slipOk || !slipData) { alert("No se pudo cargar el desprendible."); return; }
+                  const pp = slipData.period || {};
+                  const sl = slipData.slip || {};
+                  const win = window.open("", "_blank", "width=960,height=720");
+                  if (!win) { alert("El navegador bloqueó la ventana emergente."); return; }
+                  win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+                    <title>Desprendible ${escapeHtml(pp.label || "")}</title>
+                    <style>body{font-family:Arial,sans-serif;font-size:13px;padding:24px;max-width:680px;margin:auto}
+                    h2{font-size:15px;margin:0 0 4px}p{margin:2px 0 12px;color:#555}
+                    table{width:100%;border-collapse:collapse;margin-top:8px}
+                    td,th{padding:6px 10px;border:1px solid #d1d5db}th{background:#f1f5f9;text-align:left;font-weight:600}
+                    .total td{font-weight:700;background:#f0fdf4}
+                    @media print{@page{margin:1.5cm}}</style></head><body>
+                    <h2>Desprendible de pago — ${escapeHtml(pp.label || "")}</h2>
+                    <p>${escapeHtml(sl.employeeName || "")} · CC ${escapeHtml(sl.documentNumber || "")}</p>
+                    <table>
+                      <tr><th>Concepto</th><th style="text-align:right">Valor</th></tr>
+                      <tr><td>Salario base mensual</td><td style="text-align:right">${escapeHtml(formatCurrencyValue(sl.baseSalaryMonthly || sl.baseSalary))}</td></tr>
+                      <tr><td>Días trabajados</td><td style="text-align:right">${escapeHtml(String(sl.workedDays ?? ""))}</td></tr>
+                      <tr><td>Salario proporcional</td><td style="text-align:right">${escapeHtml(formatCurrencyValue(sl.baseEarned || sl.baseSalary))}</td></tr>
+                      <tr><td>Aux. de transporte</td><td style="text-align:right">${escapeHtml(formatCurrencyValue(sl.transportAllowance))}</td></tr>
+                      <tr><td>Otros devengados</td><td style="text-align:right">${escapeHtml(formatCurrencyValue(sl.otherEarnings))}</td></tr>
+                      <tr><td><strong>Total devengado</strong></td><td style="text-align:right"><strong>${escapeHtml(formatCurrencyValue(sl.totalDevengado))}</strong></td></tr>
+                      <tr><td>Deducción salud (4%)</td><td style="text-align:right">–${escapeHtml(formatCurrencyValue(sl.deduccionSalud))}</td></tr>
+                      <tr><td>Deducción pensión (4%)</td><td style="text-align:right">–${escapeHtml(formatCurrencyValue(sl.deduccionPension))}</td></tr>
+                      <tr><td>Novedades / descuentos</td><td style="text-align:right">–${escapeHtml(formatCurrencyValue(sl.novedadDescuento))}</td></tr>
+                      <tr class="total"><td>Neto a pagar</td><td style="text-align:right">${escapeHtml(formatCurrencyValue(sl.netoPagar))}</td></tr>
+                    </table>
+                    <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),400))<\/script>
+                    </body></html>`);
+                  win.document.close();
+                } catch {
+                  alert("No se pudo cargar el desprendible.");
+                }
+              });
+            });
+          })
+          .catch(() => {
+            shell.innerHTML = `<div class="personnel-expediente-empty">No se pudo consultar los desprendibles.</div>`;
+          });
       });
     };
 
@@ -5462,10 +5554,11 @@ export async function handlePersonnelFormSubmit(event) {
       state.personnelViewMode       = "table";
       state.personnelEditingId      = null;
       state.personnelDocumentsEmployee = null;
-      state.activeModule    = "gestion_personal";
-      state.expandedModule  = "gestion_personal";
+      const _personnelModule = state.activeModule || "gestion_personal";
+      state.activeModule    = _personnelModule;
+      state.expandedModule  = _personnelModule;
       state.activeSubmodule = null;
-      await openModule("gestion_personal");
+      await openModule(_personnelModule);
     }
   } catch (error) {
     showError(error.message || "Ocurrió un error inesperado.");
@@ -5580,10 +5673,34 @@ function renderStableEmployeeDocuments(employee, documents, requiredDocuments) {
       .filter((doc) => sameDocumentType(doc.document_type_name || doc.documentType || doc.docTypeName || "", req.name))
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
     const uploaded = Boolean(found);
+    const docStatus = found ? (found.status || "cargado").toLowerCase() : "pendiente";
+    const statusLabels = { cargado: "Cargado", aprobado: "Aprobado", rechazado: "Rechazado", vencido: "Vencido", pendiente: "Pendiente" };
+    const statusChips  = { cargado: "warning", aprobado: "success", rechazado: "danger", vencido: "warning", pendiente: "neutral" };
+    const statusLabel  = statusLabels[docStatus] || "Cargado";
+    const statusChip   = statusChips[docStatus]  || "warning";
+    const iconClass    = uploaded ? (docStatus === "rechazado" ? "danger" : "success") : (req.required ? "danger" : "neutral");
+    const iconChar     = uploaded ? (docStatus === "rechazado" ? "✗" : "✓") : "—";
+
+    let approvalActions = "";
+    if (found) {
+      const viewBtn = `<button type="button" class="btn btn-secondary btn-row" data-document-action="view" data-document-id="${escapeAttr(found.id)}" data-document-name="${escapeAttr(req.name || '')}">Ver</button>`;
+      if (docStatus === "cargado") {
+        approvalActions = `${viewBtn}
+          <button type="button" class="btn btn-success btn-row" data-document-action="validate" data-document-id="${escapeAttr(found.id)}">✅ Validar</button>
+          <button type="button" class="btn btn-danger btn-row" data-document-action="reject" data-document-id="${escapeAttr(found.id)}">❌ Rechazar</button>`;
+      } else {
+        approvalActions = viewBtn;
+      }
+    }
+
+    const docItemAttrs = found
+      ? `class="document-check-row document-item" data-doc-id="${escapeAttr(found.id)}"`
+      : `class="document-check-row"`;
+
     return `
-      <div class="document-check-row">
+      <div ${docItemAttrs}>
         <div class="document-check-name">
-          <span class="document-check-icon ${uploaded ? "success" : (req.required ? "danger" : "neutral")}">${uploaded ? "✓" : "—"}</span>
+          <span class="document-check-icon ${iconClass}">${iconChar}</span>
           <div>
             <strong>${escapeHtml(req.name)}</strong>
             <small>${escapeHtml(req.group || "GENERAL")}</small>
@@ -5594,37 +5711,14 @@ function renderStableEmployeeDocuments(employee, documents, requiredDocuments) {
         </div>
         <div class="document-check-date-cell">${req.issueDateRequired ? `<strong>${escapeHtml(found?.uploaded_at || found?.uploadedAt || "Pendiente")}</strong>` : `<span class="doc-na">No aplica</span>`}</div>
         <div class="document-check-date-cell">${req.expirationDateRequired ? `<strong>${escapeHtml(found?.expirationDate || "Pendiente")}</strong>` : `<span class="doc-na">No aplica</span>`}</div>
-        <div class="document-check-status"><span class="status-chip ${uploaded ? "success" : "warning"}">${uploaded ? "Cargado" : "Pendiente"}</span></div>
-        <div class="document-check-actions">${found ? `<button type="button" class="btn btn-secondary btn-row" data-document-action="view" data-document-id="${escapeAttr(found.id)}">Ver</button>` : ""}</div>
+        <div class="document-check-status"><span class="status-chip ${statusChip}">${statusLabel}</span></div>
+        <div class="document-check-actions">${approvalActions}</div>
       </div>
     `;
   }).join("");
 
-  const loadedHtml = documents.length
-    ? documents.map((doc) => {
-        const docTypeKey = doc.document_type_key || doc.docTypeCode || "";
-        return `
-          <article class="document-loaded-card">
-            <div class="document-loaded-main">
-              <div>
-                <strong>${escapeHtml(doc.document_type_name || doc.docTypeName || doc.documentType || "Documento")}</strong>
-                <p>${escapeHtml(doc.original_filename || doc.originalFileName || doc.stored_filename || doc.storedFileName || "Archivo")}</p>
-              </div>
-              <span class="status-chip success">Cargado</span>
-            </div>
-            <div class="document-loaded-actions">
-              <button type="button" class="btn btn-secondary btn-row" data-document-action="view" data-document-id="${escapeAttr(doc.id)}">Ver</button>
-              <button type="button" class="btn btn-secondary btn-row" data-document-action="download" data-document-id="${escapeAttr(doc.id)}">Descargar</button>
-              <button type="button" class="btn btn-primary btn-row" data-document-action="replace" data-document-id="${escapeAttr(doc.id)}" data-document-type-key="${escapeAttr(docTypeKey)}">Reemplazar</button>
-              <button type="button" class="btn btn-danger btn-row" data-document-action="delete" data-document-id="${escapeAttr(doc.id)}">Eliminar</button>
-            </div>
-          </article>
-        `;
-      }).join("")
-    : `<div class="documents-loaded-empty">No hay documentos cargados para este empleado.</div>`;
-
   return `
-    <div class="documents-workspace" data-employee-id="${escapeAttr(employee.id)}">
+    <div class="documents-workspace" id="documents-panel" data-employee-id="${escapeAttr(employee.id)}">
       <article class="documents-audit-panel">
         <section class="documents-audit-hero">
           <div>
@@ -5651,16 +5745,6 @@ function renderStableEmployeeDocuments(employee, documents, requiredDocuments) {
             <input type="file" id="employeeDocumentFileInput" accept="application/pdf,.pdf" style="display:none" />
             <button type="button" id="employeeDocumentUploadButton" class="btn btn-primary btn-upload-document">Cargar documento</button>
           </div>
-        </section>
-
-        <section class="documents-loaded-card">
-          <div class="documents-loaded-head">
-            <div>
-              <h3>Documentos cargados</h3>
-              <p>Solo activos: no eliminados y no reemplazados.</p>
-            </div>
-          </div>
-          <div class="documents-loaded-grid">${loadedHtml}</div>
         </section>
 
         <section class="documents-checklist-card">
@@ -5692,14 +5776,18 @@ function bindEmployeeDocumentHandlers() {
       const docId = actionButton.dataset.documentId;
       const typeKey = actionButton.dataset.documentTypeKey || "";
 
-      if (action === "view" || action === "download") {
+      if (action === "view") {
+        const docName = actionButton.dataset.documentName || "Documento";
+        await openDocViewer(docId, docName);
+        return;
+      }
+      if (action === "download") {
         try {
           const vtRes = await apiFetch(`/documents/${encodeURIComponent(docId)}/view-token`, { method: "POST" });
           if (!vtRes?.token) throw new Error("Sin token");
-          const suffix = action === "download" ? "download" : "view";
-          window.open(`/documents/${encodeURIComponent(docId)}/${suffix}?vt=${encodeURIComponent(vtRes.token)}`, "_blank", "noopener");
+          window.open(`/documents/${encodeURIComponent(docId)}/download?vt=${encodeURIComponent(vtRes.token)}`, "_blank", "noopener");
         } catch {
-          alert("No se pudo abrir el documento. Intenta de nuevo.");
+          alert("No se pudo descargar el documento. Intenta de nuevo.");
         }
         return;
       }
@@ -5711,11 +5799,34 @@ function bindEmployeeDocumentHandlers() {
         document.getElementById("employeeDocumentFileInput")?.click();
         return;
       }
+      if (action === "validate") {
+        if (!confirm("¿Validar este documento?")) return;
+        try {
+          await apiFetch(`/documents/${encodeURIComponent(docId)}/status`, { method: "PATCH", body: JSON.stringify({ status: "aprobado" }) });
+          state.personnelEmployeeDocumentsCache?.delete?.(String(EMPLOYEE_DOCUMENT_UI_STATE.employeeId || ""));
+          await openModule(state.activeModule || "gestion_personal");
+        } catch {
+          alert("No se pudo validar el documento. Intenta de nuevo.");
+        }
+        return;
+      }
+      if (action === "reject") {
+        const reason = prompt("Motivo del rechazo (opcional):");
+        if (reason === null) return;
+        try {
+          await apiFetch(`/documents/${encodeURIComponent(docId)}/status`, { method: "PATCH", body: JSON.stringify({ status: "rechazado", reviewNotes: reason || null }) });
+          state.personnelEmployeeDocumentsCache?.delete?.(String(EMPLOYEE_DOCUMENT_UI_STATE.employeeId || ""));
+          await openModule(state.activeModule || "gestion_personal");
+        } catch {
+          alert("No se pudo rechazar el documento. Intenta de nuevo.");
+        }
+        return;
+      }
       if (action === "delete") {
         if (!confirm("¿Eliminar este documento? Esta acción no se puede deshacer.")) return;
         await apiFetch(`/documents/${encodeURIComponent(docId)}`, { method: "DELETE" });
         state.personnelEmployeeDocumentsCache?.delete?.(String(EMPLOYEE_DOCUMENT_UI_STATE.employeeId || ""));
-        await openModule("gestion_personal");
+        await openModule(state.activeModule || "gestion_personal");
       }
       return;
     }
@@ -5741,7 +5852,7 @@ function bindEmployeeDocumentHandlers() {
       state.personnelViewMode = "table";
       state.personnelSelectedId = "__none__";
       state.personnelDocumentsEmployee = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     }
   });
 
@@ -5781,7 +5892,7 @@ function bindEmployeeDocumentHandlers() {
       EMPLOYEE_DOCUMENT_UI_STATE.replaceDocumentTypeKey = "";
       fileInput.value = "";
       showSuccess(response.message || "Documento cargado correctamente.");
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     } catch (error) {
       showError(error.message || "No se pudo guardar el documento.");
     } finally {
@@ -5916,7 +6027,7 @@ export function renderPersonnelCvModule() {
     document.getElementById("btnBackFromCv")?.addEventListener("click", async () => {
       state.personnelViewMode   = "table";
       state.personnelSelectedId = "__none__";
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     });
     document.getElementById("btnPrintCv")?.addEventListener("click", () => {
       printHtml(document.getElementById("cvPrintArea"), "Hoja de Vida");
@@ -6729,7 +6840,7 @@ function openSafeImportPersonnelModal() {
       const failed   = res.summary?.failedOnCommit || 0;
       const msg = `${imported} empleados creados, ${updated} actualizados, ${skipped} sin cambios${failed ? `, ${failed} con errores` : ""}.`;
       showSuccess(msg);
-      if (imported > 0 || updated > 0) setTimeout(() => { close(); openModule("gestion_personal"); }, 1200);
+      if (imported > 0 || updated > 0) setTimeout(() => { close(); openModule(state.activeModule || "gestion_personal"); }, 1200);
     } catch (err) {
       showError(err.message);
     }
@@ -7025,7 +7136,7 @@ function openBulkUpdatePersonnelModal() {
       if (resultEl) resultEl.textContent = `${data.appliedRows || 0} expedientes actualizados. ${data.errorRows || 0} filas con error.`;
       setTimeout(async () => {
         close();
-        await openModule("gestion_personal");
+        await openModule(state.activeModule || "gestion_personal");
       }, 1200);
     } catch (error) {
       if (resultEl) resultEl.innerHTML = `<span style="color:#dc2626">${escapeHtml(error.message || "No fue posible aplicar la actualización.")}</span>`;
@@ -7169,7 +7280,7 @@ function openImportPersonnelModal() {
           };
         }
         showSuccess(`Importación: ${created} creados, ${skipped} duplicados rechazados`);
-        if (created > 0) setTimeout(() => { close(); openModule("gestion_personal"); }, 2500);
+        if (created > 0) setTimeout(() => { close(); openModule(state.activeModule || "gestion_personal"); }, 2500);
       } catch (err) {
         if (resultEl) resultEl.innerHTML = `<span style="color:#dc2626">✖ ${escapeHtml(err.message)}</span>`;
       }
@@ -7267,7 +7378,7 @@ function openDeleteEmployeeModal(employeeId, employeeName) {
       }
       // Refrescar tabla
       state.personnelSelectedId = null;
-      await openModule("gestion_personal");
+      await openModule(state.activeModule || "gestion_personal");
     } catch (err) {
       const msg = err.message || "Error al procesar la solicitud.";
       errorEl.textContent = msg.includes("401") || msg.toLowerCase().includes("incorrecta")

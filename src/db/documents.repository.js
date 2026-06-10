@@ -618,8 +618,9 @@ async function getActiveDocumentsByEmployee(employeeId, companyId) {
     `${baseSelect}
      WHERE ed.employee_id = $1
        AND e.company_id = $2
-       AND COALESCE(ed.deleted_at, NULL) IS NULL
+       AND ed.deleted_at IS NULL
        AND COALESCE(ed.replaced_by_document_id, 0) = 0
+       AND UPPER(TRIM(COALESCE(ed.status, ''))) NOT IN ('DELETED')
      ORDER BY ${versionExpr} DESC, ed.uploaded_at DESC NULLS LAST, ed.id DESC`,
     [pgId, companyId]
   );

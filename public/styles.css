@@ -1710,7 +1710,8 @@ tr:hover {
   display: flex !important;
   flex-direction: column !important;
   height: calc(100vh - 110px) !important;
-  overflow: hidden !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
 .personnel-form-card {
@@ -1723,7 +1724,7 @@ tr:hover {
   max-width: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .employee-form-title-block {
@@ -12383,7 +12384,17 @@ body.sidebar-collapsed .sb-user-info { justify-content: center; padding: 10px; }
   overflow: visible;
 }
 
-.workspace,
+/* .workspace es el contenedor scrollable principal — NO puede tener overflow:visible */
+.workspace {
+  width: 100%;
+  min-width: 0;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  /* overflow-y:auto heredado de la regla .workspace,#workspace anterior — no se sobreescribe */
+}
+
 .workspace-panel,
 .submodule-content {
   width: 100%;
@@ -26503,10 +26514,12 @@ button.dashboard-kpi-card:disabled {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .personnel-expediente-scroll {
-  height: 100%;
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   display: grid;
@@ -26958,6 +26971,65 @@ button.dashboard-kpi-card:disabled {
   background:
     radial-gradient(circle at top right, rgba(11, 124, 255, 0.06), transparent 28%),
     #ffffff;
+}
+
+/* ── Desprendibles de nómina en expediente de personal ── */
+.personnel-expediente-section-slips {
+  background: radial-gradient(circle at top right, rgba(22, 163, 74, 0.05), transparent 28%), #ffffff;
+}
+
+.personnel-payroll-slips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.personnel-payroll-slip-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.personnel-payroll-slip-info {
+  flex: 1 1 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.personnel-payroll-slip-info strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.personnel-payroll-slip-info span {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.personnel-payroll-slip-amount {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: right;
+}
+
+.personnel-payroll-slip-amount span {
+  font-size: 10px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.personnel-payroll-slip-amount strong {
+  font-size: 14px;
+  color: #16a34a;
+  font-weight: 700;
 }
 
 @media (max-width: 1280px) {
@@ -27522,3 +27594,1357 @@ button.dashboard-kpi-card:disabled {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════
+   btn-success — green action button
+══════════════════════════════════════════════════════════════ */
+.btn-success {
+  background: #16a34a;
+  color: #fff;
+  border: 1px solid #16a34a;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-success:hover { background: #15803d; }
+.btn-success.btn-row {
+  background: #16a34a !important;
+  color: #fff !important;
+  border: 1px solid #16a34a !important;
+}
+.btn-success.btn-row:hover { background: #15803d !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   Repositorio HV — biblioteca documental (book design)
+══════════════════════════════════════════════════════════════ */
+
+/* Book item */
+.rhv-book-item {
+  display: flex;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  transition: box-shadow 0.15s, transform 0.12s;
+}
+.rhv-book-item:hover {
+  box-shadow: 0 4px 14px rgba(0,0,0,0.07);
+  transform: translateY(-1px);
+}
+
+/* Colored spine based on hvStatus */
+.rhv-book-spine       { width: 5px; flex-shrink: 0; background: #cbd5e1; }
+.rhv-spine-completa   { background: #16a34a; }
+.rhv-spine-incompleta { background: #94a3b8; }
+.rhv-spine-revision   { background: #2563eb; }
+.rhv-spine-noApto     { background: #dc2626; }
+
+/* Book body */
+.rhv-book-body { flex: 1; min-width: 0; }
+
+/* Clickable cover (header) */
+.rhv-book-cover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  cursor: pointer;
+  user-select: none;
+  background: #f8fafc;
+  transition: background 0.12s;
+  gap: 12px;
+}
+.rhv-book-cover:hover { background: #f1f5f9; }
+
+.rhv-book-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.rhv-book-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #e0e7ef;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #2563eb;
+  flex-shrink: 0;
+}
+.rhv-book-name { font-size: 13px; font-weight: 600; color: #0f172a; display: block; }
+.rhv-book-sub  { font-size: 11px; color: #64748b; display: block; }
+
+.rhv-book-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.rhv-chevron {
+  font-size: 10px;
+  color: #94a3b8;
+  width: 16px;
+  text-align: center;
+}
+
+/* Pages (document table inside book) */
+.rhv-book-pages { border-top: 1px solid #e2e8f0; }
+
+/* Document table */
+.rhv-docs-header,
+.rhv-doc-row {
+  display: grid;
+  grid-template-columns: 1.6fr 1.4fr 0.9fr 0.9fr 0.9fr 1.5fr;
+  align-items: center;
+  gap: 4px;
+}
+.rhv-docs-header {
+  background: #f1f5f9;
+  border-bottom: 2px solid #e2e8f0;
+}
+.rhv-docs-header > div {
+  padding: 9px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rhv-doc-row { border-bottom: 1px solid #f1f5f9; }
+.rhv-doc-row:last-child { border-bottom: none; }
+.rhv-doc-row > div { padding: 8px 12px; }
+.rhv-doc-row:hover { background: #f8fbff; }
+
+/* Search field */
+#rhvSearch {
+  flex: 1;
+  min-width: 220px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  outline: none;
+  background: #fff;
+}
+#rhvSearch:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.1);
+}
+
+/* Cargar más */
+.rhv-load-more-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GESTIÓN DE PERSONAL — Premium Visual Enhancement
+══════════════════════════════════════════════════════════════ */
+
+/* ── Micro-animaciones globales ──────────────────────────────── */
+@keyframes personnel-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes status-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.45); }
+  55%       { box-shadow: 0 0 0 5px rgba(22,163,74,0); }
+}
+@keyframes personnel-slide-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Fade-in del expediente al abrirse ──────────────────────── */
+.personnel-expediente-shell {
+  animation: personnel-fade-in 0.26s ease-out both;
+}
+
+/* ── Panel izquierdo: hover e item seleccionado ─────────────── */
+.personnel-dossier-list-scroll {
+  background: #f7f9fc !important;
+}
+
+.personnel-dossier-list-item {
+  border-radius: 14px !important;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.14s ease !important;
+}
+.personnel-dossier-list-item:hover {
+  border-color: #bfdbfe !important;
+  background: #f0f7ff !important;
+  box-shadow: 0 6px 18px rgba(37,99,235,0.08) !important;
+  transform: translateX(2px);
+}
+.personnel-dossier-list-item.selected {
+  border-color: #93c5fd !important;
+  background: linear-gradient(135deg, #eff6ff 0%, #f0f7ff 100%) !important;
+  box-shadow: 0 8px 22px rgba(37,99,235,0.13) !important;
+  transform: translateX(2px);
+  animation: personnel-slide-in 0.2s ease-out both;
+}
+.personnel-dossier-list-item.selected::before {
+  background: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%) !important;
+  width: 4px !important;
+}
+.personnel-dossier-list-copy strong {
+  font-weight: 700 !important;
+}
+
+/* ── Punto de estado: más visible con pulse para activos ─────── */
+.personnel-dossier-list-dot {
+  width: 9px !important;
+  height: 9px !important;
+  margin-top: 5px !important;
+  border: 1.5px solid rgba(255,255,255,0.7);
+}
+.personnel-dossier-list-dot.tone-success {
+  animation: status-dot-pulse 2.4s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(22,163,74,0.45);
+}
+
+/* ── Foto del empleado: circular con anillo de estado ────────── */
+.employee-dossier-header-premium .personnel-expediente-photo {
+  border-radius: 50% !important;
+  border: 2px solid rgba(255,255,255,0.22) !important;
+  width: 100px !important;
+  height: 100px !important;
+}
+.employee-dossier-header-premium .personnel-expediente-photo.ring-success {
+  box-shadow:
+    0 0 0 3px #16a34a,
+    0 0 0 6px rgba(22,163,74,0.28),
+    0 16px 30px rgba(15,23,42,0.22) !important;
+}
+.employee-dossier-header-premium .personnel-expediente-photo.ring-danger {
+  box-shadow:
+    0 0 0 3px #dc2626,
+    0 0 0 6px rgba(220,38,38,0.28),
+    0 16px 30px rgba(15,23,42,0.22) !important;
+}
+.employee-dossier-header-premium .personnel-expediente-photo.ring-warning {
+  box-shadow:
+    0 0 0 3px #d97706,
+    0 0 0 6px rgba(217,119,6,0.25),
+    0 16px 30px rgba(15,23,42,0.22) !important;
+}
+.employee-dossier-header-premium .personnel-expediente-photo.ring-neutral {
+  box-shadow:
+    0 0 0 3px #94a3b8,
+    0 0 0 6px rgba(148,163,184,0.22),
+    0 16px 30px rgba(15,23,42,0.22) !important;
+}
+/* Asegurar que la foto de imagen ocupe el 100% del contenedor circular */
+.employee-dossier-header-premium .personnel-expediente-photo img,
+.employee-dossier-header-premium .personnel-expediente-photo .cv-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.employee-dossier-header-premium .personnel-expediente-photo .cv-photo-initials {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Tabs: pill elegante con animación spring ────────────────── */
+.personnel-expediente-tabs {
+  gap: 7px !important;
+  padding: 12px 18px 14px !important;
+  background: transparent !important;
+}
+.personnel-expediente-tab {
+  border-radius: 999px !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em;
+  border: 1.5px solid #dbe4ef !important;
+  transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  background: #f8fbff !important;
+  color: #475569 !important;
+  margin-left: 0 !important;
+}
+.personnel-expediente-tab:hover {
+  border-color: #93c5fd !important;
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 14px rgba(37,99,235,0.12) !important;
+}
+.personnel-expediente-tab.active {
+  background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: 0 6px 20px rgba(37,99,235,0.36) !important;
+  transform: translateY(-2px);
+}
+
+/* ── Botones de acción del expediente ────────────────────────── */
+.personnel-expediente-icon-btn {
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+.personnel-expediente-icon-btn:hover {
+  transform: translateY(-2px) scale(1.06) !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+  color: #1d4ed8 !important;
+  box-shadow: 0 6px 16px rgba(37,99,235,0.15) !important;
+}
+
+/* ── Métricas del checklist: colores de acento por tipo ──────── */
+/* Cargados → azul (tone-info) */
+.personnel-expediente-field.tone-info {
+  background: linear-gradient(160deg, #eff6ff 0%, #dbeafe 100%);
+  border-color: #93c5fd;
+}
+.personnel-expediente-field.tone-info span { color: #1d4ed8 !important; }
+.personnel-expediente-field.tone-info strong { color: #1e3a8a !important; }
+
+/* Por vencer → naranja (tone-caution) */
+.personnel-expediente-field.tone-caution {
+  background: linear-gradient(160deg, #fff7ed 0%, #ffedd5 100%);
+  border-color: #fb923c;
+}
+.personnel-expediente-field.tone-caution span { color: #c2410c !important; }
+.personnel-expediente-field.tone-caution strong { color: #9a3412 !important; }
+
+/* Pendientes → ámbar más cálido */
+.personnel-expediente-field.tone-warning {
+  background: linear-gradient(160deg, #fffbeb 0%, #fef3c7 100%) !important;
+  border-color: #fbbf24 !important;
+}
+.personnel-expediente-field.tone-warning span { color: #b45309 !important; }
+.personnel-expediente-field.tone-warning strong { color: #78350f !important; }
+
+/* Vencidos/rechazados → rojo más intenso */
+.personnel-expediente-field.tone-danger {
+  background: linear-gradient(160deg, #fef2f2 0%, #fee2e2 100%) !important;
+  border-color: #f87171 !important;
+}
+.personnel-expediente-field.tone-danger span { color: #b91c1c !important; }
+.personnel-expediente-field.tone-danger strong { color: #7f1d1d !important; }
+
+/* ── Donut chart de completitud ──────────────────────────────── */
+.personnel-doc-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.personnel-doc-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.personnel-doc-donut-legend strong {
+  font-size: 1.8rem !important;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #0f172a;
+  line-height: 1;
+}
+.personnel-doc-donut-legend span {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* ── Botón "Gestionar documentos" — prominente ───────────────── */
+.btn-gestionar-docs {
+  background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%);
+  color: #fff !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  padding: 10px 22px !important;
+  font-size: 0.85rem !important;
+  font-weight: 700 !important;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  box-shadow: 0 4px 14px rgba(37,99,235,0.30) !important;
+}
+.btn-gestionar-docs:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 22px rgba(37,99,235,0.40) !important;
+  background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%) !important;
+}
+
+/* ── Animación de hover en todos los botones ─────────────────── */
+.btn {
+  transition: transform 0.16s ease, box-shadow 0.16s ease !important;
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   EVALUACIÓN DE DESEMPEÑO — TALENTO HUMANO (eth-)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Módulo wrapper ─────────────────────────────────────────────────────────── */
+.eth-module {
+  min-height: 100%;
+  background: #f5f6fa;
+  padding: 24px 20px 48px;
+}
+
+/* ── Header del dashboard ───────────────────────────────────────────────────── */
+.eth-top-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.eth-main-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 4px;
+  letter-spacing: -0.02em;
+}
+.eth-main-sub {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0;
+}
+
+/* ── Grid de 3 cards ────────────────────────────────────────────────────────── */
+.eth-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-bottom: 28px;
+}
+@media (max-width: 1100px) { .eth-cards-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 680px)  { .eth-cards-grid { grid-template-columns: 1fr; } }
+
+/* ── Card de coordinador ────────────────────────────────────────────────────── */
+.eth-coord-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.06);
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow 0.18s ease, transform 0.15s ease;
+  overflow: hidden;
+}
+.eth-coord-card:hover {
+  box-shadow: 0 8px 32px rgba(15,23,42,0.13);
+  transform: translateY(-3px);
+}
+
+/* ── Cabecera de la card ────────────────────────────────────────────────────── */
+.eth-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.eth-card-meta {
+  flex: 1;
+  min-width: 0;
+}
+.eth-coord-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Avatar circular ────────────────────────────────────────────────────────── */
+.eth-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: -0.02em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+.eth-avatar-lg {
+  width: 60px;
+  height: 60px;
+  font-size: 22px;
+}
+.eth-avatar-pod {
+  width: 54px;
+  height: 54px;
+  font-size: 18px;
+  margin: 0 auto 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.20);
+}
+
+/* ── Chips de municipios ────────────────────────────────────────────────────── */
+.eth-mun-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.eth-mun-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.eth-mun-empty {
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+/* ── Badge de score ─────────────────────────────────────────────────────────── */
+.eth-score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-width: 60px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.eth-score-success { background: linear-gradient(135deg,#16a34a,#22c55e); color:#fff; }
+.eth-score-warning { background: linear-gradient(135deg,#b45309,#f59e0b); color:#fff; }
+.eth-score-danger  { background: linear-gradient(135deg,#b91c1c,#ef4444); color:#fff; }
+.eth-score-num {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.eth-score-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 3px;
+  opacity: 0.9;
+}
+.eth-score-lg .eth-score-num { font-size: 2rem; }
+.eth-score-lg { padding: 12px 18px; border-radius: 14px; min-width: 76px; }
+
+/* ── KPI rows ───────────────────────────────────────────────────────────────── */
+.eth-kpis {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 12px 18px;
+  flex: 1;
+}
+.eth-kpi-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f8fafc;
+}
+.eth-kpi-row:last-child { border-bottom: none; }
+.eth-kpi-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  line-height: 1;
+}
+.eth-kpi-body {
+  flex: 1;
+  min-width: 0;
+}
+.eth-kpi-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.eth-kpi-label {
+  font-size: 12px;
+  color: #475569;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.eth-kpi-nums {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.eth-kpi-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.eth-kpi-denom {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+.eth-kpi-pct {
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+/* ── Barra de progreso con gradiente ────────────────────────────────────────── */
+.eth-prog-track {
+  height: 7px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+  margin-top: 5px;
+}
+.eth-prog-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.55s cubic-bezier(0.4,0,0.2,1);
+}
+.eth-prog-sm {
+  height: 5px;
+  flex: 1;
+  margin-top: 0;
+}
+
+/* ── Footer de la card ──────────────────────────────────────────────────────── */
+.eth-card-foot {
+  padding: 12px 18px 14px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid #f1f5f9;
+  margin-top: auto;
+}
+.eth-btn-detalle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: linear-gradient(135deg,#eff6ff,#dbeafe);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
+  outline: none;
+}
+.eth-btn-detalle:hover {
+  background: linear-gradient(135deg,#dbeafe,#bfdbfe);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(29,78,216,0.18);
+}
+
+/* ── Ranking / Podio ─────────────────────────────────────────────────────────── */
+.eth-ranking-wrap {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.06);
+  padding: 24px 20px 0;
+}
+.eth-ranking-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 20px;
+  text-align: center;
+}
+.eth-podium {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 12px;
+}
+.eth-podium-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 150px;
+}
+.eth-podium-best {
+  font-size: 10px;
+  font-weight: 700;
+  color: #b45309;
+  background: linear-gradient(135deg,#fef3c7,#fde68a);
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+}
+.eth-podium-medal {
+  font-size: 26px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.eth-podium-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  text-align: center;
+  margin-bottom: 4px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eth-podium-score {
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 10px;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+.eth-podium-score.eth-score-success { background:rgba(22,163,74,0.13); color:#15803d; }
+.eth-podium-score.eth-score-warning { background:rgba(180,83,9,0.11);  color:#b45309; }
+.eth-podium-score.eth-score-danger  { background:rgba(185,28,28,0.11); color:#b91c1c; }
+.eth-podium-block {
+  width: 100%;
+  border-radius: 10px 10px 0 0;
+  border: 1px solid rgba(0,0,0,0.06);
+  border-bottom: none;
+}
+
+/* ── Vista de detalle (animación fade-in) ────────────────────────────────────── */
+.eth-detalle-view {
+  animation: eth-fade-in 0.22s ease-out both;
+}
+@keyframes eth-fade-in {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0);   }
+}
+.eth-btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  margin-bottom: 20px;
+  transition: background 0.12s, transform 0.12s;
+  outline: none;
+}
+.eth-btn-back:hover {
+  background: #f1f5f9;
+  transform: translateX(-2px);
+}
+.eth-detalle-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.06);
+  padding: 20px 22px;
+  margin-bottom: 20px;
+}
+.eth-detalle-head-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Tabla de municipios ─────────────────────────────────────────────────────── */
+.eth-table-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.06);
+  padding: 20px 20px 4px;
+}
+.eth-table-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 14px;
+}
+.eth-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+.eth-mun-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.eth-mun-table thead tr {
+  background: #f8fafc;
+}
+.eth-mun-table th {
+  padding: 10px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+.eth-mun-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.eth-table-row:last-child td { border-bottom: none; }
+.eth-table-row:hover td { background: #f8fafc; }
+.eth-td-center { text-align: center; }
+.eth-th-center { text-align: center; }
+.eth-td-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: #64748b;
+  font-style: italic;
+}
+.eth-table-mun {
+  font-weight: 600;
+  color: #0f172a;
+}
+.eth-table-pct-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+
+/* ── Estados vacíos / error ──────────────────────────────────────────────────── */
+.eth-error-card {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 28px 24px;
+  color: #dc2626;
+  font-size: 14px;
+  text-align: center;
+  max-width: 480px;
+  margin: 32px auto;
+}
+.eth-empty-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  padding: 48px 32px;
+  text-align: center;
+  color: #64748b;
+  max-width: 440px;
+  margin: 32px auto;
+}
+.eth-empty-icon { font-size: 40px; margin: 0 0 12px; }
+.eth-empty-card h3 { margin: 0 0 8px; color: #0f172a; font-size: 18px; }
+.eth-empty-card p  { margin: 0; font-size: 14px; }
+
+/* ── Breadcrumb ──────────────────────────────────────────────────────────────── */
+.eth-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.eth-bc-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+  transition: color 0.12s;
+}
+.eth-bc-link:hover { color: #1d4ed8; text-decoration: underline; }
+.eth-bc-sep { color: #94a3b8; font-size: 14px; }
+.eth-bc-current { color: #475569; font-weight: 600; }
+
+/* ── Vista coordinador (nivel 2) ─────────────────────────────────────────────── */
+.eth-coord-view {
+  animation: eth-fade-in 0.22s ease-out both;
+  padding-bottom: 40px;
+}
+.eth-mun-view {
+  animation: eth-fade-in 0.22s ease-out both;
+  padding-bottom: 40px;
+}
+
+/* Filas de municipios clickables */
+.eth-mun-table-nav .eth-mun-row {
+  cursor: pointer;
+  transition: background 0.12s, transform 0.08s;
+}
+.eth-mun-table-nav .eth-mun-row:hover td {
+  background: #eff6ff;
+}
+.eth-mun-table-nav .eth-mun-row:active td {
+  background: #dbeafe;
+}
+.eth-mun-row-hint {
+  display: none;
+  font-size: 10px;
+  color: #2563eb;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.eth-mun-table-nav .eth-mun-row:hover .eth-mun-row-hint {
+  display: inline;
+}
+
+/* Badges de faltantes */
+.eth-faltantes-neg {
+  font-size: 13px;
+  font-weight: 800;
+  color: #dc2626;
+  background: #fee2e2;
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+.eth-faltantes-ok {
+  font-size: 13px;
+  font-weight: 700;
+  color: #16a34a;
+}
+
+/* Resumen de stats (nivel 2 y 3) */
+.eth-coord-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+@media (max-width: 680px) { .eth-coord-summary { grid-template-columns: repeat(2, 1fr); } }
+.eth-summary-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  text-align: center;
+  gap: 4px;
+}
+.eth-summary-stat strong {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: inherit;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.eth-summary-stat span {
+  font-size: 10px;
+  color: #64748b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Pista sobre la tabla */
+.eth-table-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #64748b;
+  margin-left: 8px;
+}
+
+/* ── Vista municipio (nivel 3) ───────────────────────────────────────────────── */
+
+/* Ícono de municipio */
+.eth-mun-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* Métricas del municipio en el header */
+.eth-mun-metrics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+.eth-mun-metric-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  min-width: 64px;
+}
+.eth-mun-metric-item strong {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: inherit;
+  line-height: 1;
+}
+.eth-mun-metric-item span {
+  font-size: 10px;
+  color: #64748b;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+/* ── Buscador y botón exportar ───────────────────────────────────────────────── */
+.eth-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.eth-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0 12px;
+  flex: 1;
+  min-width: 200px;
+  box-shadow: 0 1px 4px rgba(15,23,42,0.05);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.eth-search-wrap:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+.eth-search-icon { font-size: 14px; opacity: 0.5; flex-shrink: 0; }
+.eth-search-input {
+  border: none;
+  outline: none;
+  background: none;
+  font-size: 13px;
+  color: #0f172a;
+  padding: 10px 0;
+  flex: 1;
+  min-width: 0;
+}
+.eth-search-input::placeholder { color: #94a3b8; }
+.eth-export-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #16a34a;
+  background: linear-gradient(135deg,#f0fdf4,#dcfce7);
+  border: 1px solid #86efac;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, transform 0.12s, box-shadow 0.14s;
+  outline: none;
+  flex-shrink: 0;
+}
+.eth-export-btn:hover {
+  background: linear-gradient(135deg,#dcfce7,#bbf7d0);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(22,163,74,0.18);
+}
+.eth-xlsx-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: linear-gradient(135deg,#eff6ff,#dbeafe);
+  border: 1px solid #93c5fd;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, transform 0.12s, box-shadow 0.14s;
+  outline: none;
+  flex-shrink: 0;
+}
+.eth-xlsx-btn:hover {
+  background: linear-gradient(135deg,#dbeafe,#bfdbfe);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(29,78,216,0.18);
+}
+.eth-xlsx-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+}
+.eth-xlsx-btn-all {
+  color: #6d28d9;
+  background: linear-gradient(135deg,#f5f3ff,#ede9fe);
+  border-color: #c4b5fd;
+}
+.eth-xlsx-btn-all:hover {
+  background: linear-gradient(135deg,#ede9fe,#ddd6fe);
+  box-shadow: 0 4px 12px rgba(109,40,217,0.18);
+}
+
+/* ── Lista de empleados ──────────────────────────────────────────────────────── */
+.eth-emp-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 12px rgba(15,23,42,0.06);
+  padding: 18px 20px 6px;
+}
+.eth-emp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 8px;
+}
+.eth-emp-row {
+  padding: 12px 2px;
+  border-bottom: 1px solid #f1f5f9;
+  transition: background 0.1s;
+}
+.eth-emp-row:last-child { border-bottom: none; }
+.eth-emp-row.eth-emp-ok { opacity: 0.72; }
+.eth-emp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.eth-emp-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.eth-emp-count-neg {
+  font-size: 11px;
+  font-weight: 700;
+  color: #dc2626;
+  background: #fee2e2;
+  border-radius: 999px;
+  padding: 2px 10px;
+  flex-shrink: 0;
+}
+.eth-emp-count-ok {
+  font-size: 11px;
+  font-weight: 700;
+  color: #16a34a;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  padding: 2px 10px;
+  flex-shrink: 0;
+}
+.eth-emp-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.eth-doc-faltante-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #7f1d1d;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.eth-doc-ok-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #15803d;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.eth-empty-row {
+  padding: 32px 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── Loading spinner ─────────────────────────────────────────────────────────── */
+.eth-loading-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px;
+  color: #64748b;
+  font-size: 14px;
+  gap: 14px;
+}
+.eth-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: eth-spin 0.7s linear infinite;
+}
+@keyframes eth-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   VISOR LATERAL DE DOCUMENTOS (doc-viewer drawer)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.doc-viewer-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 45vw;
+  min-width: 380px;
+  height: 100vh;
+  background: #ffffff;
+  box-shadow: -4px 0 32px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  z-index: 1100;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.doc-viewer-drawer.open {
+  transform: translateX(0);
+}
+
+.doc-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.36);
+  z-index: 1099;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s;
+}
+
+.doc-viewer-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.doc-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  background: #1e293b;
+  color: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.doc-viewer-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-viewer-close {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #f1f5f9;
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.doc-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.doc-viewer-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.doc-viewer-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: #64748b;
+  font-size: 13px;
+  background: #f8fafc;
+  z-index: 1;
+}
+
+.doc-viewer-loading.hidden {
+  display: none;
+}
+
+.doc-viewer-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: doc-viewer-spin 0.8s linear infinite;
+}
+
+@keyframes doc-viewer-spin {
+  to { transform: rotate(360deg); }
+}
+
+.doc-viewer-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   PANEL DE DOCUMENTOS — se reduce al abrir el visor lateral
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+#documents-panel {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  width: 100%;
+  overflow-x: hidden;
+}
+
+#documents-panel.drawer-open {
+  width: 55%;
+}
+
+/* Documento activo resaltado en la lista */
+.document-item.active {
+  border-left: 3px solid #3b6bda !important;
+  background: rgba(59, 107, 218, 0.07) !important;
+  border-radius: 0 8px 8px 0 !important;
+}

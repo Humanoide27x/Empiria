@@ -87,10 +87,17 @@ let municipalitySearch = "";
 let activeDetailTab  = "nomina"; // "nomina" | "novedades" | "turnos" | "soportes"
 
 // ── Soportes tab state ────────────────────────────────────────────────────────
-let activePrimaryTab = "nomina"; // "nomina" | "soportes"
+let activePrimaryTab = "nomina"; // "nomina" | "soportes" | "correcciones"
 let supportsData     = [];
 let supportsFilters  = { municipalityId: "", status: "", noveltyType: "", employee: "" };
 let viewerSupportId  = null;
+
+// ── Correcciones tab state ────────────────────────────────────────────────────
+let correctionsData     = [];
+let correctionsSummary  = { pendientes: 0, en_revision: 0, aplicadas: 0, rechazadas: 0, diferencia_total: 0 };
+let correctionsFilters  = { estado: "", periodo: "", search: "" };
+let correctionFormOpen  = false;
+let correctionEditId    = null; // ID de la corrección con textarea de obs abierto
 
 // ── Filtro de novedades (pestaña Novedades del grupo) ────────────────────────
 let noveltiesFilter    = { type: "", reviewed: "", withSupport: "", search: "" };
@@ -842,6 +849,57 @@ function shell() {
 .nm-sup-inline-doc:last-child{border-bottom:0}
 .nm-sup-inline-doc-label{font-size:12px;color:#334155;flex:1 1 160px}
 
+/* ── Vista de Correcciones ───────────────────────────────────────── */
+.nm-corr-view{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.nm-corr-summary{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #E2E8F0;background:#fff;flex:0 0 auto}
+.nm-corr-card{padding:10px 14px;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;gap:2px}
+.nm-corr-card:last-child{border-right:0}
+.nm-corr-card-label{font-size:10px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:5px}
+.nm-corr-card-value{font-size:22px;font-weight:800;color:#0F172A;line-height:1}
+.nm-corr-card--pending .nm-corr-card-value{color:#B91C1C}
+.nm-corr-card--review .nm-corr-card-value{color:#D97706}
+.nm-corr-card--applied .nm-corr-card-value{color:#166534}
+.nm-corr-card--diff .nm-corr-card-value{font-size:16px}
+.nm-corr-card--diff-neg .nm-corr-card-value{color:#B91C1C}
+.nm-corr-card--diff-pos .nm-corr-card-value{color:#166534}
+.nm-corr-filters{display:flex;gap:6px;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;flex:0 0 auto;align-items:center}
+.nm-corr-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:10px}
+.nm-corr-table{width:100%;border-collapse:collapse;font-size:12px}
+.nm-corr-table thead th{background:#F8FAFC;padding:6px 8px;border-bottom:2px solid #E2E8F0;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.nm-corr-table tbody td{padding:8px 8px;border-bottom:1px solid #F1F5F9;vertical-align:top}
+.nm-corr-table tbody tr:hover td{background:#F8FAFC}
+/* Estado badges */
+.nm-corr-badge{display:inline-flex;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;white-space:nowrap}
+.nm-corr-badge--pendiente{background:#FEE2E2;color:#991B1B}
+.nm-corr-badge--en_revision{background:#FEF3C7;color:#92400E}
+.nm-corr-badge--aprobada{background:#DBEAFE;color:#1E40AF}
+.nm-corr-badge--aplicada{background:#DCFCE7;color:#166534}
+.nm-corr-badge--rechazada{background:#F1F5F9;color:#64748B}
+/* Impacto badges */
+.nm-corr-impact{display:inline-flex;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap}
+.nm-corr-impact--a_favor_empleado{background:#DCFCE7;color:#166534}
+.nm-corr-impact--a_favor_empresa{background:#FFEDD5;color:#C2410C}
+.nm-corr-impact--sin_impacto{background:#F1F5F9;color:#94A3B8}
+/* Diferencia */
+.nm-corr-diff--neg{color:#B91C1C;font-weight:700}
+.nm-corr-diff--pos{color:#166534;font-weight:700}
+.nm-corr-diff--zero{color:#94A3B8}
+/* Acciones inline */
+.nm-corr-actions{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.nm-corr-obs-area{width:100%;min-height:54px;resize:vertical;border:1px solid #CBD5E1;border-radius:5px;padding:5px 8px;font-size:12px;margin-top:4px}
+.nm-corr-resolve-wrap{display:flex;flex-direction:column;gap:4px;margin-top:6px;padding:8px;background:#ECFDF5;border-radius:6px;border:1px solid #BBF7D0}
+.nm-corr-resolve-wrap label{font-size:11px;font-weight:700;color:#166534}
+.nm-corr-resolve-wrap textarea{width:100%;min-height:48px;resize:vertical;border:1px solid #86EFAC;border-radius:5px;padding:5px 8px;font-size:12px;background:#fff}
+/* Formulario nueva corrección */
+.nm-corr-form-wrap{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:14px;margin-bottom:12px}
+.nm-corr-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.nm-corr-form-field{display:flex;flex-direction:column;gap:3px}
+.nm-corr-form-field label{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.04em}
+.nm-corr-form-field input,.nm-corr-form-field select,.nm-corr-form-field textarea{border:1px solid #CBD5E1;border-radius:5px;padding:5px 8px;font-size:12px;background:#fff;width:100%}
+.nm-corr-form-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
+.nm-corr-form-span2{grid-column:1/-1}
+@media(max-width:840px){.nm-corr-summary{grid-template-columns:repeat(2,1fr)}.nm-corr-form-grid{grid-template-columns:1fr}}
+
 /* Dashboard refresh */
 .nm-pay-card-main{background:linear-gradient(180deg,#f8fbff 0%,#eef4f7 100%);border:0;border-radius:22px;box-shadow:0 18px 44px rgba(15,23,42,.08)}
 .nm-pay-head--dashboard{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;padding:18px 22px 16px;background:linear-gradient(135deg,#0f172a 0%,#12324a 48%,#0f766e 100%);border-bottom:0;height:auto;flex:0 0 auto;overflow:visible}
@@ -1315,10 +1373,11 @@ function renderCargoTabsBar() {
 function render() {
   const root = document.getElementById("nmPayRoot");
   if (!root) return;
+  const pendCount = correctionsSummary.pendientes + correctionsSummary.en_revision;
   root.innerHTML = `
 <div class="nm-pay-card-main">
 
-<!-- ── Encabezado: una sola fila compacta ─────────────────────────── -->
+<!-- ── Encabezado ──────────────────────────────────────────────────── -->
 <div class="nm-pay-head">
   <span class="nm-pay-title">Nómina</span>
   <div class="nm-pay-head-sep"></div>
@@ -1330,14 +1389,21 @@ function render() {
   ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" id="nmPayCreate">+ Periodo</button>` : ""}
 </div>
 
-${renderNominaPanel()}
+<!-- ── Pestañas primarias ───────────────────────────────────────────── -->
+<div class="nm-primary-tabs">
+  <button class="nm-primary-tab ${activePrimaryTab === "nomina" ? "active" : ""}" data-primary-tab="nomina">Nómina</button>
+  <button class="nm-primary-tab ${activePrimaryTab === "correcciones" ? "active" : ""}" data-primary-tab="correcciones">Correcciones${pendCount > 0 ? ` <span class="nm-pay-count">${pendCount}</span>` : ""}</button>
+</div>
+
+${activePrimaryTab === "correcciones" ? renderCorrectionsView() : renderNominaPanel()}
 </div>
 `;
   wireStaticEvents();
+  if (activePrimaryTab === "correcciones") wireCorrectionsEvents();
 }
 
 function renderPrimaryTabs() {
-  return ""; // Primary Soportes tab removed — soportes are managed within the inline group detail
+  return ""; // kept for compat
 }
 
 function renderNominaPanel() {
@@ -2475,7 +2541,354 @@ function openImportNoveltiesModal() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENT WIRING
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// CORRECCIONES DE NÓMINA
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadCorrectionsData() {
+  try {
+    const params = new URLSearchParams();
+    if (correctionsFilters.estado)  params.set("estado",  correctionsFilters.estado);
+    if (correctionsFilters.periodo) params.set("periodId", correctionsFilters.periodo);
+    if (correctionsFilters.search)  params.set("employeeId", correctionsFilters.search);
+    const [list, summary] = await Promise.all([
+      apiFetch(`/payroll/corrections?${params}`),
+      apiFetch("/payroll/corrections/summary"),
+    ]);
+    correctionsData    = Array.isArray(list.data)    ? list.data    : [];
+    correctionsSummary = summary.data || correctionsSummary;
+  } catch {
+    correctionsData = [];
+  }
+}
+
+function fmtCurrency(v) {
+  const n = Number(v || 0);
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+}
+
+function renderCorrectionsView() {
+  const { pendientes, en_revision, aplicadas, diferencia_total } = correctionsSummary;
+  const diffClass = Number(diferencia_total) < 0 ? "diff-neg" : Number(diferencia_total) > 0 ? "diff-pos" : "diff-zero";
+
+  const TIPO_LABELS = { salario:"Salario", descuento:"Descuento", novedad:"Novedad", diferencia_dias:"Días", otro:"Otro" };
+  const IMPACTO_LABELS = { a_favor_empleado:"A favor empleado", a_favor_empresa:"A favor empresa", sin_impacto:"Sin impacto" };
+  const ESTADO_LABELS  = { pendiente:"Pendiente", en_revision:"En revisión", aprobada:"Aprobada", aplicada:"Aplicada", rechazada:"Rechazada" };
+
+  const filteredData = correctionsData.filter((c) => {
+    if (correctionsFilters.search) {
+      const q = correctionsFilters.search.toLowerCase();
+      if (!c.employeeName?.toLowerCase().includes(q) && !c.concepto?.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const rows = filteredData.map((c) => {
+    const diff = Number(c.diferencia || 0);
+    const dClass = diff < 0 ? "neg" : diff > 0 ? "pos" : "zero";
+    const isEditObs = correctionEditId === c.id;
+
+    const actionBtns = (() => {
+      if (c.estado === "pendiente") {
+        return `<button class="nm-pay-btn nm-pay-btn--sm" data-corr-status="${c.id}" data-corr-next="en_revision">Iniciar revisión</button>`;
+      }
+      if (c.estado === "en_revision") {
+        return `
+          <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" data-corr-status="${c.id}" data-corr-next="aprobada">Aprobar</button>
+          <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--danger" data-corr-status="${c.id}" data-corr-next="rechazada">Rechazar</button>`;
+      }
+      if (c.estado === "aprobada") {
+        return `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" data-corr-apply="${c.id}">Marcar como aplicada</button>`;
+      }
+      return "";
+    })();
+
+    const obsSection = isEditObs
+      ? `<textarea class="nm-corr-obs-area" id="corrObsArea_${c.id}" placeholder="Observaciones…">${escapeHtml(c.observaciones || "")}</textarea>
+         <div style="display:flex;gap:4px;margin-top:4px">
+           <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" data-corr-save-obs="${c.id}">Guardar</button>
+           <button class="nm-pay-btn nm-pay-btn--sm" data-corr-cancel-obs="${c.id}">Cancelar</button>
+         </div>`
+      : `<span style="font-size:11px;color:#64748B">${escapeHtml(c.observaciones || "—")}</span>
+         <button class="nm-pay-btn nm-pay-btn--sm" style="padding:1px 6px;font-size:10px" data-corr-edit-obs="${c.id}">Editar obs.</button>`;
+
+    return `<tr>
+      <td style="min-width:130px">
+        <div style="font-weight:700;font-size:12px">${escapeHtml(c.employeeName || "")}</div>
+        <div style="font-size:10px;color:#64748B">${escapeHtml(c.periodLabel || "Sin período")}</div>
+      </td>
+      <td>${escapeHtml(TIPO_LABELS[c.tipo] || c.tipo)}</td>
+      <td style="max-width:200px"><span style="font-size:12px">${escapeHtml(c.concepto || "")}</span></td>
+      <td style="text-align:right">${escapeHtml(fmtCurrency(c.valorCalculado))}</td>
+      <td style="text-align:right">${escapeHtml(fmtCurrency(c.valorCorrecto))}</td>
+      <td style="text-align:right"><span class="nm-corr-diff--${dClass}">${diff > 0 ? "+" : ""}${escapeHtml(fmtCurrency(diff))}</span></td>
+      <td><span class="nm-corr-impact nm-corr-impact--${c.impacto}">${escapeHtml(IMPACTO_LABELS[c.impacto] || c.impacto)}</span></td>
+      <td><span class="nm-corr-badge nm-corr-badge--${c.estado}">${escapeHtml(ESTADO_LABELS[c.estado] || c.estado)}</span></td>
+      <td style="min-width:180px">
+        <div class="nm-corr-actions">${actionBtns}</div>
+        <div style="margin-top:4px">${obsSection}</div>
+        ${c.comoSeResolvio ? `<div style="margin-top:4px;font-size:11px;color:#166534;background:#DCFCE7;padding:3px 7px;border-radius:4px">✓ ${escapeHtml(c.comoSeResolvio)}</div>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+
+  const newForm = correctionFormOpen ? `
+<div class="nm-corr-form-wrap">
+  <div style="font-size:13px;font-weight:800;color:#0F172A;margin-bottom:10px">Nueva corrección</div>
+  <div class="nm-corr-form-grid">
+    <div class="nm-corr-form-field">
+      <label>Empleado</label>
+      <input type="text" id="corrEmpName" placeholder="Nombre del empleado">
+    </div>
+    <div class="nm-corr-form-field">
+      <label>ID empleado</label>
+      <input type="text" id="corrEmpId" placeholder="ID o cédula">
+    </div>
+    <div class="nm-corr-form-field">
+      <label>Tipo</label>
+      <select id="corrTipo">
+        <option value="salario">Salario</option>
+        <option value="descuento">Descuento</option>
+        <option value="novedad">Novedad</option>
+        <option value="diferencia_dias">Diferencia días</option>
+        <option value="otro">Otro</option>
+      </select>
+    </div>
+    <div class="nm-corr-form-field">
+      <label>Impacto</label>
+      <select id="corrImpacto">
+        <option value="a_favor_empleado">A favor empleado</option>
+        <option value="a_favor_empresa">A favor empresa</option>
+        <option value="sin_impacto">Sin impacto</option>
+      </select>
+    </div>
+    <div class="nm-corr-form-field nm-corr-form-span2">
+      <label>Concepto / descripción</label>
+      <input type="text" id="corrConcepto" placeholder="Ej: Diferencia días trabajados octubre">
+    </div>
+    <div class="nm-corr-form-field">
+      <label>Valor calculado (pagado)</label>
+      <input type="number" id="corrValCalc" placeholder="0" step="1">
+    </div>
+    <div class="nm-corr-form-field">
+      <label>Valor correcto (debió pagarse)</label>
+      <input type="number" id="corrValCorr" placeholder="0" step="1">
+    </div>
+    <div class="nm-corr-form-field nm-corr-form-span2">
+      <label>Observaciones (opcional)</label>
+      <textarea id="corrObs" rows="2" placeholder="Contexto adicional…"></textarea>
+    </div>
+  </div>
+  <div class="nm-corr-form-actions">
+    <button class="nm-pay-btn" id="corrFormCancel">Cancelar</button>
+    <button class="nm-pay-btn nm-pay-btn--primary" id="corrFormSave">Registrar corrección</button>
+  </div>
+</div>` : "";
+
+  return `
+<div class="nm-corr-view">
+  <!-- Cards de resumen -->
+  <div class="nm-corr-summary">
+    <div class="nm-corr-card nm-corr-card--pending">
+      <span class="nm-corr-card-label">🔴 Pendientes</span>
+      <span class="nm-corr-card-value">${pendientes || 0}</span>
+    </div>
+    <div class="nm-corr-card nm-corr-card--review">
+      <span class="nm-corr-card-label">🟡 En revisión</span>
+      <span class="nm-corr-card-value">${en_revision || 0}</span>
+    </div>
+    <div class="nm-corr-card nm-corr-card--applied">
+      <span class="nm-corr-card-label">🟢 Aplicadas</span>
+      <span class="nm-corr-card-value">${aplicadas || 0}</span>
+    </div>
+    <div class="nm-corr-card nm-corr-card--diff nm-corr-card--${diffClass}">
+      <span class="nm-corr-card-label">💰 Diferencia pendiente</span>
+      <span class="nm-corr-card-value">${escapeHtml(fmtCurrency(diferencia_total || 0))}</span>
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="nm-corr-filters">
+    <label>Estado</label>
+    <select class="nm-pay-select nm-pay-input--sm" id="corrFilterEstado">
+      <option value="">Todos</option>
+      <option value="pendiente" ${correctionsFilters.estado === "pendiente" ? "selected" : ""}>Pendiente</option>
+      <option value="en_revision" ${correctionsFilters.estado === "en_revision" ? "selected" : ""}>En revisión</option>
+      <option value="aprobada" ${correctionsFilters.estado === "aprobada" ? "selected" : ""}>Aprobada</option>
+      <option value="aplicada" ${correctionsFilters.estado === "aplicada" ? "selected" : ""}>Aplicada</option>
+      <option value="rechazada" ${correctionsFilters.estado === "rechazada" ? "selected" : ""}>Rechazada</option>
+    </select>
+    <input class="nm-pay-input nm-pay-input--sm" id="corrFilterSearch" type="text" placeholder="Buscar empleado / concepto…" value="${escapeHtml(correctionsFilters.search)}" style="width:220px">
+    <div style="flex:1"></div>
+    ${isTH() ? `<button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" id="corrNew">+ Registrar corrección</button>` : ""}
+  </div>
+
+  <!-- Formulario nueva corrección -->
+  <div class="nm-corr-scroll">
+    ${newForm}
+    ${filteredData.length === 0 ? `<div style="text-align:center;padding:32px;color:#94A3B8;font-size:13px">Sin correcciones registradas${correctionsFilters.estado || correctionsFilters.search ? " con los filtros actuales" : ""}.</div>` : `
+    <table class="nm-corr-table">
+      <thead><tr>
+        <th>Empleado / Período</th><th>Tipo</th><th>Concepto</th>
+        <th style="text-align:right">Calculado</th><th style="text-align:right">Correcto</th>
+        <th style="text-align:right">Diferencia</th><th>Impacto</th><th>Estado</th><th>Acciones / Obs.</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`}
+  </div>
+</div>`;
+}
+
+function wireCorrectionsEvents() {
+  // Filtros
+  document.getElementById("corrFilterEstado")?.addEventListener("change", async (e) => {
+    correctionsFilters.estado = e.target.value;
+    await loadCorrectionsData();
+    render();
+  });
+  document.getElementById("corrFilterSearch")?.addEventListener("input", (e) => {
+    correctionsFilters.search = e.target.value;
+    render();
+    document.getElementById("corrFilterSearch")?.focus();
+  });
+
+  // Abrir/cerrar formulario
+  document.getElementById("corrNew")?.addEventListener("click", () => {
+    correctionFormOpen = !correctionFormOpen;
+    render();
+    wireCorrectionsEvents();
+  });
+  document.getElementById("corrFormCancel")?.addEventListener("click", () => {
+    correctionFormOpen = false;
+    render();
+    wireCorrectionsEvents();
+  });
+  document.getElementById("corrFormSave")?.addEventListener("click", async () => {
+    const empName   = document.getElementById("corrEmpName")?.value?.trim();
+    const empId     = document.getElementById("corrEmpId")?.value?.trim();
+    const concepto  = document.getElementById("corrConcepto")?.value?.trim();
+    const tipo      = document.getElementById("corrTipo")?.value;
+    const impacto   = document.getElementById("corrImpacto")?.value;
+    const valCalc   = parseFloat(document.getElementById("corrValCalc")?.value || "0");
+    const valCorr   = parseFloat(document.getElementById("corrValCorr")?.value || "0");
+    const obs       = document.getElementById("corrObs")?.value?.trim() || null;
+    const periodId  = activePeriod?.id || null;
+    if (!empName || !empId || !concepto) { showError("Empleado, ID y concepto son obligatorios."); return; }
+    try {
+      await apiFetch("/payroll/corrections", {
+        method: "POST",
+        body: JSON.stringify({ employeeId: empId, employeeName: empName, tipo, concepto, valorCalculado: valCalc, valorCorrecto: valCorr, impacto, observaciones: obs, periodId }),
+      });
+      showSuccess("Corrección registrada.");
+      correctionFormOpen = false;
+      await loadCorrectionsData();
+      render();
+      wireCorrectionsEvents();
+    } catch (err) {
+      showError(err.message || "Error al guardar.");
+    }
+  });
+
+  // Cambio de estado simple (pendiente→en_revision)
+  document.querySelectorAll("[data-corr-status]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id   = Number(btn.dataset.corrStatus);
+      const next = btn.dataset.corrNext;
+      try {
+        await apiFetch(`/payroll/corrections/${id}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ estado: next }),
+        });
+        await loadCorrectionsData();
+        render();
+        wireCorrectionsEvents();
+      } catch (err) { showError(err.message); }
+    });
+  });
+
+  // Marcar como aplicada (requiere como_se_resolvio)
+  document.querySelectorAll("[data-corr-apply]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.dataset.corrApply);
+      const resolveWrap = document.getElementById(`corrResolve_${id}`);
+      if (!resolveWrap) {
+        // Insertar formulario de resolución inline
+        const actionsDiv = btn.closest(".nm-corr-actions");
+        if (!actionsDiv) return;
+        const wrap = document.createElement("div");
+        wrap.className = "nm-corr-resolve-wrap";
+        wrap.id = `corrResolve_${id}`;
+        wrap.innerHTML = `
+          <label>¿Cómo se resolvió? (obligatorio)</label>
+          <textarea id="corrResolveText_${id}" placeholder="Describe cómo se aplicó la corrección…"></textarea>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            <button class="nm-pay-btn nm-pay-btn--sm nm-pay-btn--primary" id="corrResolveConfirm_${id}">Confirmar aplicación</button>
+            <button class="nm-pay-btn nm-pay-btn--sm" id="corrResolveCancel_${id}">Cancelar</button>
+          </div>`;
+        actionsDiv.after(wrap);
+        document.getElementById(`corrResolveCancel_${id}`)?.addEventListener("click", () => wrap.remove());
+        document.getElementById(`corrResolveConfirm_${id}`)?.addEventListener("click", async () => {
+          const texto = document.getElementById(`corrResolveText_${id}`)?.value?.trim();
+          if (!texto) { showError("El campo '¿Cómo se resolvió?' es obligatorio."); return; }
+          try {
+            await apiFetch(`/payroll/corrections/${id}/status`, {
+              method: "PATCH",
+              body: JSON.stringify({ estado: "aplicada", como_se_resolvio: texto }),
+            });
+            showSuccess("Corrección marcada como aplicada.");
+            await loadCorrectionsData();
+            render();
+            wireCorrectionsEvents();
+          } catch (err) { showError(err.message); }
+        });
+      }
+    });
+  });
+
+  // Editar observaciones
+  document.querySelectorAll("[data-corr-edit-obs]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      correctionEditId = Number(btn.dataset.corrEditObs);
+      render();
+      wireCorrectionsEvents();
+      document.getElementById(`corrObsArea_${correctionEditId}`)?.focus();
+    });
+  });
+  document.querySelectorAll("[data-corr-cancel-obs]").forEach((btn) => {
+    btn.addEventListener("click", () => { correctionEditId = null; render(); wireCorrectionsEvents(); });
+  });
+  document.querySelectorAll("[data-corr-save-obs]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id  = Number(btn.dataset.corrSaveObs);
+      const obs = document.getElementById(`corrObsArea_${id}`)?.value || "";
+      try {
+        await apiFetch(`/payroll/corrections/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ observaciones: obs }),
+        });
+        correctionEditId = null;
+        await loadCorrectionsData();
+        render();
+        wireCorrectionsEvents();
+      } catch (err) { showError(err.message); }
+    });
+  });
+}
+
 function wireStaticEvents() {
+  // Pestañas primarias (Nómina | Correcciones)
+  document.querySelectorAll("[data-primary-tab]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tab = btn.dataset.primaryTab;
+      if (tab === activePrimaryTab) return;
+      activePrimaryTab = tab;
+      if (tab === "correcciones") {
+        await loadCorrectionsData();
+      }
+      render();
+    });
+  });
+
   document.getElementById("nmPayMonth")?.addEventListener("change", (e) => { periodMonth = e.target.value; });
   document.getElementById("nmPayPeriod")?.addEventListener("change", async (e) => {
     activePeriod       = periods.find((p) => String(p.id) === String(e.target.value)) || null;
@@ -8721,7 +9134,7 @@ wireStaticEvents = function wireStaticEventsIntegral() {
   wireStaticBulkEvents();
 };
 
-loadPayrollModule = async function loadPayrollModuleIntegral() {
+loadPayrollModule = async function loadPayrollModuleIntegral(submodule) {
   periods = [];
   activePeriod = null;
   groupsState = { positions: [], groups: [] };
@@ -8732,22 +9145,31 @@ loadPayrollModule = async function loadPayrollModuleIntegral() {
   turnosFilter = { search: "", hasCuentaCobro: "" };
   turnPersonGroupsCache = [];
   municipalitySearch = "";
-  activePrimaryTab = "nomina";
+  activePrimaryTab = submodule === "correcciones_nomina" ? "correcciones" : "nomina";
   supportsData = [];
   supportsFilters = { municipalityId: "", status: "", noveltyType: "", employee: "" };
   viewerSupportId = null;
+  correctionsData    = [];
+  correctionsSummary = { pendientes: 0, en_revision: 0, aplicadas: 0, rechazadas: 0, diferencia_total: 0 };
+  correctionsFilters = { estado: "", periodo: "", search: "" };
+  correctionFormOpen = false;
+  correctionEditId   = null;
   payrollViewState = defaultPayrollViewState();
   activeScopeGroupIds = [];
   activeScopeMeta = null;
   resetItemsFilter();
   loadPayrollUiState();
   await loadPeriods();
-  await loadGroups();
-  await loadGroupDetail();
+  if (activePrimaryTab === "correcciones") {
+    await loadCorrectionsData();
+  } else {
+    await loadGroups();
+    await loadGroupDetail();
+  }
   return shell();
 };
 
-export async function loadPayrollModule() {
+export async function loadPayrollModule(submodule) {
   periods            = [];
   activePeriod       = null;
   groupsState        = { positions: [], groups: [] };
@@ -8758,15 +9180,24 @@ export async function loadPayrollModule() {
   turnosFilter       = { search: "", hasCuentaCobro: "" };
   turnPersonGroupsCache = [];
   municipalitySearch = "";
-  activePrimaryTab   = "nomina";
+  activePrimaryTab   = submodule === "correcciones_nomina" ? "correcciones" : "nomina";
   supportsData       = [];
   supportsFilters    = { municipalityId: "", status: "", noveltyType: "", employee: "" };
   viewerSupportId    = null;
+  correctionsData    = [];
+  correctionsSummary = { pendientes: 0, en_revision: 0, aplicadas: 0, rechazadas: 0, diferencia_total: 0 };
+  correctionsFilters = { estado: "", periodo: "", search: "" };
+  correctionFormOpen = false;
+  correctionEditId   = null;
   resetItemsFilter();
   loadPayrollUiState();
   await loadPeriods();
-  await loadGroups();
-  await loadGroupDetail();
+  if (activePrimaryTab === "correcciones") {
+    await loadCorrectionsData();
+  } else {
+    await loadGroups();
+    await loadGroupDetail();
+  }
   return shell();
 }
 

@@ -23,6 +23,7 @@ const { handleModuleConfigRoutes } = require("./modules/config/module_config.rou
 const { handleNominaRoutes }       = require("./modules/nomina/nomina.routes");
 const { handleDotacionRoutes }     = require("./modules/dotacion/dotacion.routes");
 const { handlePortalRoutes }       = require("./modules/portal/portal.routes");
+const { handleEvaluacionThRoutes } = require("./modules/evaluacion-th/evaluacion-th.routes");
 
 const { requireAuth } = require("./modules/auth/auth.helpers");
 const { handleSaveDraft } = require("./modules/employees/drafts.controller");
@@ -341,6 +342,9 @@ async function requestHandler(req, res) {
 
   const portalHandled = await handlePortalRoutes(req, res, url);
   if (portalHandled) return;
+
+  const evaluacionThHandled = await handleEvaluacionThRoutes(req, res, url);
+  if (evaluacionThHandled) return;
 
   const employeesHandled = await handleEmployeesRoutes(req, res, url);
   if (employeesHandled) return;

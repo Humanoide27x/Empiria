@@ -35,6 +35,7 @@ export function renderModuleNav(modules = []) {
     "gestion_dotacion",
     "centro_documentos",
     "repositorio_hojas_vida",
+    "evaluacion_desempeno_th",
     "administracion_configuraciones",
     "portal_colaborador",
   ];
@@ -52,17 +53,30 @@ export function renderModuleNav(modules = []) {
         })
     : [];
 
-  if (!visibleModules.length) {
+  // Expande gestion_personal en dos ítems virtuales
+  const expandedModules = visibleModules.flatMap((item) => {
+    if (item.module === "gestion_personal") {
+      return [
+        { ...item, module: "personal_operarios" },
+        { ...item, module: "personal_equipo" },
+      ];
+    }
+    return [item];
+  });
+
+  if (!expandedModules.length) {
     elements.moduleNav.innerHTML = `<div class="nav-empty">No hay modulos disponibles para este usuario.</div>`;
     return;
   }
 
-  elements.moduleNav.innerHTML = visibleModules.map((item) => {
+  elements.moduleNav.innerHTML = expandedModules.map((item) => {
     const moduleKey = item.module;
     const meta = getModuleMeta(moduleKey);
     const navLabelOverrides = {
       dashboard_hr: "Dashboard",
       gestion_personal: "Personal",
+      personal_operarios: "Operarios Manipulador de Alimentos",
+      personal_equipo: "Equipo Mínimo",
       cobertura_calculadora: "Cobertura PAE",
       nomina_novedades: "Nómina",
       calculadora_personal: "Calculadora",
@@ -71,6 +85,7 @@ export function renderModuleNav(modules = []) {
       registro_novedades: "Novedades",
       centro_documentos: "Centro de Documentos",
       repositorio_hojas_vida: "Repositorio HV",
+      evaluacion_desempeno_th: "Evaluación TH",
       portal_colaborador: "Colaboradores",
     };
     const navLabel = navLabelOverrides[moduleKey] || meta.label;
@@ -79,7 +94,8 @@ export function renderModuleNav(modules = []) {
     const view = moduleViews[moduleKey];
     const noSubmoduleKeys = new Set([
       "gestion_personal",
-      "nomina_novedades",
+      "personal_operarios",
+      "personal_equipo",
       "calculadora_personal",
       "dashboard_hr",
       "cobertura_calculadora",
@@ -87,6 +103,7 @@ export function renderModuleNav(modules = []) {
       "gestion_dotacion",
       "centro_documentos",
       "portal_colaborador",
+      "evaluacion_desempeno_th",
     ]);
     const submodules = noSubmoduleKeys.has(moduleKey) ? [] : (view?.submodules || []);
 
@@ -122,7 +139,8 @@ export function renderModuleNav(modules = []) {
       const moduleKey = button.dataset.module;
       const noSubKeys = new Set([
         "gestion_personal",
-        "nomina_novedades",
+        "personal_operarios",
+        "personal_equipo",
         "calculadora_personal",
         "dashboard",
         "dashboard_hr",
@@ -130,6 +148,7 @@ export function renderModuleNav(modules = []) {
         "administracion_configuraciones",
         "gestion_dotacion",
         "portal_colaborador",
+        "evaluacion_desempeno_th",
       ]);
       const hasSubmodules = !noSubKeys.has(moduleKey) && Boolean(moduleViews[moduleKey]?.submodules?.length);
       const isSameExpanded = state.expandedModule === moduleKey;
@@ -147,11 +166,14 @@ export function renderModuleNav(modules = []) {
       } else {
         state.expandedModule = moduleKey;
         state.activeModule = moduleKey;
-        if (moduleKey === "gestion_personal") {
+        if (moduleKey === "gestion_personal" || moduleKey === "personal_operarios" || moduleKey === "personal_equipo") {
           state.activeSubmodule = null;
           state.personnelViewMode = "table";
           state.personnelEditingId = null;
           state.personnelDocumentsEmployee = null;
+          state.personnelTipo = moduleKey === "personal_operarios" ? "operarios"
+                              : moduleKey === "personal_equipo"    ? "equipo"
+                              : "";
         } else {
           state.activeSubmodule = null;
         }
@@ -201,10 +223,14 @@ export function syncTopbarModuleTitle(moduleKey = state.activeModule, submoduleK
   }
 
   const topbarTitleOverrides = {
-    gestion_personal: "Gestión de Personal",
+    gestion_personal:   "Gestión de Personal",
+    personal_operarios: "Operarios Manipulador de Alimentos",
+    personal_equipo:    "Equipo Mínimo",
   };
   const topbarSectionOverrides = {
-    gestion_personal: "Personal",
+    gestion_personal:   "Personal",
+    personal_operarios: "Personal",
+    personal_equipo:    "Personal",
   };
 
   const view = moduleViews[moduleKey] || { title: prettyLabel(moduleKey), submodules: [] };
@@ -243,7 +269,7 @@ export function syncAdminPanelsVisibility() {
 }
 
 async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
-  if (moduleKey === "gestion_personal") {
+  if (moduleKey === "gestion_personal" || moduleKey === "personal_operarios" || moduleKey === "personal_equipo") {
     if (!state.personnelViewMode) state.personnelViewMode = "table";
     const {
       loadPersonnelModule,
@@ -283,7 +309,7 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
 
   if (moduleKey === "nomina_novedades") {
     const payroll = await import(_iv('./modules/payroll.js'));
-    const html = await payroll.loadPayrollModule();
+    const html = await payroll.loadPayrollModule(state.activeSubmodule);
     setTimeout(() => payroll.wirePayrollEvents(), 80);
     return html;
   }
@@ -311,8 +337,10 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   }
 
   if (moduleKey === "repositorio_hojas_vida") {
-    const { loadRepositorioHvModule } = await import(_iv('./modules/repositorio-hv.js'));
-    return await loadRepositorioHvModule();
+    const { loadRepositorioHvModule, wireRepositorioHvEvents } = await import(_iv('./modules/repositorio-hv.js'));
+    const html = await loadRepositorioHvModule();
+    setTimeout(wireRepositorioHvEvents, 80);
+    return html;
   }
 
   if (moduleKey === "centro_documentos") {
@@ -330,6 +358,13 @@ async function renderSubmoduleContent(moduleKey, submoduleKey, moduleConfig) {
   if (moduleKey === "portal_colaborador") {
     const { loadPortalModule } = await import(_iv('./modules/portal.js'));
     return await loadPortalModule();
+  }
+
+  if (moduleKey === "evaluacion_desempeno_th") {
+    const { loadEvaluacionThModule, wireEvaluacionThEvents } = await import(_iv('./modules/evaluacion-th.js'));
+    const html = await loadEvaluacionThModule();
+    setTimeout(wireEvaluacionThEvents, 80);
+    return html;
   }
 
   if (!submoduleKey) {
@@ -409,16 +444,21 @@ export async function openModule(moduleKey) {
     return;
   }
 
+  const _virtualPersonnelKeys = new Set(["personal_operarios", "personal_equipo"]);
   const moduleConfig =
     state.access.modules.find((item) => item.module === moduleKey)
-    || state.access.modules.find((item) => item.module === requestedModuleKey);
+    || state.access.modules.find((item) => item.module === requestedModuleKey)
+    || (_virtualPersonnelKeys.has(moduleKey)
+        ? state.access.modules.find((item) => item.module === "gestion_personal")
+        : null);
   if (!moduleConfig) {
     renderEmptyWorkspace();
     return;
   }
 
   const view = moduleViews[moduleKey] || { title: prettyLabel(moduleKey), submodules: [] };
-  if (moduleKey !== "gestion_personal" && !state.activeSubmodule && view.submodules?.length) {
+  const _noAutoSubmodule = new Set(["gestion_personal", "personal_operarios", "personal_equipo"]);
+  if (!_noAutoSubmodule.has(moduleKey) && !state.activeSubmodule && view.submodules?.length) {
     state.activeSubmodule = view.submodules[0].key;
     syncTopbarModuleTitle(moduleKey, state.activeSubmodule);
   }

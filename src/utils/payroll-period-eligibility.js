@@ -46,7 +46,10 @@ function employeeAppliesToPayrollPeriod(employee, periodStart, periodEnd) {
   const pStart = dateOnly(periodStart);
   const pEnd = dateOnly(periodEnd);
 
-  if (!start || !pStart || !pEnd) return false;
+  if (!pStart || !pEnd) return false;
+  // Sin fecha de inicio: empleado ingresó antes del sistema de registro →
+  // tratar como "siempre activo desde antes del período", evaluar solo fecha fin.
+  if (!start) return !end || end >= pStart;
   return start <= pEnd && (!end || end >= pStart);
 }
 
@@ -84,9 +87,9 @@ function calculatePayrollWorkedDays(employee, periodStart, periodEnd) {
   const pStart = dateOnly(periodStart);
   const pEnd = dateOnly(periodEnd);
 
-  if (!start || !pStart || !pEnd) return 0;
-
-  const effectiveStart = maxDate(start, pStart);
+  if (!pStart || !pEnd) return 0;
+  // Sin fecha de inicio: tratar como ingresado antes del período → inicio efectivo = inicio del período.
+  const effectiveStart = start ? maxDate(start, pStart) : pStart;
   const effectiveEnd = end ? minDate(end, pEnd) : pEnd;
 
   if (effectiveStart > pEnd) return 0;

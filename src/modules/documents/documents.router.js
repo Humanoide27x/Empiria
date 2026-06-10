@@ -984,7 +984,22 @@ function createDocumentsRouter() {
         return sendJson(res, 400, { ok: false, message: "companyId requerido" });
       }
 
-      const docs = await getActiveDocumentsByEmployee(req.params.employeeId, companyId);
+      const allDocs = await getActiveDocumentsByEmployee(req.params.employeeId, companyId);
+
+      // Exclude soft-deleted rows whose status was set but deleted_at may lag
+      const activeDocs = allDocs.filter(
+        (d) => (d.status || "").toUpperCase() !== "DELETED"
+      );
+
+      // Deduplicate: docs are sorted latest-first; keep only first occurrence per type
+      const seenTypes = new Set();
+      const docs = activeDocs.filter((d) => {
+        const typeKey = d.docTypeCode || d.docTypeName || String(d.docTypeId || d.id);
+        if (seenTypes.has(typeKey)) return false;
+        seenTypes.add(typeKey);
+        return true;
+      });
+
       return sendJson(res, 200, {
         ok: true,
         data: docs.map((doc) => ({
@@ -999,6 +1014,7 @@ function createDocumentsRouter() {
           size_bytes: doc.fileSize || 0,
           status: doc.status || "uploaded",
           uploaded_at: doc.uploadedAt || doc.createdAt || null,
+          expiration_date: doc.expiryDate || null,
           replaced_by_document_id: doc.replacedByDocumentId || null,
         })),
       });

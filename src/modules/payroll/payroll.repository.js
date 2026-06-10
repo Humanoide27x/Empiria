@@ -1022,6 +1022,29 @@ async function getPaySlip(periodId, employeeId) {
   };
 }
 
+async function getEmployeePayrollSlips(employeeId) {
+  const result = await pool.query(
+    `SELECT
+       pp.id          AS period_id,
+       pp.label       AS period_label,
+       pp.period_start,
+       pp.period_end,
+       pp.status      AS period_status,
+       pr.id          AS result_id,
+       pr.neto_pagar,
+       pr.worked_days,
+       pr.total_devengado,
+       pr.total_deducciones,
+       pr.calculated_at
+     FROM payroll_results pr
+     JOIN payroll_periods pp ON pp.id = pr.period_id
+     WHERE pr.employee_id = $1
+     ORDER BY pp.period_start DESC, pr.calculated_at DESC NULLS LAST`,
+    [String(employeeId)]
+  );
+  return result.rows;
+}
+
 module.exports = {
   listNovelties,
   getNoveltyById,
@@ -1041,4 +1064,5 @@ module.exports = {
   getPeriodResults,
   closePeriod,
   getPaySlip,
+  getEmployeePayrollSlips,
 };

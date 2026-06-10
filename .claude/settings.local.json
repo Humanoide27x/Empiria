@@ -120,7 +120,23 @@
       "PowerShell(Start-Sleep -Seconds 4; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -UseBasicParsing -TimeoutSec 5; \"HTTP $\\($r.StatusCode\\)\" } catch { \"Error: $_\" })",
       "PowerShell(Start-Process -FilePath \"node\" -ArgumentList \"app.js\" -WorkingDirectory \"C:\\\\Users\\\\CORE ULTRA\\\\desktop\\\\empiria-backend\" -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -UseBasicParsing -TimeoutSec 5; \"HTTP $\\($r.StatusCode\\) OK\" } catch { \"Error: $_\" })",
       "PowerShell(Start-Process -FilePath \"node\" -ArgumentList \"app.js\" -WorkingDirectory \"C:\\\\Users\\\\CORE ULTRA\\\\desktop\\\\empiria-backend\" -WindowStyle Hidden; Start-Sleep -Seconds 6; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -UseBasicParsing -TimeoutSec 5; \"HTTP $\\($r.StatusCode\\) OK\" } catch { \"Error: $_\" })",
-      "PowerShell(Start-Sleep -Seconds 5; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -UseBasicParsing -TimeoutSec 5; \"HTTP $\\($r.StatusCode\\)\" } catch { \"Error: $_\" })"
+      "PowerShell(Start-Sleep -Seconds 5; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -UseBasicParsing -TimeoutSec 5; \"HTTP $\\($r.StatusCode\\)\" } catch { \"Error: $_\" })",
+      "Bash(Get-ChildItem -Path \"src\\\\modules\\\\employees\" -Name \"*.js\")",
+      "Bash(awk -F: '{print $2}')",
+      "Bash(xargs -I{} bash -c 'sed -n \"{},+8p\" \"/c/Users/CORE ULTRA/Desktop/empiria-backend/public/styles.css\"')",
+      "Bash(head -n 27914 \"C:/Users/CORE ULTRA/Desktop/empiria-backend/public/styles.css\")",
+      "Read(//tmp/**)",
+      "Bash(cat /tmp/styles_base.css \"C:/Users/CORE ULTRA/Desktop/empiria-backend/public/eth-styles-new.css\")",
+      "Bash(cp /tmp/styles_final.css \"C:/Users/CORE ULTRA/Desktop/empiria-backend/public/styles.css\")",
+      "Bash(dir C:\\\\Users\\\\CORE ULTRA\\\\Desktop\\\\empiria-backend\\\\src\\\\modules *)",
+      "Bash(findstr /v \"USING LOCAL DATABASE_URL password refrescar SASL\")",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(awk '/^\\\\..*{/,/^}/' public/styles.css)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(echo \"doc-viewer exit: $?\")",
+      "Bash(echo \"rhv exit: $?\")",
+      "Bash(echo \"personnel exit: $?\")"
     ]
   }
 }

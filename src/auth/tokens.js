@@ -1,8 +1,40 @@
 const crypto = require("crypto");
+const fs     = require("fs");
+const path   = require("path");
 
-const activeSessions = new Map();
-
+const SESSIONS_FILE = path.join(__dirname, "../../data/sessions.json");
 const SESSION_DURATION_MS = 1000 * 60 * 60 * 8; // 8 horas
+
+// ── Persistencia en disco ─────────────────────────────────────────────────────
+function _loadSessions() {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) return new Map();
+    const raw  = fs.readFileSync(SESSIONS_FILE, "utf8");
+    const arr  = JSON.parse(raw);
+    const now  = Date.now();
+    const map  = new Map();
+    for (const [token, session] of arr) {
+      if (session.expiresAt && session.expiresAt > now) map.set(token, session);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+let _savePending = false;
+function _persistSessions() {
+  if (_savePending) return;
+  _savePending = true;
+  setImmediate(() => {
+    _savePending = false;
+    try {
+      fs.writeFileSync(SESSIONS_FILE, JSON.stringify([...activeSessions.entries()]), "utf8");
+    } catch { /* non-fatal */ }
+  });
+}
+
+const activeSessions = _loadSessions();
 
 // Tokens de un solo uso para ver/descargar documentos desde una nueva pestaña.
 // Expiran en 60 segundos y se consumen al primer uso.
@@ -43,8 +75,7 @@ function createToken() {
 
 function createSession(user) {
   const token = createToken();
-
-  const now = Date.now();
+  const now   = Date.now();
 
   activeSessions.set(token, {
     userId: user.id,
@@ -52,6 +83,7 @@ function createSession(user) {
     expiresAt: now + SESSION_DURATION_MS,
   });
 
+  _persistSessions();
   return token;
 }
 
@@ -75,17 +107,22 @@ function getSession(token) {
 function removeSession(token) {
   if (!token) return;
   activeSessions.delete(token);
+  _persistSessions();
 }
 
 // limpieza automática de sesiones expiradas
 setInterval(() => {
   const now = Date.now();
+  let removed = 0;
 
   for (const [token, session] of activeSessions.entries()) {
     if (session.expiresAt && session.expiresAt < now) {
       activeSessions.delete(token);
+      removed++;
     }
   }
+
+  if (removed > 0) _persistSessions();
 }, 1000 * 60 * 10); // cada 10 minutos
 
 module.exports = {

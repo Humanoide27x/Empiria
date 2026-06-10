@@ -21,10 +21,13 @@ const {
   getPeriodResults,
   closePeriod,
   getPaySlip,
+  getEmployeePayrollSlips,
 } = require("./payroll.repository");
 
 const operational = require("./payroll.operational.repository");
 const { clearGroupCache } = operational;
+const correctionsRepo = require("./payroll.corrections.repository");
+const _pool = require("../../db/pool");
 
 // ── Salary categories ────────────────────────────────────────────────────────
 async function handleSalaryCategories(req, res, url) {
@@ -1229,6 +1232,28 @@ async function handlePaySlip(req, res, url) {
         sendJson(innerRes, 200, { ok: true, data });
       } catch (err) {
         sendJson(innerRes, 404, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /payroll/employees/:id/slips → lista de todos los desprendibles del empleado
+// ─────────────────────────────────────────────────────────────────────────────
+async function handleEmployeePayrollSlips(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.VIEW,
+    async (innerReq, innerRes) => {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const employeeId = parts[2];
+      if (!employeeId) { sendJson(innerRes, 400, { ok: false, message: "employeeId inválido" }); return; }
+      try {
+        const slips = await getEmployeePayrollSlips(employeeId);
+        sendJson(innerRes, 200, { ok: true, data: slips });
+      } catch (err) {
+        sendJson(innerRes, 500, { ok: false, message: err.message });
       }
     }
   )(req, res, url);
@@ -2599,6 +2624,7 @@ module.exports = {
   handleMunicipalityStatus,
   handleConfirmAndSend,
   handlePaySlip,
+  handleEmployeePayrollSlips,
   handleOperationalPeriods,
   handleOperationalGroups,
   handleOperationalGroupById,
@@ -2635,4 +2661,121 @@ module.exports = {
   // Plantilla mensual de novedades por días (056)
   handleNoveltiesTemplate,
   handleImportNoveltiesTemplate,
+  // Correcciones de nómina (064)
+  handleCorrections,
+  handleCorrectionById,
+  handleCorrectionStatus,
+  handleCorrectionsSummary,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Correcciones de nómina (064) — solo trazabilidad, no modifica payroll_results
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleCorrections(req, res, url) {
+  return withModuleProtection(MODULES.PAYROLL, ACTIONS.VIEW, async (innerReq, innerRes, innerUrl, user) => {
+    if (req.method === "GET") {
+      const periodId   = url.searchParams.get("periodId") || null;
+      const estado     = url.searchParams.get("estado")   || null;
+      const employeeId = url.searchParams.get("employeeId") || null;
+      try {
+        const data = await correctionsRepo.listCorrections({ periodId, estado, employeeId });
+        sendJson(innerRes, 200, { ok: true, data });
+      } catch (err) {
+        sendJson(innerRes, 500, { ok: false, message: err.message });
+      }
+      return;
+    }
+    if (req.method === "POST") {
+      try {
+        const body   = await readJsonBody(req);
+        const record = await correctionsRepo.createCorrection({
+          ...body,
+          createdBy:    user?.id   || null,
+          createdByName: user?.full_name || user?.username || null,
+        });
+        await _pool.query(
+          `INSERT INTO audit_logs (module, entity_name, entity_id, action, user_id, user_name, context, created_at)
+           VALUES ('PAYROLL','payroll_corrections',$1,'CREATE',$2,$3,$4::jsonb,NOW())`,
+          [String(record.id), user?.id || null, user?.username || null,
+           JSON.stringify({ estado: record.estado, concepto: record.concepto })]
+        ).catch(() => {});
+        sendJson(innerRes, 201, { ok: true, data: record });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+      return;
+    }
+    sendMethodNotAllowed(innerRes);
+  })(req, res, url);
+}
+
+async function handleCorrectionById(req, res, url) {
+  return withModuleProtection(MODULES.PAYROLL, ACTIONS.VIEW, async (innerReq, innerRes, innerUrl, user) => {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const id    = Number(parts[3]);
+    if (!id) { sendJson(innerRes, 400, { ok: false, message: "ID inválido" }); return; }
+
+    if (req.method === "GET") {
+      const record = await correctionsRepo.getCorrectionById(id);
+      if (!record) { sendJson(innerRes, 404, { ok: false, message: "No encontrada" }); return; }
+      sendJson(innerRes, 200, { ok: true, data: record });
+      return;
+    }
+    if (req.method === "PATCH") {
+      try {
+        const body   = await readJsonBody(req);
+        const record = await correctionsRepo.updateCorrectionObservaciones(id, body.observaciones, {
+          userId:   user?.id,
+          userName: user?.full_name || user?.username,
+        });
+        sendJson(innerRes, 200, { ok: true, data: record });
+      } catch (err) {
+        sendJson(innerRes, 400, { ok: false, message: err.message });
+      }
+      return;
+    }
+    sendMethodNotAllowed(innerRes);
+  })(req, res, url);
+}
+
+async function handleCorrectionStatus(req, res, url) {
+  if (req.method !== "PATCH") { sendMethodNotAllowed(res); return; }
+  return withModuleProtection(MODULES.PAYROLL, ACTIONS.EDIT, async (innerReq, innerRes, innerUrl, user) => {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const id    = Number(parts[3]);
+    if (!id) { sendJson(innerRes, 400, { ok: false, message: "ID inválido" }); return; }
+    try {
+      const body   = await readJsonBody(req);
+      const record = await correctionsRepo.updateCorrectionStatus(id, body.estado, {
+        userId:         user?.id,
+        userName:       user?.full_name || user?.username,
+        comoSeResolvio: body.como_se_resolvio,
+        observaciones:  body.observaciones,
+      });
+      if (!record) { sendJson(innerRes, 404, { ok: false, message: "No encontrada" }); return; }
+      await _pool.query(
+        `INSERT INTO audit_logs (module, entity_name, entity_id, action, user_id, user_name, context, created_at)
+         VALUES ('PAYROLL','payroll_corrections',$1,'STATUS_CHANGE',$2,$3,$4::jsonb,NOW())`,
+        [String(id), user?.id || null, user?.username || null,
+         JSON.stringify({ estado_nuevo: body.estado, como_se_resolvio: body.como_se_resolvio || null })]
+      ).catch(() => {});
+      sendJson(innerRes, 200, { ok: true, data: record });
+    } catch (err) {
+      sendJson(innerRes, 400, { ok: false, message: err.message });
+    }
+  })(req, res, url);
+}
+
+async function handleCorrectionsSummary(req, res, url) {
+  if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
+  return withModuleProtection(MODULES.PAYROLL, ACTIONS.VIEW, async (innerReq, innerRes) => {
+    const periodId = url.searchParams.get("periodId") || null;
+    try {
+      const data = await correctionsRepo.getSummary({ periodId });
+      sendJson(innerRes, 200, { ok: true, data });
+    } catch (err) {
+      sendJson(innerRes, 500, { ok: false, message: err.message });
+    }
+  })(req, res, url);
+}

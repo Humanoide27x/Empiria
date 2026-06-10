@@ -30,6 +30,7 @@ export const state = {
   novedadFilters: {},
   desprendibleDraft: {},
   certDraft: {},
+  personnelTipo: "",   // "operarios" | "equipo" | ""
   personnelFilters: {
     search: "", status: "", hvStatus: "", municipalityId: "",
     role: "", companyId: "", contractId: "",
@@ -121,13 +122,23 @@ export const moduleViews = {
     title: "Gestión del Personal",
     submodules: [],
   },
+  personal_operarios: {
+    title: "Operarios Manipulador de Alimentos",
+    submodules: [],
+  },
+  personal_equipo: {
+    title: "Equipo Mínimo",
+    submodules: [],
+  },
   cobertura_calculadora: {
     title: "Verificación de Cobertura",
     submodules: [],
   },
   nomina_novedades: {
     title: "Nómina",
-    submodules: [],
+    submodules: [
+      { key: "correcciones_nomina", title: "Correcciones" },
+    ],
   },
   capacitaciones_asistencia: {
     title: "Capacitaciones y Asistencia",
@@ -181,6 +192,10 @@ export const moduleViews = {
   },
   portal_colaborador: {
     title: "Portal del Colaborador",
+    submodules: [],
+  },
+  evaluacion_desempeno_th: {
+    title: "Evaluación de Desempeño TH",
     submodules: [],
   },
 };

@@ -1427,6 +1427,7 @@ async function activeEmployeesForPeriod(periodId) {
        LEFT JOIN institutions i   ON i.id = e.institution_id
        LEFT JOIN educational_sites s ON s.id = e.site_id
       WHERE pp.id = $1
+        AND e.status = 'ACTIVO'
         AND NULLIF(BTRIM(e.real_position), '') IS NOT NULL
         AND e.municipality_id IS NOT NULL
       ORDER BY UPPER(e.real_position), m.name NULLS LAST, e.full_name`,
@@ -1845,9 +1846,6 @@ async function calculatePayrollGroup(groupId) {
   const group = await getGroup(groupId);
   assertGroupEditable(group);
 
-  // Propagar novedades de períodos anteriores que lleguen a este período
-  await propagateCrossPeriodNovelties(group.period_id, group.contract_id);
-
   // Todos los empleados activos del período (para contar peers CAARES por site_id)
   const allPeriodEmployees = await activeEmployeesForPeriod(group.period_id);
 
@@ -2087,6 +2085,12 @@ async function calculatePayrollGroup(groupId) {
   }
 
   _groupCacheInvalidate(groupId);
+
+  // Propagar novedades cruzadas DESPUÉS de que los items ya existen.
+  // En el primer cálculo del período no había items; ahora sí → las continuaciones
+  // se crean correctamente y recalculatePayrollItem() las aplica de inmediato.
+  await propagateCrossPeriodNovelties(group.period_id, group.contract_id);
+
   return getPayrollGroupDetail(group.period_id, group.id);
 }
 

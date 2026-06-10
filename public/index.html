@@ -496,6 +496,24 @@
     </div>
   </div>
 
+  <!-- VISOR LATERAL DE DOCUMENTOS -->
+  <div id="docViewerDrawer" class="doc-viewer-drawer" aria-hidden="true" role="dialog" aria-label="Visor de documento">
+    <div class="doc-viewer-header">
+      <span class="doc-viewer-title" id="docViewerTitle">Documento</span>
+      <button class="doc-viewer-close" id="docViewerClose" aria-label="Cerrar visor" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="doc-viewer-body">
+      <div class="doc-viewer-loading" id="docViewerLoading">
+        <div class="doc-viewer-spinner"></div>
+        <p>Cargando documento…</p>
+      </div>
+      <iframe id="docViewerFrame" class="doc-viewer-frame" title="Visor de documento" allowfullscreen></iframe>
+    </div>
+  </div>
+  <div id="docViewerOverlay" class="doc-viewer-overlay"></div>
+
   <script>window.APP_VERSION = '__VER__';</script>
   <script type="module" src="/js/app.js?v=__VER__"></script>
 </body>
