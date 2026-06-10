@@ -28,6 +28,9 @@ function isSessionCacheable(path, options = {}) {
     /^\/dashboard\/periods(?:\?|$)/,
     /^\/admin\/contractual\/master\/positions(?:\?|$)/,
     /^\/admin\/contractual\/master\/areas(?:\?|$)/,
+    /^\/employees\/lookup(?:\?|$)/,
+    /^\/config\/positions(?:\?|$)/,
+    /^\/config\/areas(?:\?|$)/,
   ].some((pattern) => pattern.test(String(path || "")));
 }
 

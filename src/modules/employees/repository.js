@@ -1,4 +1,5 @@
 const pool = require("../../db/pool");
+const { municipalityCache } = require("../../utils/cache");
 
 function toNumberOrNull(value) {
   const n = Number(value);
@@ -42,17 +43,17 @@ async function resolveMunicipalityId(value) {
     return null;
   }
 
+  const cacheKey = `mun_name:${name.toUpperCase()}`;
+  const cached = municipalityCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const result = await pool.query(
-    `
-    SELECT id
-    FROM municipalities
-    WHERE UPPER(TRIM(name)) = UPPER(TRIM($1))
-    LIMIT 1
-    `,
+    `SELECT id FROM municipalities WHERE UPPER(TRIM(name)) = UPPER(TRIM($1)) LIMIT 1`,
     [name]
   );
-
-  return result.rows[0]?.id || null;
+  const id = result.rows[0]?.id || null;
+  municipalityCache.set(cacheKey, id);
+  return id;
 }
 
 function getResolvedMunicipalityValue(rawValue, resolvedName) {
@@ -317,9 +318,10 @@ async function listEmployeesFromRepository(filters = {}) {
 }
 
 async function getEmployeeByIdFromRepository(id) {
-  const result = await pool.query(
-    `
-    SELECT 
+  const result = await pool.query({
+    name: "get_employee_by_id",
+    text: `
+    SELECT
       e.*,
       m.name AS municipality_name,
       CASE
@@ -357,8 +359,8 @@ async function getEmployeeByIdFromRepository(id) {
     LEFT JOIN educational_sites s ON s.id = e.site_id
     WHERE e.id = $1
     `,
-    [id]
-  );
+    values: [id],
+  });
 
   return result.rows[0] ? mapEmployee(result.rows[0]) : null;
 }

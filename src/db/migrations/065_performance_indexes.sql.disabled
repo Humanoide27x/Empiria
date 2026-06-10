@@ -1,0 +1,44 @@
+-- Migración 065: Índices de rendimiento para EMPIRIA
+-- Usa CONCURRENTLY para no bloquear la BD durante la creación
+
+-- Activar extensión trigram si no está activa (para búsqueda por nombre)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- employees: columnas más filtradas
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employees_status
+  ON employees(status) WHERE status IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employees_contract_id
+  ON employees(contract_id) WHERE contract_id IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employees_company_id
+  ON employees(company_id) WHERE company_id IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employees_status_contract
+  ON employees(status, contract_id) WHERE status IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employees_full_name_trgm
+  ON employees USING gin(full_name gin_trgm_ops) WHERE full_name IS NOT NULL;
+
+-- municipalities: búsqueda por nombre insensible a mayúsculas
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_municipalities_name_upper
+  ON municipalities(UPPER(TRIM(name)));
+
+-- contracts: filtro por empresa activa (query más frecuente)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_contracts_company_active
+  ON contracts(company_id, active) WHERE active = true;
+
+-- employee_documents: filtro por empleado excluyendo eliminados
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employee_documents_employee_id
+  ON employee_documents(employee_id) WHERE deleted_at IS NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_employee_documents_type_employee
+  ON employee_documents(document_type_id, employee_id) WHERE deleted_at IS NULL;
+
+-- coverage_uploads: ordenamiento por fecha en dashboard
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_coverage_uploads_created_at
+  ON coverage_uploads(created_at DESC);
+
+-- training_attendance: joins por empleado
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_training_attendance_employee
+  ON training_attendance(employee_id);

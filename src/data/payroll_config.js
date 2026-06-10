@@ -23,16 +23,30 @@ const DEFAULT_CONFIG = {
   updatedAt: null,
 };
 
+let _payrollConfigCache = null;
+let _payrollConfigCacheAt = 0;
+const PAYROLL_CONFIG_TTL_MS = 5 * 60 * 1000;
+
 function getPayrollConfig() {
-  if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
+  const now = Date.now();
+  if (_payrollConfigCache && (now - _payrollConfigCacheAt) < PAYROLL_CONFIG_TTL_MS) {
+    return _payrollConfigCache;
+  }
+  if (!fs.existsSync(CONFIG_PATH)) {
+    _payrollConfigCache = { ...DEFAULT_CONFIG };
+    _payrollConfigCacheAt = now;
+    return _payrollConfigCache;
+  }
   try {
     const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
     const saved = JSON.parse(raw);
-    return {
+    _payrollConfigCache = {
       ...DEFAULT_CONFIG,
       ...saved,
       modalitySalaries: { ...DEFAULT_CONFIG.modalitySalaries, ...(saved.modalitySalaries || {}) },
     };
+    _payrollConfigCacheAt = now;
+    return _payrollConfigCache;
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -47,6 +61,8 @@ function updatePayrollConfig(updates) {
     updatedAt: new Date().toISOString(),
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(updated, null, 2));
+  _payrollConfigCache = updated;
+  _payrollConfigCacheAt = Date.now();
   return updated;
 }
 

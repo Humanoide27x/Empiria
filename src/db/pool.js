@@ -7,14 +7,18 @@ types.setTypeParser(1184, v => v);
 function buildConfig() {
   const dbUrl = process.env.DATABASE_URL;
 
-  console.log("[db] DATABASE_URL EXISTS:", !!dbUrl);
-  console.log("[db] DATABASE_URL PREFIX:", dbUrl ? dbUrl.slice(0, 55) : "NO_DATABASE_URL");
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[db] DATABASE_URL EXISTS:", !!dbUrl);
+    console.log("[db] DATABASE_URL PREFIX:", dbUrl ? dbUrl.slice(0, 55) : "NO_DATABASE_URL");
+  }
 
   if (dbUrl) {
     return {
       connectionString: dbUrl,
       ssl: { rejectUnauthorized: false },
-      max: Number(process.env.DB_POOL_MAX || 10),
+      max: Number(process.env.DB_POOL_MAX || 20),
+      min: Number(process.env.DB_POOL_MIN || 2),
+      allowExitOnIdle: false,
       idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30_000),
       connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 5_000),
     };
@@ -28,12 +32,14 @@ function buildConfig() {
   const dbPassword = process.env.DB_PASSWORD;
   const hasPassword = dbPassword !== undefined && dbPassword !== null && dbPassword !== "";
 
-  console.log("[db] USING LOCAL FALLBACK:", {
-    host:     process.env.DB_HOST     || "localhost",
-    database: process.env.DB_NAME     || "empiria_db",
-    user:     process.env.DB_USER     || "postgres",
-    password: hasPassword ? `[set, typeof=${typeof dbPassword}]` : "[NOT SET — verificar DB_PASSWORD en .env]",
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[db] USING LOCAL FALLBACK:", {
+      host:     process.env.DB_HOST     || "localhost",
+      database: process.env.DB_NAME     || "empiria_db",
+      user:     process.env.DB_USER     || "postgres",
+      password: hasPassword ? `[set, typeof=${typeof dbPassword}]` : "[NOT SET — verificar DB_PASSWORD en .env]",
+    });
+  }
 
   return {
     host:     String(process.env.DB_HOST || "localhost"),
@@ -44,7 +50,9 @@ function buildConfig() {
     // lo que produce undefined en SASL y genera el error de tipo.
     ...(hasPassword ? { password: String(dbPassword) } : {}),
     database: String(process.env.DB_NAME || "empiria_db"),
-    max:      Number(process.env.DB_POOL_MAX || 10),
+    max:      Number(process.env.DB_POOL_MAX || 20),
+    min:      Number(process.env.DB_POOL_MIN || 2),
+    allowExitOnIdle: false,
     idleTimeoutMillis:        Number(process.env.DB_IDLE_TIMEOUT_MS       || 30_000),
     connectionTimeoutMillis:  Number(process.env.DB_CONNECTION_TIMEOUT_MS || 5_000),
   };

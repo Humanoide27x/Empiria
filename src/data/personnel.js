@@ -1,17 +1,27 @@
 const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
+const { personnelCache } = require("../utils/cache");
 
 const filePath = path.join(__dirname, "personnel.json");
+const CACHE_KEY = "personnel_data";
 
 function readPersonnel() {
-  if (!fs.existsSync(filePath)) return [];
+  const cached = personnelCache.get(CACHE_KEY);
+  if (cached !== undefined) return cached;
+  if (!fs.existsSync(filePath)) {
+    personnelCache.set(CACHE_KEY, []);
+    return [];
+  }
   const data = fs.readFileSync(filePath, "utf-8");
-  return data ? JSON.parse(data) : [];
+  const parsed = data ? JSON.parse(data) : [];
+  personnelCache.set(CACHE_KEY, parsed);
+  return parsed;
 }
 
 function writePersonnel(data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  personnelCache.invalidate(CACHE_KEY);
 }
 
 function firstNonEmpty(...values) {

@@ -132,7 +132,7 @@ function computeSocialSecurityDays(filteredItems, allNovelties, allGroupItems) {
       ssDays = Math.max(1, PERIOD - corrDay + 1);
     }
 
-    if (retiroNov || ingresoNov || corrSsNov) {
+    if ((retiroNov || ingresoNov || corrSsNov) && process.env.NODE_ENV !== "production") {
       console.log("[payroll social security days]", {
         employeeId:            item.employee_id,
         employeeName:          item.employee_name,
@@ -1859,19 +1859,21 @@ async function calculatePayrollGroup(groupId) {
     return true;
   });
 
-  console.log("[payroll municipality filter]", {
-    groupId,
-    selectedMunicipalityId:   group.municipality_id,
-    selectedMunicipalityName: groupEmployees[0]?.municipality_name || "(sin empleados)",
-    totalPeriodEmployees:     allPeriodEmployees.length,
-    groupEmployeeCount:       groupEmployees.length,
-    employees: groupEmployees.map((e) => ({
-      employeeId:            e.employee_id,
-      employeeName:          e.employee_name,
-      employeeMunicipalityId:   e.municipality_id,
-      employeeMunicipalityName: e.municipality_name,
-    })),
-  });
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[payroll municipality filter]", {
+      groupId,
+      selectedMunicipalityId:   group.municipality_id,
+      selectedMunicipalityName: groupEmployees[0]?.municipality_name || "(sin empleados)",
+      totalPeriodEmployees:     allPeriodEmployees.length,
+      groupEmployeeCount:       groupEmployees.length,
+      employees: groupEmployees.map((e) => ({
+        employeeId:            e.employee_id,
+        employeeName:          e.employee_name,
+        employeeMunicipalityId:   e.municipality_id,
+        employeeMunicipalityName: e.municipality_name,
+      })),
+    });
+  }
 
   // Configuración salarial desde DB (o fallback JSON)
   const salaryCategories = await getSalaryCategories(group.contract_id);
@@ -1982,8 +1984,9 @@ async function calculatePayrollGroup(groupId) {
         };
       }
 
-      // DEBUG: por empleado
-      console.log(`[PAYROLL CATEGORY] ${emp.employee_name} → ${categoryCode}`, salConfig);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`[PAYROLL CATEGORY] ${emp.employee_name} → ${categoryCode}`, salConfig);
+      }
 
       const laborNovelties = laborDateNoveltiesForPeriod(emp, group.period_start, group.period_end);
       const fechaIngresoAplicada = getEmployeeLaborStartDate(emp);
