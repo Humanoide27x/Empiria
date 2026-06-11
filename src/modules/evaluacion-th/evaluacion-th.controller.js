@@ -14,6 +14,20 @@ const {
   generarChecklistCompleto,
 } = require("./evaluacion-th.excel");
 
+// Roles que pueden ver todos los coordinadores y todos los municipios
+const UNRESTRICTED_ROLES = new Set(["administrador", "auditores_internos"]);
+
+function isUnrestricted(user) {
+  const role = String(user?.role || user?.role_code || "").toLowerCase();
+  return UNRESTRICTED_ROLES.has(role);
+}
+
+// IDs de municipio asignados al usuario autenticado (vacío = sin restricción explícita)
+function userMunicipalityIds(user) {
+  const ids = Array.isArray(user?.municipality_ids) ? user.municipality_ids.map(Number) : [];
+  return new Set(ids.filter(Boolean));
+}
+
 /**
  * Pondera los tres pilares:
  *   docs 40% + datos 30% + nómina 30%
@@ -36,8 +50,14 @@ async function handleGetCoordinadores(req, res) {
   if (!auth) return;
 
   try {
-    const companyId = auth.user.companyId ?? auth.user.company_id ?? null;
-    const coordinadores = await getCoordinadoresTH(companyId);
+    const user      = auth.user;
+    const companyId = user.companyId ?? user.company_id ?? null;
+    let coordinadores = await getCoordinadoresTH(companyId);
+
+    // Roles restringidos: solo ven su propio registro
+    if (!isUnrestricted(user)) {
+      coordinadores = coordinadores.filter(c => Number(c.id) === Number(user.id));
+    }
 
     const data = await Promise.all(
       coordinadores.map(async (c) => {
@@ -103,8 +123,14 @@ async function handleGetDetalle(req, res, coordinadorId) {
 async function handleGetMunicipios(req, res, coordinadorId) {
   const auth = requireAuth(req, res);
   if (!auth) return;
+
+  const user = auth.user;
+  if (!isUnrestricted(user) && Number(coordinadorId) !== Number(user.id)) {
+    return sendJson(res, 403, { ok: false, message: "Sin acceso a los municipios de este coordinador." });
+  }
+
   try {
-    const companyId = auth.user.companyId ?? auth.user.company_id ?? null;
+    const companyId = user.companyId ?? user.company_id ?? null;
     const data = await getMunicipiosByCoordinador(Number(coordinadorId), companyId);
     sendJson(res, 200, { ok: true, data });
   } catch (err) {
@@ -120,8 +146,17 @@ async function handleGetMunicipios(req, res, coordinadorId) {
 async function handleGetDocsFaltantes(req, res, municipioId) {
   const auth = requireAuth(req, res);
   if (!auth) return;
+
+  const user = auth.user;
+  if (!isUnrestricted(user)) {
+    const allowed = userMunicipalityIds(user);
+    if (allowed.size > 0 && !allowed.has(Number(municipioId))) {
+      return sendJson(res, 403, { ok: false, message: "Sin acceso a este municipio." });
+    }
+  }
+
   try {
-    const companyId = auth.user.companyId ?? auth.user.company_id ?? null;
+    const companyId = user.companyId ?? user.company_id ?? null;
     const data = await getDocumentosFaltantesByMunicipio(Number(municipioId), companyId);
     sendJson(res, 200, { ok: true, data });
   } catch (err) {
@@ -137,8 +172,17 @@ async function handleGetDocsFaltantes(req, res, municipioId) {
 async function handleGetChecklistMunicipio(req, res, municipioId) {
   const auth = requireAuth(req, res);
   if (!auth) return;
+
+  const user = auth.user;
+  if (!isUnrestricted(user)) {
+    const allowed = userMunicipalityIds(user);
+    if (allowed.size > 0 && !allowed.has(Number(municipioId))) {
+      return sendJson(res, 403, { ok: false, message: "Sin acceso a este municipio." });
+    }
+  }
+
   try {
-    const companyId = auth.user.companyId ?? auth.user.company_id ?? null;
+    const companyId = user.companyId ?? user.company_id ?? null;
     const { wb }    = await generarChecklistMunicipio(Number(municipioId), companyId, null);
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -158,8 +202,14 @@ async function handleGetChecklistMunicipio(req, res, municipioId) {
 async function handleGetChecklistCompleto(req, res, coordinadorId) {
   const auth = requireAuth(req, res);
   if (!auth) return;
+
+  const user = auth.user;
+  if (!isUnrestricted(user) && Number(coordinadorId) !== Number(user.id)) {
+    return sendJson(res, 403, { ok: false, message: "Sin acceso al checklist de este coordinador." });
+  }
+
   try {
-    const companyId     = auth.user.companyId ?? auth.user.company_id ?? null;
+    const companyId     = user.companyId ?? user.company_id ?? null;
     const coordinadores = await getCoordinadoresTH(companyId);
     const coord         = coordinadores.find(c => c.id === Number(coordinadorId));
     const coordNombre   = coord ? (coord.name || coord.username || `Coordinador ${coordinadorId}`) : "";

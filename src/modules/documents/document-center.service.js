@@ -8,7 +8,6 @@ const XLSX = require("xlsx");
 
 const { isR2Configured, putFile } = require("../../config/storage");
 const {
-  DOCUMENT_CATALOG,
   PREVIEW_STATUS,
   DUPLICATE_STRATEGY,
   UPLOAD_MODE,
@@ -16,7 +15,6 @@ const {
   classifyPreviewFile,
   summarizePreviewRows,
   buildFinalSummary,
-  resolveCatalogDocumentType,
 } = require("./document-center.logic");
 const repo = require("./document-center.repository");
 
@@ -99,6 +97,10 @@ async function deleteTempFile(filePath) {
   }
 }
 
+async function getCatalogDocumentTypes() {
+  return repo.listCatalogDocumentTypes();
+}
+
 async function previewBatch({
   files = [],
   uploadMode,
@@ -112,14 +114,6 @@ async function previewBatch({
     throw Object.assign(new Error("upload_mode invalido"), { statusCode: 400 });
   }
 
-  const selectedDocumentType = resolvedUploadMode === UPLOAD_MODE.CATEGORY
-    ? resolveCatalogDocumentType(documentType)
-    : null;
-
-  if (resolvedUploadMode === UPLOAD_MODE.CATEGORY && !selectedDocumentType) {
-    throw Object.assign(new Error("document_type invalido o ausente"), { statusCode: 400 });
-  }
-
   if (!Array.isArray(files) || !files.length) {
     throw Object.assign(new Error("Debes adjuntar al menos un archivo PDF"), { statusCode: 400 });
   }
@@ -129,6 +123,17 @@ async function previewBatch({
     repo.listCatalogDocumentTypes(),
     repo.getExistingDocumentsIndex(),
   ]);
+
+  // Validate document_type against the live DB catalog (not a hardcoded list)
+  let selectedDocumentType = null;
+  if (resolvedUploadMode === UPLOAD_MODE.CATEGORY) {
+    const normalized = String(documentType || "").trim().toUpperCase();
+    const found = catalogTypes.find((t) => t.code.toUpperCase() === normalized);
+    if (!found) {
+      throw Object.assign(new Error("document_type invalido o ausente"), { statusCode: 400 });
+    }
+    selectedDocumentType = found.code;
+  }
   const employeeIndex = buildEmployeeNumberIndex(employees);
   const catalogTypeMap = new Map(catalogTypes.map((item) => [item.code, item]));
 
@@ -212,7 +217,6 @@ async function previewBatch({
     rows: previewRows,
     items,
     catalogTypes,
-    documentCatalog: DOCUMENT_CATALOG,
   };
 }
 
@@ -528,6 +532,7 @@ module.exports = {
   PREVIEW_TEMP_ROOT,
   FINAL_UPLOAD_ROOT,
   getBatchTempDir,
+  getCatalogDocumentTypes,
   previewBatch,
   confirmBatch,
   getBatches,

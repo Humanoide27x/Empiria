@@ -31,20 +31,25 @@ function normalizeSqlText(columnSql) {
 
 async function listCatalogDocumentTypes() {
   const result = await pool.query(
-    `SELECT
-       dt.id,
-       dt.code,
-       dt.name,
-       dt.phase,
-       dt.required,
-       dt.visible_to_auditor,
-       dt.active,
-       dt.master_document_type_id,
-       mdt.code AS master_code
-     FROM document_types dt
-     LEFT JOIN master_document_types mdt ON mdt.id = dt.master_document_type_id
-     WHERE COALESCE(dt.active, true) = true
-     ORDER BY dt.name ASC, dt.id ASC`
+    `SELECT id, code, name, phase, required, visible_to_auditor, active,
+            master_document_type_id, master_code
+     FROM (
+       SELECT DISTINCT ON (UPPER(TRIM(dt.name)))
+              dt.id,
+              dt.code,
+              dt.name,
+              dt.phase,
+              dt.required,
+              dt.visible_to_auditor,
+              dt.active,
+              dt.master_document_type_id,
+              mdt.code AS master_code
+       FROM document_types dt
+       LEFT JOIN master_document_types mdt ON mdt.id = dt.master_document_type_id
+       WHERE COALESCE(dt.active, true) = true
+       ORDER BY UPPER(TRIM(dt.name)), dt.id DESC
+     ) deduped
+     ORDER BY name ASC`
   );
 
   return result.rows.map((row) => ({

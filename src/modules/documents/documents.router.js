@@ -54,6 +54,7 @@ const {
 } = require("./document-center.repository");
 const {
   PREVIEW_TEMP_ROOT,
+  getCatalogDocumentTypes,
   previewBatch,
   confirmBatch,
   getBatches,
@@ -1217,6 +1218,17 @@ function createDocumentsRouter() {
     }
   });
 
+  // GET /documents/catalog — catálogo activo de tipos documentales (todos los roles autenticados)
+  router.get("/catalog", authMiddleware, async (req, res) => {
+    try {
+      const types = await getCatalogDocumentTypes();
+      return sendJson(res, 200, { ok: true, data: types });
+    } catch (err) {
+      console.error("[documents] GET /catalog:", err.message);
+      return sendJson(res, 500, { ok: false, message: "Error cargando catálogo documental" });
+    }
+  });
+
   router.post(
     "/bulk/preview",
     authMiddleware,
@@ -1249,7 +1261,7 @@ function createDocumentsRouter() {
             batch: payload.batch,
             summary: payload.summary,
             rows: payload.rows,
-            catalog: payload.documentCatalog,
+            catalog: payload.catalogTypes,
           },
         });
       } catch (err) {

@@ -916,8 +916,11 @@ function shell() {
 .nm-pay-tab{display:grid;grid-template-columns:1fr auto;grid-template-areas:"eyebrow count" "title count" "meta count";gap:2px 12px;min-width:260px;padding:14px 16px;border:1px solid rgba(148,163,184,.35);border-radius:18px;background:rgba(255,255,255,.86);box-shadow:0 10px 20px rgba(148,163,184,.12);backdrop-filter:blur(8px)}
 .nm-pay-tab:hover{border-color:#0f766e;background:#fff}
 .nm-pay-tab.active{border-color:#0f766e;background:linear-gradient(135deg,#ecfeff 0%,#f0fdfa 100%);color:#0f172a;box-shadow:0 14px 28px rgba(15,118,110,.15)}
-.nm-pay-tab-eyebrow{grid-area:eyebrow;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#64748b}
+.nm-pay-tab-eyebrow{grid-area:eyebrow;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#64748b;display:flex;align-items:center;gap:5px}
 .nm-pay-tab-title{grid-area:title;font-size:15px;font-weight:800;color:#0f172a}
+.nm-pay-cargo-tabs--dashboard .nm-pay-tab-title{white-space:normal;line-height:1.2;overflow-wrap:break-word;word-break:break-word}
+.nm-pay-tab--operario .nm-pay-tab-title{font-size:12.5px}
+.nm-pay-tab-icon{flex-shrink:0;opacity:.85;display:inline-block}
 .nm-pay-tab-meta{grid-area:meta;font-size:12px;color:#64748b}
 .nm-pay-tab .nm-pay-count{grid-area:count;align-self:center;justify-self:end;min-width:36px;height:36px;font-size:12px;background:#e2e8f0;color:#0f172a}
 .nm-pay-tab.active .nm-pay-count{background:#0f766e;color:#fff}
@@ -1037,7 +1040,13 @@ function shell() {
 .nm-pay-panel{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
 .nm-pay-panel__header{display:flex;flex:0 0 auto;flex-direction:column;gap:6px;min-height:0}
 .nm-pay-panel__body{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}
-.nm-pay-panel__body--scroll{overflow:auto}
+.nm-pay-panel__body--scroll{overflow:hidden}
+/* Novedades agrupadas por colaborador: scroll interno en el panel operacional */
+.nm-pay-panel__body--scroll .nm-nov-grouped-wrap{flex:1 1 auto;min-height:0;overflow-y:auto;padding-bottom:16px}
+/* Mismo scroll en la vista integral (nm-nov-grouped-wrap es hijo directo de nm-pay-scroll-body--operational) */
+.nm-pay-scroll-body--operational .nm-nov-grouped-wrap{flex:1 1 auto;min-height:0;overflow-y:auto;padding-bottom:16px}
+/* Soportes inline: scroll gestionado por nm-sup-inline-list */
+.nm-pay-panel__body--scroll .nm-sup-inline{flex:1 1 auto;min-height:0;overflow:hidden;max-height:none}
 .nm-pay-section-strip{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px}
 .nm-pay-section-strip__main{display:grid;gap:3px}
 .nm-pay-section-strip__title{font-size:12px;font-weight:800;color:#0F172A}
@@ -1342,6 +1351,8 @@ function kpiContextLabel() {
 }
 
 // Barra principal de divisiones visibles
+const _ICON_CHEF_HAT = `<svg class="nm-pay-tab-icon" width="14" height="14" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="6" r="4.5"/><rect x="5" y="8" width="10" height="5"/><rect x="4" y="13" width="12" height="2.5" rx="1"/><rect x="2" y="15.5" width="16" height="2.5" rx="1" opacity=".7"/></svg>`;
+
 function renderCargoTabsBar() {
   if (!activePeriod || !groupsState.positions.length) return "";
   const divisions = divisionMetaList();
@@ -1352,8 +1363,8 @@ function renderCargoTabsBar() {
   return `
   <div class="nm-pay-cargo-tabs nm-pay-cargo-tabs--dashboard">
     ${divisions.map((division) => `
-      <button class="nm-pay-tab ${division.key === currentKey ? "active" : ""}" data-division-key="${division.key}">
-        <span class="nm-pay-tab-eyebrow">Division visible</span>
+      <button class="nm-pay-tab ${division.key === currentKey ? "active" : ""}${division.key === "OPERARIO" ? " nm-pay-tab--operario" : ""}" data-division-key="${division.key}">
+        <span class="nm-pay-tab-eyebrow">${division.key === "OPERARIO" ? _ICON_CHEF_HAT : ""}División visible</span>
         <span class="nm-pay-tab-title">${escapeHtml(division.label)}</span>
         <span class="nm-pay-tab-meta">${division.positions.length} base${division.positions.length !== 1 ? "s" : ""} · ${division.novelties} nov.</span>
         <span class="nm-pay-count">${division.employees}</span>

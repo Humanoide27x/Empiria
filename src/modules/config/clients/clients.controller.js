@@ -248,10 +248,37 @@ async function handleGetContractMunicipalityAssignments(req, res, contractId) {
   sendJson(res, 200, { ok: true, data });
 }
 
+const UNRESTRICTED_ROLES = new Set(["administrador", "auditores_internos"]);
+
 async function handleGetAllMunicipalities(req, res) {
   if (req.method !== "GET") { sendMethodNotAllowed(res); return; }
-  if (!requireAuth(req, res)) return;
-  const data = await getAllMunicipalities();
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  let data = await getAllMunicipalities();
+
+  // For roles with municipality restrictions, filter the catalog to only their assigned ones
+  const user = auth.user;
+  const role = String(user?.role || "").toLowerCase();
+  if (!UNRESTRICTED_ROLES.has(role)) {
+    const assignedNames = Array.isArray(user.municipality_names) && user.municipality_names.length
+      ? user.municipality_names
+      : Array.isArray(user.assignedMunicipalities) && user.assignedMunicipalities.length
+        ? user.assignedMunicipalities
+        : [];
+    const assignedIds = Array.isArray(user.municipality_ids) && user.municipality_ids.length
+      ? user.municipality_ids.map(Number)
+      : [];
+
+    if (assignedIds.length || assignedNames.length) {
+      const normalizedNames = new Set(assignedNames.map(n => String(n).trim().toUpperCase()));
+      data = data.filter(m =>
+        assignedIds.includes(Number(m.id)) ||
+        normalizedNames.has(String(m.name || "").trim().toUpperCase())
+      );
+    }
+  }
+
   sendJson(res, 200, { ok: true, data });
 }
 

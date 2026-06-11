@@ -452,7 +452,7 @@ h3 {
 
 .module-nav-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   width: 100%;
   border: 1px solid transparent;
@@ -477,9 +477,10 @@ h3 {
 
 .module-nav-inline {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
+  flex: 1 1 0;
 }
 
 .module-nav-icon {
@@ -17464,8 +17465,7 @@ body {
   flex-shrink: 0 !important;
 }
 
-/* Sidebar items con truncado de texto */
-.module-nav-title,
+/* Sidebar items con truncado de texto — brand y subetiquetas cortas */
 .sb-brand-title,
 .sb-brand-subtitle,
 .submodule-label {
@@ -17475,9 +17475,18 @@ body {
   min-width: 0 !important;
 }
 
+/* El título del módulo activo debe hacer wrap, nunca truncarse */
+.module-nav-title {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  min-width: 0 !important;
+  word-break: break-word !important;
+}
+
 .module-nav-inline {
   min-width: 0 !important;
-  overflow: hidden !important;
+  overflow: visible !important;
   flex: 1 !important;
 }
 
@@ -25891,6 +25900,7 @@ button.dashboard-kpi-card:disabled {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  grid-template-rows: 1fr;
   gap: 16px;
   overflow: hidden;
 }
@@ -26119,6 +26129,7 @@ button.dashboard-kpi-card:disabled {
 .personnel-expediente-shell {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
 }

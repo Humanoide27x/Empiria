@@ -161,8 +161,7 @@ export function getModuleMeta(moduleKey) {
     },
     personal_operarios: {
       label: "Operarios Manipulador de Alimentos",
-      // HardHat — trabajador de campo
-      icon: iconSvg(`<path d="M2 20h20"/><path d="M12 3a9 9 0 0 1 9 9H3a9 9 0 0 1 9-9z"/><path d="M9 12v1a3 3 0 0 0 6 0v-1"/>`),
+      icon: iconSvg(`<path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6Z"/><line x1="6" x2="18" y1="17" y2="17"/>`),
     },
     personal_equipo: {
       label: "Equipo Mínimo",
@@ -299,6 +298,27 @@ export function getOfficialMunicipalities({ includeFallback = false } = {}) {
   const official = Array.isArray(state.municipalities) ? state.municipalities.filter(Boolean) : [];
   if (official.length) return official;
   return [];
+}
+
+const UNRESTRICTED_ROLES = new Set(["administrador", "auditores_internos"]);
+
+export function getAllowedMunicipalities({ includeFallback = false } = {}) {
+  const all  = getOfficialMunicipalities({ includeFallback });
+  const user = state.currentUser;
+  const role = String(user?.role || "").toLowerCase();
+
+  if (UNRESTRICTED_ROLES.has(role)) return all;
+
+  const allowedNames = Array.isArray(user?.municipality_names) && user.municipality_names.length
+    ? user.municipality_names
+    : Array.isArray(user?.assignedMunicipalities) && user.assignedMunicipalities.length
+      ? user.assignedMunicipalities
+      : [];
+
+  if (!allowedNames.length) return all;
+
+  const normalized = new Set(allowedNames.map(n => String(n).trim().toUpperCase()));
+  return all.filter(m => normalized.has(String(m.name || "").trim().toUpperCase()));
 }
 
 export async function ensureOfficialMunicipalitiesLoaded({ force = false } = {}) {

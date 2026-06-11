@@ -384,7 +384,8 @@ const ROLE_PERMISSIONS = Object.freeze({
   },
 
   [ROLES.HUMAN_RESOURCES]: {
-    scope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
+    scope: SCOPE_RULES.ASSIGNED_MUNICIPALITIES,
+    linkedScope: SCOPE_RULES.LINKED_COMPANY_AND_CONTRACT,
     modules: {
       [MODULES.DASHBOARD]: { allowedActions: [ACTIONS.VIEW] },
       [MODULES.DASHBOARD_HR]: { allowedActions: [ACTIONS.VIEW] },

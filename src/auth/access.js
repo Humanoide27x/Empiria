@@ -53,21 +53,36 @@ function matchesLinkedCompanyAndContract(user, resource = {}) {
 function matchesAssignedMunicipalities(user, resource = {}) {
   if (!user) return false;
 
-  const assigned = Array.isArray(user.assignedMunicipalities)
+  const assignedNames = Array.isArray(user.assignedMunicipalities)
     ? user.assignedMunicipalities.map(normalizeMunicipality).filter(Boolean)
+    : Array.isArray(user.municipality_names)
+      ? user.municipality_names.map(normalizeMunicipality).filter(Boolean)
+      : [];
+
+  const assignedIds = Array.isArray(user.municipality_ids)
+    ? user.municipality_ids.map(Number).filter(n => n > 0)
     : [];
 
-  if (!assigned.length) {
-    return true;
-  }
+  // No municipality restrictions — access is open within the linked scope
+  if (!assignedNames.length && !assignedIds.length) return true;
 
+  // No municipality was specified in the resource — allow (endpoint will filter via municipalityIds)
   const resourceMunicipality = normalizeMunicipality(resource.municipality);
+  const resourceMunId        = resource.municipalityId ? Number(resource.municipalityId) : null;
 
-  if (!resourceMunicipality) {
-    return true;
-  }
+  if (!resourceMunicipality && !resourceMunId) return true;
 
-  return assigned.includes(resourceMunicipality);
+  // Name-based check
+  if (resourceMunicipality && assignedNames.includes(resourceMunicipality)) return true;
+
+  // ID-based check (more reliable)
+  if (resourceMunId && assignedIds.includes(resourceMunId)) return true;
+
+  // If only one type of identifier is present, fall back to allowing when the other matches
+  if (resourceMunicipality && !assignedNames.length && assignedIds.length) return true;
+  if (resourceMunId && !assignedIds.length && assignedNames.length) return true;
+
+  return false;
 }
 
 function matchesUserScope(user, resource = {}) {

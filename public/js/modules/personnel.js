@@ -6,7 +6,7 @@ import {
   isInstitutionalTabEnabled, syncPersonnelDraftField, enforceInputRestrictions,
   syncEmployeeHeaderFromDraft, getDepartmentMunicipalities,
   getCompanyOptionsHtml, getContractOptionsHtml, formatCompany, formatContract,
-  ensureOfficialMunicipalitiesLoaded, getOfficialMunicipalities,
+  ensureOfficialMunicipalitiesLoaded, getOfficialMunicipalities, getAllowedMunicipalities,
   findOfficialMunicipality, normalizeMunicipalityText, getMunicipalityName,
 } from '../utils.js';
 import {
@@ -2286,7 +2286,7 @@ function syncDraftOfficialMunicipality(draft = state.personnelDraft || {}) {
 }
 
 function getOperationalMunicipalityOptions() {
-  return getOfficialMunicipalities({ includeFallback: false }).filter((item) => item?.id && item?.name);
+  return getAllowedMunicipalities({ includeFallback: false }).filter((item) => item?.id && item?.name);
 }
 
 function hasManagedMunicipalitySelection(rawValue = "", municipality) {

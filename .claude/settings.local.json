@@ -136,7 +136,18 @@
       "Bash(echo \"exit: $?\")",
       "Bash(echo \"doc-viewer exit: $?\")",
       "Bash(echo \"rhv exit: $?\")",
-      "Bash(echo \"personnel exit: $?\")"
+      "Bash(echo \"personnel exit: $?\")",
+      "Bash(sed -n '698,702p' public/js/modules/payroll.js)",
+      "Bash(sed -n '826,832p' public/js/modules/payroll.js)",
+      "Bash(sed -n '1042,1046p' public/js/modules/payroll.js)",
+      "Bash(sed -n '60,90p' src/modules/config/clients/clients.routes.js)",
+      "Bash(sed -n '110,145p' src/modules/education/education.routes.js)",
+      "Bash(awk NR>=3093 && NR<=3102 *)",
+      "Bash(awk NR>=12162 && NR<=12175 *)",
+      "Bash(awk NR>=14385 && NR<=14480 *)",
+      "Bash(awk 'NR>=17220 && NR<=17240' \"C:/Users/CORE ULTRA/desktop/empiria-backend/public/styles.css\")",
+      "Bash(awk 'NR>=17467 && NR<=17490' \"C:/Users/CORE ULTRA/desktop/empiria-backend/public/styles.css\")",
+      "Bash(awk NR>=18250 && NR<=18295 *)"
     ]
   }
 }

@@ -65,6 +65,11 @@ function normalizeUser(user) {
   const passwordHash = user.password_hash ?? user.passwordHash ?? null;
   const fullName = user.full_name || user.fullName || user.name || null;
   const roleCode = user.role_code || user.roleCode || user.role || null;
+  const municipalityNames = Array.isArray(user.municipality_names) ? user.municipality_names
+    : Array.isArray(user.assignedMunicipalities) ? user.assignedMunicipalities : [];
+  const municipalityIds = Array.isArray(user.municipality_ids)
+    ? user.municipality_ids.map(Number).filter(n => n > 0)
+    : [];
   return {
     ...user,
     password_hash: passwordHash,
@@ -80,6 +85,9 @@ function normalizeUser(user) {
     mfaSecret: user.mfa_secret ?? user.mfaSecret ?? null,
     mfa_secret: user.mfa_secret ?? user.mfaSecret ?? null,
     name: fullName,
+    municipality_names: municipalityNames,
+    municipality_ids: municipalityIds,
+    assignedMunicipalities: municipalityNames,
   };
 }
 

@@ -14,21 +14,32 @@ function hashPassword(password) {
 function sanitizeUser(user) {
   if (!user) return null;
   const { password_hash, mfa_secret, ...safe } = user;
-  // Normalizar campos para compatibilidad con el sistema de permisos existente
+  const municipalityNames = Array.isArray(safe.municipality_names) ? safe.municipality_names : [];
+  const municipalityIds   = Array.isArray(safe.municipality_ids)
+    ? safe.municipality_ids.map(Number).filter(n => n > 0)
+    : [];
   return {
     ...safe,
-    role:       safe.role_code || safe.role || null,
-    companyId:  safe.company_id   ?? null,
-    contractId: safe.contract_id  ?? null,
-    mfaEnabled: safe.mfa_enabled  || false,
-    mfaSecret:  undefined, // nunca exponer
+    role:                   safe.role_code || safe.role || null,
+    companyId:              safe.company_id   ?? null,
+    contractId:             safe.contract_id  ?? null,
+    mfaEnabled:             safe.mfa_enabled  || false,
+    mfaSecret:              undefined,
+    municipality_names:     municipalityNames,
+    municipality_ids:       municipalityIds,
+    assignedMunicipalities: municipalityNames,
   };
 }
 
 async function findUserByCredentials(username, password) {
   const passwordHash = hashPassword(password);
   const { rows } = await pool.query(
-    `SELECT u.*, r.code as role_from_table
+    `SELECT u.*, r.code as role_from_table,
+            COALESCE((
+              SELECT ARRAY_AGG(m.name ORDER BY m.name)
+              FROM municipalities m
+              WHERE m.id = ANY(u.municipality_ids)
+            ), ARRAY[]::TEXT[]) AS municipality_names
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
      WHERE LOWER(u.username) = LOWER($1) AND u.password_hash = $2 AND u.active = true
@@ -38,14 +49,19 @@ async function findUserByCredentials(username, password) {
   if (!rows.length) return null;
 
   const u = rows[0];
-  // Normalizar role: priorizar role_code guardado en migración, luego roles.code
   u.role = u.role_code || (u.role_from_table ? u.role_from_table.toLowerCase() : null);
+  u.municipality_names = u.municipality_names || [];
   return u;
 }
 
 async function findUserById(userId) {
   const { rows } = await pool.query(
-    `SELECT u.*, r.code as role_from_table
+    `SELECT u.*, r.code as role_from_table,
+            COALESCE((
+              SELECT ARRAY_AGG(m.name ORDER BY m.name)
+              FROM municipalities m
+              WHERE m.id = ANY(u.municipality_ids)
+            ), ARRAY[]::TEXT[]) AS municipality_names
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
      WHERE u.id = $1 AND u.active = true
@@ -56,12 +72,18 @@ async function findUserById(userId) {
 
   const u = rows[0];
   u.role = u.role_code || (u.role_from_table ? u.role_from_table.toLowerCase() : null);
+  u.municipality_names = u.municipality_names || [];
   return u;
 }
 
 async function findUserByUsername(username) {
   const { rows } = await pool.query(
-    `SELECT u.*, r.code as role_from_table
+    `SELECT u.*, r.code as role_from_table,
+            COALESCE((
+              SELECT ARRAY_AGG(m.name ORDER BY m.name)
+              FROM municipalities m
+              WHERE m.id = ANY(u.municipality_ids)
+            ), ARRAY[]::TEXT[]) AS municipality_names
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
      WHERE LOWER(u.username) = LOWER($1) AND u.active = true
@@ -72,6 +94,7 @@ async function findUserByUsername(username) {
 
   const u = rows[0];
   u.role = u.role_code || (u.role_from_table ? u.role_from_table.toLowerCase() : null);
+  u.municipality_names = u.municipality_names || [];
   return u;
 }
 

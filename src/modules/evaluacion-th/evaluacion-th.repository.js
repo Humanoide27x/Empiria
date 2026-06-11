@@ -3,23 +3,33 @@
 const pool = require("../../db/pool");
 
 // ── Helper: obtener IDs de municipio para un coordinador ──────────────────────
-// Usa la tabla user_municipalities. Si no tiene asignaciones (tabla vacía o
-// coordinador sin filas), devuelve TODOS los municipios que tengan operarios
-// activos en esa empresa (fallback para que el módulo no quede vacío).
+// Fuente primaria: columna municipality_ids de la tabla users (misma fuente que
+// usa withModuleProtection en el resto del sistema).
+// Fuente secundaria: tabla user_municipalities (compatibilidad legacy).
+// Fallback final: todos los municipios con operarios activos (solo si no hay asignación).
 async function _resolveMunicipalityIds(coordinadorId, companyId) {
-  // 1. Municipios explícitamente asignados al coordinador
-  const { rows: umRows } = await pool.query(
-    `SELECT um.municipality_id
-     FROM user_municipalities um
-     WHERE um.user_id = $1`,
+  // 1. Columna municipality_ids en users (fuente canónica del sistema)
+  const { rows: userRows } = await pool.query(
+    `SELECT municipality_ids FROM users WHERE id = $1 AND active = true LIMIT 1`,
     [Number(coordinadorId)]
   );
+  if (userRows.length) {
+    const ids = Array.isArray(userRows[0].municipality_ids)
+      ? userRows[0].municipality_ids.map(Number).filter(n => n > 0)
+      : [];
+    if (ids.length) return ids;
+  }
 
+  // 2. Tabla user_municipalities (compatibilidad con asignaciones legacy)
+  const { rows: umRows } = await pool.query(
+    `SELECT municipality_id FROM user_municipalities WHERE user_id = $1`,
+    [Number(coordinadorId)]
+  );
   if (umRows.length) {
     return umRows.map((r) => r.municipality_id);
   }
 
-  // 2. Fallback: todos los municipios que tengan operarios activos en la empresa
+  // 3. Fallback: todos los municipios con operarios activos en la empresa
   const { rows: allMuns } = await pool.query(
     `SELECT DISTINCT municipality_id
      FROM employees
@@ -44,23 +54,17 @@ async function getCoordinadoresTH(companyId) {
        u.full_name                                                                AS name,
        COALESCE(u.email, '')                                                      AS email,
        COALESCE(u.username, '')                                                   AS username,
-       COALESCE(
-         ARRAY_AGG(DISTINCT um.municipality_id)
-           FILTER (WHERE um.municipality_id IS NOT NULL),
-         ARRAY[]::INTEGER[]
-       )                                                                          AS municipality_ids,
-       COALESCE(
-         ARRAY_AGG(DISTINCT m.name ORDER BY m.name)
-           FILTER (WHERE m.name IS NOT NULL),
-         ARRAY[]::TEXT[]
-       )                                                                          AS municipality_names
+       -- Fuente canónica: columna municipality_ids en users (misma que usa el resto del sistema)
+       COALESCE(u.municipality_ids, ARRAY[]::INTEGER[])                           AS municipality_ids,
+       COALESCE((
+         SELECT ARRAY_AGG(m.name ORDER BY m.name)
+         FROM municipalities m
+         WHERE m.id = ANY(u.municipality_ids)
+       ), ARRAY[]::TEXT[])                                                        AS municipality_names
      FROM users u
-     LEFT JOIN user_municipalities um ON um.user_id = u.id
-     LEFT JOIN municipalities    m  ON m.id = um.municipality_id
      WHERE u.role_code = 'talento_humano'
        AND u.active = true
        AND ($1::int IS NULL OR u.company_id = $1)
-     GROUP BY u.id, u.full_name, u.email, u.username
      ORDER BY u.full_name`,
     [companyId ?? null]
   );

@@ -28,10 +28,42 @@ function statusBadge(status) {
 }
 
 function catalogOptions(catalog = [], selected = "") {
-  return catalog.map((code) => {
-    const label = code.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
-    return `<option value="${escapeAttr(code)}"${code === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
-  }).join("");
+  const seen = new Map();
+  for (const t of catalog) {
+    const code  = typeof t === "string" ? t : String(t.code || "");
+    const label = typeof t === "string"
+      ? t.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
+      : String(t.name || t.code || "");
+    if (!code) continue;
+    const key = code.toUpperCase();
+    if (!seen.has(key)) seen.set(key, { code, label });
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.label.localeCompare(b.label, "es"))
+    .map(({ code, label }) =>
+      `<option value="${escapeAttr(code)}"${code === selected ? " selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
+}
+
+async function loadDocumentTypes() {
+  try {
+    const res = await apiFetch("/documents/catalog");
+    return Array.isArray(res?.data) ? res.data : [];
+  } catch {
+    return [];
+  }
+}
+
+function auditDocumentTypes(dbTypes, selectEl) {
+  const dbCodes  = new Set(dbTypes.map((t) => String(t.code || "").toUpperCase()));
+  const visCodes = new Set(
+    Array.from(selectEl?.options || []).map((o) => o.value.toUpperCase()).filter(Boolean)
+  );
+  const missing = [...dbCodes].filter((c) => !visCodes.has(c));
+  if (missing.length) {
+    console.warn("[documents] missing document types in bulk upload selector:", missing);
+  }
 }
 
 function renderMiniSummary(rows = []) {
@@ -202,19 +234,7 @@ function buildDocumentCenterHtml() {
             <div id="dcDocTypeWrapper" class="dc-field">
               <span>Tipo documental</span>
               <select id="dcDocumentTypeKey">
-                <option value="CEDULA_DE_CIUDADANIA">Cédula de ciudadanía</option>
-                <option value="HOJA_DE_VIDA">Hoja de vida</option>
-                <option value="CONTRATO_LABORAL">Contrato laboral</option>
-                <option value="AFILIACION_EPS">Afiliación EPS</option>
-                <option value="AFILIACION_PENSION">Afiliación pensión</option>
-                <option value="AFILIACION_ARL">Afiliación ARL</option>
-                <option value="SISBEN">SISBEN</option>
-                <option value="CERTIFICACION_BANCARIA">Certificación bancaria</option>
-                <option value="CERTIFICADO_RESIDENCIA">Certificado de residencia</option>
-                <option value="CURSO_MANIPULACION_ALIMENTOS">Curso manipulación alimentos</option>
-                <option value="EXAMEN_MANIPULACION_ALIMENTOS">Examen manipulación alimentos</option>
-                <option value="DOTACION">Dotación</option>
-                <option value="OTROS">Otros</option>
+                <option value="" disabled selected>Cargando tipos…</option>
               </select>
             </div>
 
@@ -266,6 +286,19 @@ export function wireBulkEvents() {
   const previewContent = document.getElementById("dcPreviewContent");
 
   if (!fileInput) return;
+
+  // Populate document type selector from the live DB catalog
+  const docTypeSelect = document.getElementById("dcDocumentTypeKey");
+  loadDocumentTypes().then((types) => {
+    if (!docTypeSelect) return;
+    if (types.length) {
+      docTypeSelect.innerHTML = catalogOptions(types);
+      auditDocumentTypes(types, docTypeSelect);
+    } else {
+      docTypeSelect.innerHTML = `<option value="">Error al cargar tipos</option>`;
+      console.warn("[documents] No se pudo cargar el catálogo de tipos documentales desde /documents/catalog");
+    }
+  });
 
   // Show/hide document type selector based on upload mode
   const syncMode = () => {
