@@ -9343,12 +9343,13 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
   const periodLabel = activePeriod?.label || "Periodo activo";
 
   const ALL_TYPES_WITH_CO = [
+    { code: "CUBRIO_TURNO", name: "Cubrió turno", _isCoverTurn: true },
     ...SELECTABLE_NOVELTY_TYPES,
     NOVELTY_TYPES.find((t) => t.code === "CAMBIO_OPERATIVO_COBERTURA"),
   ].filter(Boolean);
 
   const COMMON_CODES = new Set([
-    "PERMISOS_NO_REMUNERADOS","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL",
+    "CUBRIO_TURNO","PERMISOS_NO_REMUNERADOS","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL",
     "SUSPENSION","LUTO","CALAMIDAD_FAMILIAR","FECHA_RETIRO","FECHA_INGRESO",
     "LICENCIA_MATERNIDAD_PATERNIDAD","CITA_MEDICA","DIAS_NO_CLASE",
   ]);
@@ -9372,6 +9373,7 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
 
   function noveltyIcon(code) {
     const icons = {
+      CUBRIO_TURNO:"🔁",
       DIAS_NO_CLASE:"📅",CITA_MEDICA:"🩺",CITA_MEDICA_FAMILIAR:"👪",
       INCAPACIDAD_MEDICA:"🛡️",INCAPACIDAD_ACCIDENTE_LABORAL:"⛑️",
       CALAMIDAD_FAMILIAR:"❤️‍🩹",LUTO:"🕊️",PERMISOS_NO_REMUNERADOS:"✋",
@@ -9445,6 +9447,107 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
     if (!code) {
       return `<div class="nm-nov-form-placeholder"><div>👈</div><p>Selecciona un tipo</p><span>Elige en la columna izquierda para ver el formulario</span></div>`;
     }
+
+    if (code === "CUBRIO_TURNO") {
+      const d = novState.draft;
+      const coverType = d.cover_type || "INTERNA";
+      const obsField = `<div class="nm-nov-form-grid nm-nov-form-grid--1"><div class="nm-nov-form-group"><label>Observaciones</label><textarea class="nm-nov-textarea" id="nmNovObs" placeholder="Observaciones opcionales...">${escapeHtml(d.observations || "")}</textarea></div></div>`;
+      const dateInput = (id, label, req, val) =>
+        `<div class="nm-nov-form-group"><label>${escapeHtml(label)}${req ? ' <span class="nm-req">*</span>' : ""}</label><input type="date" class="nm-nov-input" id="${id}" value="${escapeHtml(val||"")}"></div>`;
+      const textInput = (id, label, req, val, ph) =>
+        `<div class="nm-nov-form-group"><label>${escapeHtml(label)}${req ? ' <span class="nm-req">*</span>' : ""}</label><input type="text" class="nm-nov-input" id="${id}" value="${escapeHtml(val||"")}" placeholder="${escapeHtml(ph||"")}"></div>`;
+
+      const groupEmployees = (activeGroupDetail?.items || [])
+        .filter((e) => Number(e.id) !== Number(item.id))
+        .sort((a, b) => String(a.employee_name || "").localeCompare(String(b.employee_name || ""), "es-CO"));
+      const searchQ = normalized(d._cover_search || "");
+      const filtered = searchQ
+        ? groupEmployees.filter((e) =>
+            normalized(e.employee_name || "").includes(searchQ) ||
+            normalized(e.document_number || e.employee_document || "").includes(searchQ)
+          )
+        : groupEmployees;
+      const empOpts = filtered.map((e) =>
+        `<option value="${escapeHtml(String(e.employee_id))}"${String(e.employee_id) === String(d.cover_employee_id || "") ? " selected" : ""}>${escapeHtml(e.employee_name)} — ${escapeHtml(e.document_number || e.employee_document || "")}</option>`
+      ).join("");
+      const selEmp = groupEmployees.find((e) => String(e.employee_id) === String(d.cover_employee_id || ""));
+
+      const btnStyle = (active) =>
+        `flex:1;padding:10px 8px;border:2px solid ${active?"#3B82F6":"#E2E8F0"};border-radius:8px;background:${active?"#EFF6FF":"#fff"};color:${active?"#1D4ED8":"#374151"};font-weight:${active?"600":"400"};cursor:pointer;font-size:13px;transition:all .15s`;
+
+      return `<div class="nm-nov-form-section">
+        <div class="nm-nov-form-top">
+          <h3>🔁 Cubrió turno</h3>
+        </div>
+        <div class="nm-nov-info" style="margin-bottom:12px">📋 Registra quién cubrió el turno de <strong>${escapeHtml(item.employee_name || "este empleado")}</strong>. Se creará una novedad de Día No Clase vinculada al cubrimiento.</div>
+        <div id="nmNovErrorBox" class="nm-nov-error-box"></div>
+
+        <div class="nm-nov-form-group" style="margin-bottom:14px">
+          <label style="margin-bottom:6px;display:block">Tipo de cubrimiento <span class="nm-req">*</span></label>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="nm-nov-cover-type-btn" data-cover-type="INTERNA" style="${btnStyle(coverType==="INTERNA")}">Interno</button>
+            <button type="button" class="nm-nov-cover-type-btn" data-cover-type="EXTERNA" style="${btnStyle(coverType==="EXTERNA")}">Externo</button>
+          </div>
+        </div>
+
+        <div id="nmNovCoverSecInterna"${coverType !== "INTERNA" ? " hidden" : ""}>
+          <div class="nm-nov-form-group">
+            <label>Buscar empleado</label>
+            <input type="text" class="nm-nov-input" id="nmNovCoverSearch" placeholder="Buscar por nombre o documento..." value="${escapeHtml(d._cover_search || "")}">
+          </div>
+          <div class="nm-nov-form-group">
+            <label>Empleado que cubrió <span class="nm-req">*</span></label>
+            <select class="nm-nov-select" id="nmNovCoverEmployee">
+              <option value="">— Seleccionar empleado —</option>
+              ${empOpts || `<option disabled>No hay otros empleados en el grupo</option>`}
+            </select>
+          </div>
+          ${selEmp ? `<div class="nm-nov-form-grid nm-nov-form-grid--3" style="margin-top:4px">
+            <div class="nm-nov-form-group"><label style="font-size:11px;color:#94A3B8">Documento</label><input class="nm-nov-input" readonly value="${escapeHtml(selEmp.document_number || selEmp.employee_document || "—")}"></div>
+            <div class="nm-nov-form-group"><label style="font-size:11px;color:#94A3B8">Cargo</label><input class="nm-nov-input" readonly value="${escapeHtml(selEmp.operational_position || selEmp.employee_position || "—")}"></div>
+            <div class="nm-nov-form-group"><label style="font-size:11px;color:#94A3B8">Municipio</label><input class="nm-nov-input" readonly value="${escapeHtml(selEmp.municipality_name || selEmp.municipality || "—")}"></div>
+          </div>` : ""}
+        </div>
+
+        <div id="nmNovCoverSecExterna"${coverType !== "EXTERNA" ? " hidden" : ""}>
+          <div class="nm-nov-form-grid nm-nov-form-grid--2">
+            ${textInput("nmNovExtName","Nombre completo",true,d.ext_name||"","Nombre completo del externo")}
+            <div class="nm-nov-form-group">
+              <label>Tipo documento <span class="nm-req">*</span></label>
+              <select class="nm-nov-select" id="nmNovExtDocType">
+                ${[["CC","Cédula de ciudadanía"],["CE","Cédula de extranjería"],["NIT","NIT"],["TI","Tarjeta de identidad"],["PP","Pasaporte"]].map(([v,l])=>`<option value="${v}"${(d.ext_doc_type||"CC")===v?" selected":""}>${l}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <div class="nm-nov-form-grid nm-nov-form-grid--2">
+            ${textInput("nmNovExtDoc","Número documento",true,d.ext_doc||"","Sin puntos ni guiones")}
+            ${textInput("nmNovExtPhone","Teléfono",false,d.ext_phone||"","Opcional")}
+          </div>
+          <div class="nm-nov-form-grid nm-nov-form-grid--2">
+            ${textInput("nmNovExtBank","Banco",false,d.ext_bank||"","Nombre del banco")}
+            <div class="nm-nov-form-group">
+              <label>Tipo de cuenta</label>
+              <select class="nm-nov-select" id="nmNovExtAccountType">
+                <option value="AHORROS"${(d.ext_account_type||"AHORROS")==="AHORROS"?" selected":""}>Ahorros</option>
+                <option value="CORRIENTE"${d.ext_account_type==="CORRIENTE"?" selected":""}>Corriente</option>
+              </select>
+            </div>
+          </div>
+          ${textInput("nmNovExtAccount","Número de cuenta",false,d.ext_account||"","Número de cuenta bancaria")}
+          <div style="margin-top:8px;font-size:12px;color:#64748B;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;padding:8px">
+            <b>Sin deducciones</b> — El externo recibe el valor bruto sin descuento de salud o pensión.<br>
+            Se generarán soportes: cédula, certificación bancaria, cuenta de cobro.
+          </div>
+        </div>
+
+        <div class="nm-nov-form-grid nm-nov-form-grid--2" style="margin-top:14px">
+          ${dateInput("nmNovCoverDate","Fecha del turno",true,d.turn_date||"")}
+          <div class="nm-nov-form-group"><label>Valor del turno</label><input class="nm-nov-input" type="text" value="Se calculará automáticamente" readonly style="color:#94A3B8"></div>
+        </div>
+        ${obsField}
+      </div>`;
+    }
+
     const typeInfo = NOVELTY_TYPES.find((t) => t.code === code);
     const d = novState.draft;
     const impact = renderImpactTags(code);
@@ -9598,6 +9701,25 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
 
   function readDraft() {
     const code = novState.selectedCode;
+    if (code === "CUBRIO_TURNO") {
+      const G = (id) => document.getElementById(id);
+      const prev = novState.draft || {};
+      novState.draft = {
+        cover_type:        prev.cover_type || "INTERNA",
+        _cover_search:     G("nmNovCoverSearch")?.value       ?? prev._cover_search     ?? "",
+        cover_employee_id: G("nmNovCoverEmployee")?.value     || prev.cover_employee_id || "",
+        ext_name:          G("nmNovExtName")?.value?.trim()   ?? prev.ext_name          ?? "",
+        ext_doc_type:      G("nmNovExtDocType")?.value        || prev.ext_doc_type      || "CC",
+        ext_doc:           G("nmNovExtDoc")?.value?.trim()    ?? prev.ext_doc           ?? "",
+        ext_phone:         G("nmNovExtPhone")?.value?.trim()  ?? prev.ext_phone         ?? "",
+        ext_bank:          G("nmNovExtBank")?.value?.trim()   ?? prev.ext_bank          ?? "",
+        ext_account_type:  G("nmNovExtAccountType")?.value   || prev.ext_account_type  || "AHORROS",
+        ext_account:       G("nmNovExtAccount")?.value?.trim()??prev.ext_account        ?? "",
+        turn_date:         G("nmNovCoverDate")?.value         || prev.turn_date         || "",
+        observations:      G("nmNovObs")?.value?.trim()       ?? prev.observations      ?? "",
+      };
+      return;
+    }
     novState.draft = {};
     if (!code) return;
     const G = (id) => document.getElementById(id);
@@ -9617,6 +9739,36 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
     const code = novState.selectedCode;
     const d = novState.draft;
     const errs = [];
+
+    if (code === "CUBRIO_TURNO") {
+      const coverType = d.cover_type || "INTERNA";
+      if (!d.turn_date) errs.push("La fecha del turno es requerida.");
+      if (coverType === "INTERNA") {
+        if (!d.cover_employee_id) errs.push("Debe seleccionar el empleado interno.");
+      } else {
+        if (!d.ext_name) errs.push("El nombre del externo es requerido.");
+        if (!d.ext_doc)  errs.push("El documento del externo es requerido.");
+      }
+      if (errs.length) return { errors: errs };
+      const coverBody = { cover_type: coverType, days: 1 };
+      if (coverType === "INTERNA") {
+        coverBody.internal_employee_id = d.cover_employee_id;
+      } else {
+        coverBody.full_name      = d.ext_name;
+        coverBody.document_number = d.ext_doc;
+        if (d.ext_doc_type)     coverBody.document_type   = d.ext_doc_type;
+        if (d.ext_phone)        coverBody.phone            = d.ext_phone;
+        if (d.ext_bank)         coverBody.bank             = d.ext_bank;
+        if (d.ext_account_type) coverBody.account_type     = d.ext_account_type;
+        if (d.ext_account)      coverBody.account_number   = d.ext_account;
+      }
+      return {
+        isCoverTurn: true,
+        noveltyBody: { novelty_type: "DIAS_NO_CLASE", start_date: d.turn_date, end_date: d.turn_date, days: 1, observations: d.observations || undefined },
+        coverBody,
+        endpoint: createEndpoint,
+      };
+    }
 
     if (code === "CAMBIO_OPERATIVO_COBERTURA") {
       if (!d.municipality) errs.push("Municipio destino es requerido.");
@@ -9659,6 +9811,41 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
     clearModalError();
     const result = collectBody();
     if (result.errors) { showModalError(result.errors.join(" ")); return; }
+
+    if (result.isCoverTurn) {
+      const { noveltyBody, coverBody, endpoint } = result;
+      console.log("[TURN COVER DEBUG]", { activeGroupId, item: { id: item.id, name: item.employee_name }, coverType: coverBody.cover_type, noveltyBody, coverBody, endpoint });
+      novState.saving = true;
+      const saveBtn   = document.getElementById("nmNovSaveBtn");
+      const recalcBtn = document.getElementById("nmNovSaveRecalcBtn");
+      if (saveBtn)   { saveBtn.disabled = true;  saveBtn.textContent = "Guardando…"; }
+      if (recalcBtn) { recalcBtn.disabled = true; }
+      try {
+        const novRes = await apiFetch(endpoint, { method: "POST", body: JSON.stringify(noveltyBody) });
+        const noveltyId = novRes?.data?.id;
+        if (!noveltyId) throw new Error("No se obtuvo el ID de la novedad creada.");
+        await apiFetch(`/payroll/novelties/${noveltyId}/cover`, { method: "POST", body: JSON.stringify(coverBody) });
+        showSuccess("Cubrimiento registrado correctamente.");
+        await reloadWorkArea();
+        if (recalculate && canRecalculate) {
+          try {
+            await apiFetch(`/payroll/groups/${activeGroupId}/calculate`, { method: "POST", body: JSON.stringify({ scope: "all" }) });
+            showSuccess("Nómina recalculada.");
+          } catch (calcErr) {
+            showError("Cubrimiento guardado, pero falló el recálculo: " + calcErr.message);
+          }
+        }
+        closeNovModal();
+      } catch (err) {
+        console.error("[TURN COVER ERROR]", err);
+        showModalError(err.message || "Error al registrar el cubrimiento.");
+        if (saveBtn)   { saveBtn.disabled = false; saveBtn.textContent = "Guardar cubrimiento"; }
+        if (recalcBtn) { recalcBtn.disabled = false; }
+        novState.saving = false;
+      }
+      return;
+    }
+
     const { body, endpoint } = result;
 
     console.log("[NOVELTY SAVE DEBUG]", { activeGroupId, payrollItemId:item.id, employeeId:item.employee_id, selectedType:novState.selectedCode, payload:body, endpoint });
@@ -9695,6 +9882,34 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
     if (NOVELTY_RANGE_TYPES.has(code)||NOVELTY_BUSINESS_RANGE_TYPES.has(code)||NOVELTY_MULTI_PERIOD_TYPES.has(code)||code==="CORRECCION_SEGURIDAD_SOCIAL") {
       wireDateAutocalc("nmNovStartDate","nmNovEndDate","nmNovDays");
     }
+    if (code === "CUBRIO_TURNO") {
+      document.querySelectorAll("[data-cover-type]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          readDraft();
+          novState.draft.cover_type = btn.dataset.coverType;
+          refreshForm();
+        });
+      });
+      document.getElementById("nmNovCoverEmployee")?.addEventListener("change", () => {
+        readDraft();
+        refreshForm();
+      });
+      document.getElementById("nmNovCoverSearch")?.addEventListener("input", (e) => {
+        readDraft();
+        novState.draft._cover_search = e.target.value;
+        refreshForm();
+        const el = document.getElementById("nmNovCoverSearch");
+        if (el) { const l = el.value.length; el.focus(); el.setSelectionRange(l, l); }
+      });
+    }
+  }
+
+  function updateFooterButtons() {
+    const isCover = novState.selectedCode === "CUBRIO_TURNO";
+    const saveBtn   = document.getElementById("nmNovSaveBtn");
+    const recalcBtn = document.getElementById("nmNovSaveRecalcBtn");
+    if (saveBtn)   saveBtn.textContent   = isCover ? "Guardar cubrimiento"              : "Guardar novedad";
+    if (recalcBtn) recalcBtn.textContent = isCover ? "Guardar cubrimiento y recalcular" : "Guardar y recalcular";
   }
 
   function refreshTypeList(filter) {
@@ -9719,6 +9934,7 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
         novState.selectedCode=btn.dataset.novCode;
         refreshTypeList(document.getElementById("nmNovTypeSearch")?.value||"");
         refreshForm();
+        updateFooterButtons();
       });
     });
   }
@@ -9761,6 +9977,7 @@ openNoveltyModal = function openNoveltyModalOperational(itemId) {
 
     wireTypeRowEvents();
     wireFormEvents();
+    updateFooterButtons();
   }
 
   overlay.innerHTML = buildModal();
