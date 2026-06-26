@@ -68,6 +68,59 @@ function noveltyByCode(code) {
   return NOVELTY_TYPES.find((t) => t.code === String(code).toUpperCase()) || null;
 }
 
+const SELECTABLE_NOVELTY_TYPES = NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA");
+const NOVELTY_DATE_TYPES = new Set(["FECHA_INGRESO", "FECHA_RETIRO", "CORRECCION_SEGURIDAD_SOCIAL"]);
+const NOVELTY_RANGE_TYPES = new Set(["INCAPACIDAD_MEDICA", "INCAPACIDAD_ACCIDENTE_LABORAL", "CALAMIDAD_FAMILIAR"]);
+const NOVELTY_BUSINESS_RANGE_TYPES = new Set(["LUTO"]);
+const NOVELTY_MULTI_PERIOD_TYPES = new Set([
+  "INCAPACIDAD_MEDICA",
+  "INCAPACIDAD_ACCIDENTE_LABORAL",
+  "PERMISOS_NO_REMUNERADOS",
+  "SUSPENSION",
+  "LICENCIA_MATERNIDAD_PATERNIDAD",
+  "CALAMIDAD_FAMILIAR",
+]);
+const NOVELTY_TYPE_GROUPS = [
+  {
+    title: "Ausencias y permisos",
+    codes: [
+      "CITA_MEDICA",
+      "CITA_MEDICA_FAMILIAR",
+      "CITACIONES_OFICIALES",
+      "INCAPACIDAD_MEDICA",
+      "INCAPACIDAD_ACCIDENTE_LABORAL",
+      "CALAMIDAD_FAMILIAR",
+      "LUTO",
+      "LICENCIA_MATERNIDAD_PATERNIDAD",
+      "PERMISOS_NO_REMUNERADOS",
+      "SUSPENSION",
+      "DIAS_NO_CLASE",
+    ],
+  },
+  {
+    title: "Vinculación y seguridad social",
+    codes: ["FECHA_INGRESO", "FECHA_RETIRO", "CORRECCION_SEGURIDAD_SOCIAL"],
+  },
+];
+
+function noveltySupportLabels(code) {
+  const required = SUPPORT_REQUIREMENTS[String(code || "").toUpperCase()] || [];
+  return required.map((supportType) => SUPPORT_TYPE_LABELS[supportType] || supportType);
+}
+
+function payrollCompanyLabel(item = {}) {
+  return String(
+    item.subcompany_name ||
+    item.active_company_name ||
+    item.contract_company_name ||
+    item.company_name ||
+    state.currentUser?.activeCompanyName ||
+    state.currentUser?.companyName ||
+    state.currentUser?.company_name ||
+    "Empiria"
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ESTADO DEL MÓDULO
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,7 +453,32 @@ function getPayrollItemSupportsCount(itemId) {
   return (activeGroupDetail?.supports || []).filter((support) => noveltyIds.has(Number(support.novelty_id))).length;
 }
 
+function isPayrollPlaceholderItem(item) {
+  return Boolean(item?.is_placeholder || item?.payroll_status === "NOT_CALCULATED");
+}
+
+function isPayrollGroupClosedForRows() {
+  return Boolean(activeScopeGroupIds.length === 1 && !isGroupEditable(activeGroupDetail?.group));
+}
+
+function payrollNoveltyCreateEndpoint(item) {
+  if (isPayrollPlaceholderItem(item)) {
+    return `/payroll/groups/${item.group_id}/employees/${item.employee_id}/novelties`;
+  }
+  return `/payroll/items/${item.id}/novelties`;
+}
+
+function payrollCambioOperativoEndpoint(item) {
+  if (isPayrollPlaceholderItem(item)) {
+    return `/payroll/groups/${item.group_id}/employees/${item.employee_id}/cambio-operativo`;
+  }
+  return `/payroll/items/${item.id}/cambio-operativo`;
+}
+
 function payrollStatusMeta(item, groupLocked = false) {
+  if (isPayrollPlaceholderItem(item)) {
+    return { key: "not_calculated", label: "Sin calcular", tone: "pending", locked: false };
+  }
   if (item?.reviewed) {
     return { key: "reviewed", label: "Revisado", tone: "success", locked: true };
   }
@@ -432,7 +510,7 @@ function renderPayrollItemFacts(item, novelties = []) {
   <div class="nm-pay-drawer-field"><span>Dias laborados</span><strong>${escapeHtml(String(item.display_worked_days ?? item.worked_days ?? 30))}</strong></div>
   <div class="nm-pay-drawer-field"><span>Ingreso</span><strong>${escapeHtml(fmtDateDMY(hireDate))}</strong></div>
   <div class="nm-pay-drawer-field"><span>Retiro</span><strong>${escapeHtml(fmtDateDMY(retireDate))}</strong></div>
-  <div class="nm-pay-drawer-field"><span>Estado</span><strong>${renderPayrollStatusBadge(item, activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group))}</strong></div>
+  <div class="nm-pay-drawer-field"><span>Estado</span><strong>${renderPayrollStatusBadge(item, isPayrollGroupClosedForRows())}</strong></div>
   <div class="nm-pay-drawer-field nm-pay-drawer-field--wide"><span>Novedades</span><strong>${novelties.length ? `${novelties.length} registrada(s)` : "Sin novedades registradas"}</strong></div>
   <div class="nm-pay-drawer-field nm-pay-drawer-field--wide"><span>Observaciones</span><strong>${escapeHtml(observation || "Sin observaciones registradas")}</strong></div>
 </div>`;
@@ -696,6 +774,64 @@ function shell() {
 .nm-nov-multi-section{border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px;margin-top:8px;background:#fff}
 .nm-nov-multi-section-hdr{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;flex-wrap:wrap}
 .nm-nov-multi-section-body{}
+.nm-nov-shell{display:grid;gap:14px}
+.nm-nov-hero-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(240px,.8fr);gap:12px}
+.nm-nov-panel{padding:14px;border:1px solid #E5EAF3;border-radius:16px;background:#FFFFFF}
+.nm-nov-panel--soft{background:linear-gradient(180deg,#FFFFFF 0%,#F8FBFF 100%)}
+.nm-nov-panel__eyebrow{display:block;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748B;margin-bottom:8px}
+.nm-nov-panel__title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.nm-nov-panel__title strong{font-size:16px;color:#0F172A}
+.nm-nov-panel__title span{font-size:12px;color:#64748B}
+.nm-nov-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.nm-nov-summary-card{display:grid;gap:4px;padding:10px 12px;border:1px solid #E5EAF3;border-radius:12px;background:#F8FBFF}
+.nm-nov-summary-card span{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748B}
+.nm-nov-summary-card strong{font-size:12px;color:#0F172A}
+.nm-nov-flow{display:grid;gap:8px}
+.nm-nov-flow__step{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border:1px solid #E5EAF3;border-radius:12px;background:#FFFFFF}
+.nm-nov-flow__step b{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:999px;background:#DBEAFE;color:#1D4ED8;font-size:11px}
+.nm-nov-flow__step strong{display:block;font-size:12px;color:#0F172A}
+.nm-nov-flow__step span{display:block;margin-top:2px;font-size:11px;color:#64748B}
+.nm-nov-existing-list{display:grid;gap:10px}
+.nm-nov-existing-card{display:grid;gap:10px;padding:12px;border:1px solid #E5EAF3;border-radius:14px;background:#FFFFFF}
+.nm-nov-existing-card__head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.nm-nov-existing-card__copy{display:grid;gap:4px}
+.nm-nov-existing-card__copy strong{font-size:13px;color:#0F172A}
+.nm-nov-existing-card__copy span{font-size:11px;color:#64748B}
+.nm-nov-existing-card__meta{display:flex;gap:8px;flex-wrap:wrap}
+.nm-nov-existing-card__actions{display:flex;gap:8px;flex-wrap:wrap}
+.nm-nov-type-groups{display:grid;gap:12px}
+.nm-nov-type-group{display:grid;gap:8px}
+.nm-nov-type-group__title{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#475569}
+.nm-nov-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.nm-nov-type-card{display:grid;gap:6px;padding:12px;border:1px solid #DCE5F0;border-radius:14px;background:#FFFFFF;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.nm-nov-type-card:hover{border-color:#93C5FD;box-shadow:0 10px 20px rgba(37,99,235,.08);transform:translateY(-1px)}
+.nm-nov-type-card.is-active{border-color:#0F766E;background:#ECFDF5;box-shadow:0 12px 24px rgba(15,118,110,.10)}
+.nm-nov-type-card strong{font-size:13px;color:#0F172A}
+.nm-nov-type-card span{font-size:11px;color:#64748B}
+.nm-nov-type-card__chips{display:flex;gap:6px;flex-wrap:wrap}
+.nm-nov-chip{display:inline-flex;align-items:center;min-height:20px;padding:0 8px;border-radius:999px;background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:700}
+.nm-nov-chip--support{background:#FFF7ED;color:#B45309}
+.nm-nov-chip--active{background:#0F766E;color:#FFFFFF}
+.nm-nov-section-stack{display:grid;gap:12px}
+.nm-nov-section-card{display:grid;gap:12px;padding:14px;border:1px solid #DCE5F0;border-radius:16px;background:#FFFFFF}
+.nm-nov-section-card__head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.nm-nov-section-card__title{display:grid;gap:4px}
+.nm-nov-section-card__title strong{font-size:14px;color:#0F172A}
+.nm-nov-section-card__title span{font-size:11px;color:#64748B}
+.nm-nov-support-box{padding:10px 12px;border:1px dashed #F59E0B;border-radius:12px;background:#FFF7ED;font-size:11px;color:#9A3412;line-height:1.5}
+.nm-nov-support-box strong{display:block;font-size:11px;color:#9A3412;margin-bottom:4px}
+.nm-nov-empty-state{padding:18px;border:1px dashed #CBD5E1;border-radius:14px;background:#F8FAFC;color:#64748B;font-size:12px;text-align:center}
+.nm-nov-actionbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 14px;border:1px solid #E5EAF3;border-radius:16px;background:linear-gradient(180deg,#FFFFFF 0%,#F8FBFF 100%)}
+.nm-nov-actionbar__copy{display:grid;gap:4px}
+.nm-nov-actionbar__copy strong{font-size:12px;color:#0F172A}
+.nm-nov-actionbar__copy span{font-size:11px;color:#64748B}
+.nm-nov-actionbar__buttons{display:flex;gap:8px;flex-wrap:wrap}
+.nm-nov-inline-note{padding:10px 12px;border:1px solid #BFDBFE;border-radius:12px;background:#EFF6FF;font-size:12px;color:#1D4ED8;line-height:1.5}
+.nm-nov-inline-note strong{display:block;margin-bottom:4px}
+.nm-nov-loading{display:grid;gap:10px}
+.nm-nov-skeleton{height:14px;border-radius:999px;background:linear-gradient(90deg,#E2E8F0 0%,#F8FAFC 50%,#E2E8F0 100%);background-size:200% 100%;animation:nmNovPulse 1.4s ease-in-out infinite}
+.nm-nov-skeleton--lg{height:52px;border-radius:16px}
+@keyframes nmNovPulse{0%{background-position:200% 0}100%{background-position:-200% 0}}
 /* ── Vista agrupada por colaborador ──────────────────────────────── */
 .nm-nov-grouped-wrap{display:flex;flex-direction:column;gap:10px;margin-top:6px}
 .nm-nov-grp-card{border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;background:#fff}
@@ -1203,6 +1339,99 @@ function shell() {
 @media (max-width:1200px){.nm-pay-kpis-row{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-pay-filterbar__grid--main{grid-template-columns:repeat(3,minmax(0,1fr))}.nm-turn-hero{grid-template-columns:1fr}.nm-turn-hero__actions{justify-content:flex-start}.nm-turn-hero__stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:900px){.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-pay-filterbar__grid--main .nm-pay-filter--search{grid-column:1/-1}.nm-pay-table-wrap--dashboard{height:auto;min-height:0}.nm-pay-dialog--drawer{width:min(100%,560px)}.nm-turn-hero__stats{grid-template-columns:repeat(2,minmax(0,1fr))}.nm-turns-table{min-width:860px}}
 @media (max-width:640px){.nm-pay-operational-head,.nm-pay-workspace,.nm-pay-cargo-tabs--operational,.nm-pay-alert-strip,.nm-pay-kpis-row{padding-left:8px;padding-right:8px}.nm-pay-kpis-row,.nm-pay-filterbar__grid--main,.nm-pay-drawer-grid{grid-template-columns:1fr}.nm-pay-btn--header{width:100%}.nm-pay-dialog--drawer{width:100%;border-radius:22px 22px 0 0}.nm-turn-hero{padding:16px}.nm-turn-hero__stats{grid-template-columns:1fr}.nm-turn-hero__actions{width:100%}.nm-turn-hero__btn{flex:1 1 100%}}
+
+/* ── Modal novedades V2: 95vw, 2 columnas + accordion ───────────────── */
+.nm-nov-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:2000;padding:12px}
+.nm-nov-modal{width:min(1350px,95vw);height:90vh;background:#fff;border-radius:12px;border:1px solid #E2E8F0;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(15,23,42,.2);overflow:hidden}
+.nm-nov-modal__header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px 10px;border-bottom:1px solid #E2E8F0;flex-shrink:0}
+.nm-nov-modal__header h2{margin:0;font-size:15px;font-weight:800;color:#0F172A}
+.nm-nov-close-btn{border:0;background:none;font-size:22px;line-height:1;color:#94A3B8;cursor:pointer;padding:4px 8px;border-radius:5px;flex-shrink:0}
+.nm-nov-close-btn:hover{background:#F1F5F9;color:#334155}
+.nm-nov-chips{display:flex;align-items:center;gap:5px;padding:7px 20px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;flex-shrink:0;flex-wrap:wrap}
+.nm-nov-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;border:1px solid #E2E8F0;background:#fff;font-size:11px;white-space:nowrap}
+.nm-nov-chip span{color:#94A3B8;font-weight:400}
+.nm-nov-chip strong{color:#0F172A;font-weight:700}
+.nm-nov-chip--pending{background:#FEF3C7;border-color:#FDE68A}
+.nm-nov-chip--pending strong{color:#92400E}
+.nm-nov-chip--calc{background:#DCFCE7;border-color:#BBF7D0}
+.nm-nov-chip--calc strong{color:#166534}
+.nm-nov-layout{display:grid;grid-template-columns:270px 1fr;flex:1 1 0;min-height:0;overflow:hidden}
+.nm-nov-col{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.nm-nov-col--types{border-right:1px solid #E2E8F0;background:#FAFBFC}
+.nm-nov-col--form{background:#fff}
+.nm-nov-col-head{padding:11px 14px 8px;flex-shrink:0;border-bottom:1px solid #F1F5F9}
+.nm-nov-col-head h4{margin:0;font-size:11px;font-weight:800;color:#0F172A;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.06em}
+.nm-nov-col-step{display:inline-flex;width:17px;height:17px;align-items:center;justify-content:center;border-radius:50%;background:#0F766E;color:#fff;font-size:9px;font-weight:800}
+.nm-nov-type-search{padding:7px 10px;flex-shrink:0}
+.nm-nov-type-search input{width:100%;border:1px solid #CBD5E1;border-radius:6px;padding:6px 10px;font-size:12px;color:#0F172A;background:#fff;box-sizing:border-box}
+.nm-nov-type-search input:focus{outline:none;border-color:#0F766E}
+.nm-nov-type-list{flex:1 1 0;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:0}
+.nm-nov-type-group{margin-bottom:4px}
+.nm-nov-type-group__title{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#94A3B8;padding:3px 6px 2px}
+.nm-nov-type-row{width:100%;display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid transparent;border-radius:6px;background:none;cursor:pointer;text-align:left;margin-bottom:1px;transition:background .1s,border-color .1s}
+.nm-nov-type-row:hover{background:#EFF6FF;border-color:#DBEAFE}
+.nm-nov-type-row.is-active{background:#ECFDF5;border-color:#0F766E;box-shadow:0 0 0 1px #0F766E}
+.nm-nov-type-row__icon{font-size:15px;flex-shrink:0;line-height:1}
+.nm-nov-type-row__name{font-size:12px;font-weight:600;color:#0F172A;line-height:1.3;flex:1}
+.nm-nov-type-row.is-active .nm-nov-type-row__name{color:#0F766E;font-weight:700}
+.nm-nov-type-more{width:100%;padding:5px 9px;border:1px dashed #CBD5E1;border-radius:6px;background:none;cursor:pointer;font-size:11px;color:#64748B;text-align:center;margin-top:4px}
+.nm-nov-type-more:hover{background:#F8FAFC;border-color:#94A3B8}
+.nm-nov-form-scroll{flex:1 1 0;overflow-y:auto;padding:16px}
+.nm-nov-form-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#94A3B8;gap:8px;padding:40px;text-align:center}
+.nm-nov-form-placeholder div{font-size:36px}
+.nm-nov-form-placeholder p{margin:0;font-size:13px;font-weight:600;color:#64748B}
+.nm-nov-form-section{display:flex;flex-direction:column;gap:12px}
+.nm-nov-form-top{margin-bottom:4px}
+.nm-nov-form-top h3{margin:0 0 3px;font-size:14px;font-weight:800;color:#0F172A;display:flex;align-items:center;gap:8px}
+.nm-nov-form-impact{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.nm-nov-impact-tag{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;background:#E0E7FF;color:#3730A3}
+.nm-nov-impact-tag--warn{background:#FEF3C7;color:#92400E}
+.nm-nov-impact-tag--muted{background:#F1F5F9;color:#475569}
+.nm-nov-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.nm-nov-form-grid--2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.nm-nov-form-grid--1{grid-template-columns:1fr}
+.nm-nov-form-group{display:flex;flex-direction:column;gap:4px}
+.nm-nov-form-group label{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.04em}
+.nm-nov-req{color:#EF4444}
+.nm-nov-input{border:1px solid #CBD5E1;border-radius:6px;padding:8px 10px;font-size:13px;color:#0F172A;background:#fff;width:100%;box-sizing:border-box}
+.nm-nov-input:focus{outline:none;border-color:#0F766E;box-shadow:0 0 0 2px rgba(15,118,110,.12)}
+.nm-nov-select{border:1px solid #CBD5E1;border-radius:6px;padding:8px 10px;font-size:13px;color:#0F172A;background:#fff;width:100%;box-sizing:border-box;appearance:none}
+.nm-nov-select:focus{outline:none;border-color:#0F766E;box-shadow:0 0 0 2px rgba(15,118,110,.12)}
+.nm-nov-textarea{border:1px solid #CBD5E1;border-radius:6px;padding:8px 10px;font-size:13px;color:#0F172A;background:#fff;width:100%;resize:vertical;min-height:78px;box-sizing:border-box}
+.nm-nov-textarea:focus{outline:none;border-color:#0F766E;box-shadow:0 0 0 2px rgba(15,118,110,.12)}
+.nm-nov-note{padding:8px 10px;border:1px dashed #F59E0B;border-radius:6px;background:#FFFBEB;font-size:11px;color:#92400E;line-height:1.5}
+.nm-nov-info{padding:8px 10px;background:#EFF6FF;border:1px solid #DBEAFE;border-radius:6px;font-size:11px;color:#1E40AF;line-height:1.5}
+.nm-nov-error-box{padding:9px 12px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:12px;color:#B91C1C;line-height:1.5;display:none}
+.nm-nov-error-box.is-visible{display:flex;gap:8px;align-items:flex-start}
+.nm-nov-history{border-top:1px solid #E2E8F0;flex-shrink:0}
+.nm-nov-hist-toggle{width:100%;display:flex;align-items:center;gap:8px;padding:9px 20px;border:0;background:#F8FAFC;cursor:pointer;font-size:12px;font-weight:700;color:#0F172A;text-align:left;border-bottom:1px solid transparent}
+.nm-nov-hist-toggle:hover{background:#F1F5F9}
+.nm-nov-hist-toggle[aria-expanded="true"]{border-bottom-color:#E2E8F0}
+.nm-nov-hist-count{display:inline-flex;padding:0 6px;border-radius:999px;background:#E2E8F0;font-size:11px;font-weight:700;color:#475569}
+.nm-nov-hist-arrow{margin-left:auto;font-size:10px;color:#94A3B8;transition:transform .15s}
+.nm-nov-hist-toggle[aria-expanded="true"] .nm-nov-hist-arrow{transform:rotate(180deg)}
+.nm-nov-hist-body{max-height:240px;overflow-y:auto;padding:10px 20px 12px}
+.nm-nov-hist-body[hidden]{display:none}
+.nm-nov-hist-empty{padding:14px;text-align:center;color:#94A3B8;font-size:12px;border:1px dashed #E2E8F0;border-radius:6px}
+.nm-nov-hist-row{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;padding:7px 10px;border:1px solid #E2E8F0;border-radius:7px;margin-bottom:4px;font-size:12px;background:#fff}
+.nm-nov-hist-row__info strong{display:block;font-weight:700;color:#0F172A}
+.nm-nov-hist-row__info span{display:block;font-size:11px;color:#64748B;margin-top:1px}
+.nm-nov-hist-badge{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;background:#DCFCE7;color:#166534}
+.nm-nov-hist-badge--pending{background:#FEF3C7;color:#92400E}
+.nm-nov-hist-actions{display:flex;gap:4px}
+.nm-nov-hist-btn{border:1px solid #CBD5E1;background:#fff;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600;cursor:pointer;color:#334155}
+.nm-nov-hist-btn:hover{background:#F1F5F9}
+.nm-nov-hist-btn--danger{color:#B91C1C;border-color:#FECACA}
+.nm-nov-hist-btn--danger:hover{background:#FEF2F2}
+.nm-nov-hist-btn:disabled{opacity:.4;cursor:not-allowed}
+.nm-nov-footer{display:flex;align-items:center;gap:8px;padding:10px 20px;border-top:1px solid #E2E8F0;background:#fff;flex-shrink:0}
+.nm-nov-footer-spacer{flex:1}
+.nm-nov-footer-btn{border:1px solid #CBD5E1;background:#fff;border-radius:6px;padding:7px 15px;font-size:13px;font-weight:700;cursor:pointer;color:#334155;white-space:nowrap}
+.nm-nov-footer-btn:hover{background:#F8FAFC}
+.nm-nov-footer-btn--primary{background:#0F766E;color:#fff;border-color:#0F766E}
+.nm-nov-footer-btn--primary:hover{background:#0D6B63}
+.nm-nov-footer-btn:disabled{opacity:.4;cursor:not-allowed}
+@media (max-width:960px){.nm-nov-layout{grid-template-columns:1fr;overflow-y:auto}.nm-nov-col--types{max-height:220px;border-right:0;border-bottom:1px solid #E2E8F0}.nm-nov-chips{display:none}}
 </style>
 <div class="nm-pay-shell">
   <div id="nmPayRoot"></div>
@@ -3645,7 +3874,9 @@ function openNoveltyModal(itemId) {
   const MULTI_PERIOD_TYPES   = new Set(["INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL","PERMISOS_NO_REMUNERADOS","SUSPENSION","LICENCIA_MATERNIDAD_PATERNIDAD","CALAMIDAD_FAMILIAR"]);
   const SELECTABLE           = NOVELTY_TYPES.filter((t) => t.code !== "CAMBIO_OPERATIVO_COBERTURA");
   const item = getPayrollItemById(itemId);
+  if (!item) { showError("No se pudo cargar el empleado para registrar novedades."); return; }
   const currentNovelties = getPayrollItemNovelties(itemId);
+  const createEndpoint = payrollNoveltyCreateEndpoint(item);
 
   const modal = document.getElementById("nmPayModal");
   modal.innerHTML = `
@@ -3837,7 +4068,7 @@ function openNoveltyModal(itemId) {
     const errs = [];
     for (const b of bodies) {
       try {
-        await apiFetch(`/payroll/items/${itemId}/novelties`, { method: "POST", body: JSON.stringify(b) });
+        await apiFetch(createEndpoint, { method: "POST", body: JSON.stringify(b) });
         ok++;
       } catch (e) {
         errs.push(e.message);
@@ -3876,7 +4107,9 @@ function openPayrollItemDetailDrawer(itemId) {
   }
   const novelties = getPayrollItemNovelties(itemId);
   const supportsCount = getPayrollItemSupportsCount(itemId);
-  const groupLocked = activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group);
+  const groupClosed = isPayrollGroupClosedForRows();
+  const groupLocked = activeScopeGroupIds.length !== 1 || groupClosed;
+  const isPlaceholder = isPayrollPlaceholderItem(item);
   const reviewed = Boolean(item.reviewed);
   const canUnlock = reviewed && isTH();
   const modal = document.getElementById("nmPayModal");
@@ -3895,7 +4128,7 @@ function openPayrollItemDetailDrawer(itemId) {
         <h3>${escapeHtml(item.employee_name || "-")}</h3>
         <p>${escapeHtml(item.operational_position || "-")} · ${escapeHtml(item.municipality_name || "-")}</p>
       </div>
-      ${renderPayrollStatusBadge(item, groupLocked && !reviewed)}
+      ${renderPayrollStatusBadge(item, groupClosed && !reviewed)}
     </div>
     ${renderPayrollItemFacts(item, novelties)}
     <div class="nm-pay-drawer-stack">
@@ -3913,9 +4146,9 @@ function openPayrollItemDetailDrawer(itemId) {
       </div>
     </div>
     <div class="nm-pay-drawer-actions">
-      <button class="nm-pay-btn" data-payslip="${item.id}">Desprendible</button>
-      <button class="nm-pay-btn" id="nmDrawerReviewAction" ${(!reviewed && groupLocked) || (reviewed && !canUnlock) ? "disabled" : ""}>${reviewed ? "Desbloquear" : "Revisar"}</button>
-      <button class="nm-pay-btn nm-pay-btn--primary" id="nmDrawerEditNovelty" ${groupLocked || reviewed ? "disabled" : ""}>Editar novedades</button>
+      ${isPlaceholder ? "" : `<button class="nm-pay-btn" data-payslip="${item.id}">Desprendible</button>`}
+      ${isPlaceholder ? "" : `<button class="nm-pay-btn" id="nmDrawerReviewAction" ${(!reviewed && groupLocked) || (reviewed && !canUnlock) ? "disabled" : ""}>${reviewed ? "Desbloquear" : "Revisar"}</button>`}
+      <button class="nm-pay-btn nm-pay-btn--primary" id="nmDrawerEditNovelty" ${groupLocked || reviewed ? "disabled" : ""}>${isPlaceholder ? "Registrar novedades" : "Gestionar novedades"}</button>
     </div>
   </div>
 </div>`;
@@ -4269,6 +4502,8 @@ ${code === "FECHA_RETIRO" ? `
 async function openCambioOperativoModal(itemId) {
   const item = activeGroupDetail?.items?.find((x) => Number(x.id) === Number(itemId));
   if (!item) { showError("Empleado no encontrado en el grupo"); return; }
+  const decoratedItem = decoratePayrollItem(item);
+  const saveEndpoint = payrollCambioOperativoEndpoint(decoratedItem);
 
   const modal = document.getElementById("nmPayModal");
 
@@ -4503,7 +4738,7 @@ async function openCambioOperativoModal(itemId) {
     if (!days || days < 1 || days > 29) { showError("Los días deben estar entre 1 y 29"); return; }
 
     try {
-      await apiFetch(`/payroll/items/${itemId}/cambio-operativo`, {
+      await apiFetch(saveEndpoint, {
         method: "POST",
         body: JSON.stringify({
           new_salary_category:    newCat,
@@ -6255,6 +6490,16 @@ async function confirmDeleteNovelty(noveltyId) {
 function closeAndSendGroup() {
   if (!activeGroupId) return;
   const group   = activeGroupDetail?.group;
+  const materializedEmployees = Number(group?.materialized_employees || activeGroupDetail?.items?.filter((item) => !isPayrollPlaceholderItem(item)).length || 0);
+  if (materializedEmployees <= 0) {
+    showError("No hay empleados calculados. Calcule la nómina antes de cerrar.");
+    return;
+  }
+  const pendingMaterialization = Number(group?.pending_materialization || 0);
+  if (pendingMaterialization > 0) {
+    showError(`No puedes cerrar este grupo porque aún existen ${pendingMaterialization} empleado(s) pendientes de cálculo.`);
+    return;
+  }
   const version = Number(group?.version_number || 1);
   const label   = isGroupReopened(group) ? "Cerrar nuevamente" : "Cerrar y enviar nómina";
   showConfirmModal(
@@ -7769,9 +8014,11 @@ function mergeScopeDetails(details = [], scopeMeta = null) {
 function decoratePayrollItem(item) {
   const divisionKey = classifyPayrollDivision(item.operational_position);
   const area = divisionKey === "OPERARIO" ? OPERARIO_DIVISION_LABEL : classifyPayrollArea(item.operational_position);
-  const stateLabel = item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada
-    ? "RETIRADO EN PERIODO"
-    : item.reviewed ? "REVISADO" : "PENDIENTE";
+  const stateLabel = isPayrollPlaceholderItem(item)
+    ? "SIN CALCULAR"
+    : item.payroll_inclusion_status === "RETIRADA_EN_PERIODO" || item.fecha_retiro_aplicada
+      ? "RETIRADO EN PERIODO"
+      : item.reviewed ? "REVISADO" : "PENDIENTE";
   return { ...item, ui_division: divisionKey, ui_area: area, ui_state: stateLabel };
 }
 
@@ -7854,10 +8101,11 @@ function countNoveltiesWithoutSupport(novelties = [], supports = []) {
 }
 
 function buildOperationalAlerts(filteredItems = [], supporting = { novelties: [], supports: [] }) {
+  const materializedItems = filteredItems.filter((item) => !isPayrollPlaceholderItem(item));
   const alerts = [];
-  const pendingReview = filteredItems.filter((item) => !item.reviewed).length;
+  const pendingReview = materializedItems.filter((item) => !item.reviewed).length;
   const noveltiesWithoutSupport = countNoveltiesWithoutSupport(supporting.novelties || [], supporting.supports || []);
-  const pendingRetirements = filteredItems.filter((item) => (
+  const pendingRetirements = materializedItems.filter((item) => (
     item.retirement_reason
     || item.fecha_retiro_aplicada
     || item.payroll_inclusion_status === "RETIRADA_EN_PERIODO"
@@ -8064,24 +8312,45 @@ renderCargoTabsBar = function renderDivisionTabsIntegral() {
 };
 
 function getOperationalActionState() {
-  const filteredItems = activeGroupDetail ? getFilteredPayrollItems() : [];
+  const scopeItems = activeGroupDetail ? (activeGroupDetail.items || []).map(decoratePayrollItem) : [];
   const group = activeGroupDetail?.group || {};
   const canManageGroup = Boolean(activeScopeGroupIds.length === 1 && activeGroupId);
   const editable = canManageGroup ? Boolean(isGroupEditable(group)) : false;
   const isClosed = canManageGroup && isGroupClosed(group);
   const canReopen = canManageGroup ? Boolean(isClosed && isTH()) : false;
-  const canClose = canManageGroup ? Boolean(editable && filteredItems.length > 0) : false;
+  const materializedItems = scopeItems.filter((item) => !isPayrollPlaceholderItem(item));
+  const pendingMaterialization = scopeItems.filter((item) => isPayrollPlaceholderItem(item)).length;
+  const canClose = canManageGroup ? Boolean(editable && materializedItems.length > 0 && pendingMaterialization === 0) : false;
   const canOpenSlip = selectedPayrollItemsFromFiltered().length === 1;
-  return { canManageGroup, editable, isClosed, canReopen, canClose, canOpenSlip };
+  const canCalculate = canManageGroup ? Boolean(editable) : false;
+  return {
+    canManageGroup,
+    editable,
+    isClosed,
+    canReopen,
+    canClose,
+    canOpenSlip,
+    canCalculate,
+    pendingMaterialization,
+    materializedCount: materializedItems.length,
+  };
 }
 
 function renderOperationalActionsBar() {
   const actionState = getOperationalActionState();
+  const calculateLabel = activeGroupDetail?.group && isGroupReopened(activeGroupDetail.group) ? "Recalcular grupo" : "Calcular grupo";
+  const closeTitle = actionState.pendingMaterialization > 0
+    ? `No puedes cerrar este grupo porque aún existen ${actionState.pendingMaterialization} empleado(s) pendientes de cálculo.`
+    : "";
   return `
 <div class="nm-pay-toolbar-actions">
   <div class="nm-pay-toolbar-actions__main">
     <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact" id="nmFilterApply">Buscar</button>
     <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayExport">Exportar</button>
+    ${actionState.canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayCalculate" ${actionState.canCalculate ? "" : "disabled"}>${calculateLabel}</button>` : ""}
+    ${actionState.canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayClose" ${actionState.canClose ? "" : `disabled title="${escapeHtml(closeTitle || "Aún no es posible cerrar este grupo.")}"`}>Cerrar grupo</button>` : ""}
+    ${actionState.canReopen ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayReopen">Reabrir grupo</button>` : ""}
+    ${actionState.canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayHistory">Historial</button>` : ""}
     <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayOpenSlip" ${actionState.canOpenSlip ? "" : "disabled"}>Desprendibles</button>
     <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayFullscreen" aria-pressed="${payrollUiState.fullscreen ? "true" : "false"}">${payrollUiState.fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button>
     <details class="nm-pay-toolbar-more">
@@ -8089,10 +8358,10 @@ function renderOperationalActionsBar() {
       <div class="nm-pay-toolbar-more__body">
         <button type="button" class="nm-pay-row-menu__item" id="nmToggleAdvancedFilters">${payrollViewState.showAdvancedFilters ? "Ocultar filtros" : "Mas filtros"}</button>
         ${isTH() ? '<button type="button" class="nm-pay-row-menu__item" data-open-create-period="+">+ Nuevo periodo</button>' : ""}
-        ${actionState.editable ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayCalculate">Recalcular</button>' : ""}
-        ${actionState.canManageGroup ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayHistory">Historial</button>' : ""}
-        ${actionState.canClose ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayClose">Cerrar nomina</button>' : ""}
-        ${actionState.canReopen ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayReopen">Reabrir nomina</button>' : ""}
+        ${actionState.canManageGroup ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayCalculateAlt" ${actionState.canCalculate ? "" : "disabled"}>${calculateLabel}</button>` : ""}
+        ${actionState.canManageGroup ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayHistoryAlt">Historial</button>` : ""}
+        ${actionState.canManageGroup ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayCloseAlt" ${actionState.canClose ? "" : `disabled title="${escapeHtml(closeTitle || "Aún no es posible cerrar este grupo.")}"`}>Cerrar nomina</button>` : ""}
+        ${actionState.canReopen ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayReopenAlt">Reabrir nomina</button>' : ""}
         <button type="button" class="nm-pay-row-menu__item" id="nmFilterClear">Limpiar filtros</button>
       </div>
     </details>
@@ -8100,6 +8369,94 @@ function renderOperationalActionsBar() {
   <div class="nm-pay-toolbar-actions__side">${selectedItemIds.size ? `<span class="nm-pay-toolbar-chip">${selectedItemIds.size} seleccionados</span>` : ""}</div>
 </div>`;
 }
+
+renderOperationalActionsBar = function renderOperationalActionsBarOperational() {
+  const actionState = getOperationalActionState();
+  const calculateLabel = actionState.materializedCount > 0 ? "Recalcular grupo" : "Calcular grupo";
+  const closeTitle = actionState.pendingMaterialization > 0
+    ? `No puedes cerrar este grupo porque aÃºn existen ${actionState.pendingMaterialization} empleado(s) pendientes de cÃ¡lculo.`
+    : actionState.materializedCount > 0
+      ? "Cerrar este grupo de nÃ³mina."
+      : "No hay empleados calculados. Calcule la nÃ³mina antes de cerrar.";
+  return `
+<div class="nm-pay-toolbar-actions">
+  <div class="nm-pay-toolbar-actions__main">
+    <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact" id="nmFilterApply">Buscar</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayExportCurrent">Exportar</button>
+    ${actionState.canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayCalculate" ${actionState.canCalculate ? "" : "disabled"}>${calculateLabel}</button>` : ""}
+    ${actionState.canManageGroup && actionState.editable ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayClose" title="${escapeHtml(closeTitle)}">Cerrar grupo</button>` : ""}
+    ${actionState.canReopen ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayReopen">Reabrir grupo</button>` : ""}
+    ${actionState.canManageGroup ? `<button class="nm-pay-btn nm-pay-btn--compact" id="nmPayHistory">Historial</button>` : ""}
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayOpenSlip" ${actionState.canOpenSlip ? "" : "disabled"}>Desprendibles</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayFullscreen" aria-pressed="${payrollUiState.fullscreen ? "true" : "false"}">${payrollUiState.fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button>
+    <details class="nm-pay-toolbar-more">
+      <summary class="nm-pay-btn nm-pay-btn--compact" aria-label="Mas acciones">...</summary>
+      <div class="nm-pay-toolbar-more__body">
+        <button type="button" class="nm-pay-row-menu__item" id="nmToggleAdvancedFilters">${payrollViewState.showAdvancedFilters ? "Ocultar filtros" : "Mas filtros"}</button>
+        ${isTH() ? '<button type="button" class="nm-pay-row-menu__item" data-open-create-period="+">+ Nuevo periodo</button>' : ""}
+        ${actionState.canManageGroup ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayCalculateAlt" ${actionState.canCalculate ? "" : "disabled"}>${calculateLabel}</button>` : ""}
+        ${actionState.canManageGroup ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayHistoryAlt">Historial</button>` : ""}
+        ${actionState.canManageGroup && actionState.editable ? `<button type="button" class="nm-pay-row-menu__item" id="nmPayCloseAlt" title="${escapeHtml(closeTitle)}">Cerrar nomina</button>` : ""}
+        ${actionState.canReopen ? '<button type="button" class="nm-pay-row-menu__item" id="nmPayReopenAlt">Reabrir nomina</button>' : ""}
+        <button type="button" class="nm-pay-row-menu__item" id="nmFilterClear">Limpiar filtros</button>
+      </div>
+    </details>
+  </div>
+  <div class="nm-pay-toolbar-actions__side">${selectedItemIds.size ? `<span class="nm-pay-toolbar-chip">${selectedItemIds.size} seleccionados</span>` : ""}</div>
+</div>`;
+};
+
+renderOperationalActionsBar = function renderOperationalActionsBarOperationalV2() {
+  const actionState = getOperationalActionState();
+  const calculateLabel = actionState.materializedCount > 0 ? "Recalcular grupo" : "Calcular grupo";
+  const manageTitle = actionState.canManageGroup ? "" : "Seleccione un municipio o area puntual para habilitar esta accion.";
+  const calculateTitle = actionState.canManageGroup
+    ? (actionState.canCalculate ? "Calcular o recalcular este grupo." : "El grupo no esta editable para recalcular.")
+    : manageTitle;
+  const closeTitle = actionState.pendingMaterialization > 0
+    ? `No puedes cerrar este grupo porque aun existen ${actionState.pendingMaterialization} empleado(s) pendientes de calculo.`
+    : actionState.materializedCount > 0
+      ? "Cerrar este grupo de nomina."
+      : "No hay empleados calculados. Calcule la nomina antes de cerrar.";
+  const closeDisabledTitle = actionState.canManageGroup
+    ? (actionState.editable ? closeTitle : "El grupo debe estar abierto para cerrar.")
+    : manageTitle;
+  const reopenTitle = actionState.canReopen
+    ? "Reabrir este grupo de nomina."
+    : actionState.canManageGroup
+      ? "Solo Talento Humano puede reabrir grupos cerrados."
+      : manageTitle;
+  const historyTitle = actionState.canManageGroup
+    ? "Consultar historial de cierres y reaperturas."
+    : manageTitle;
+  return `
+<div class="nm-pay-toolbar-actions">
+  <div class="nm-pay-toolbar-actions__main">
+    <button class="nm-pay-btn nm-pay-btn--primary nm-pay-btn--compact" id="nmFilterApply">Buscar</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayExportCurrent">Exportar vista</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayExportPeriod" ${activePeriod ? "" : `disabled title="${escapeHtml("Seleccione un periodo para exportar.")}"`}>Exportar periodo</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayCalculate" ${actionState.canCalculate ? "" : `disabled title="${escapeHtml(calculateTitle)}"`}>${calculateLabel}</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayClose" ${actionState.canManageGroup && actionState.editable ? "" : `disabled title="${escapeHtml(closeDisabledTitle)}"`} title="${escapeHtml(closeDisabledTitle)}">Cerrar grupo</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayReopen" ${actionState.canReopen ? "" : `disabled title="${escapeHtml(reopenTitle)}"`}>Reabrir grupo</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayHistory" ${actionState.canManageGroup ? "" : `disabled title="${escapeHtml(historyTitle)}"`}>Historial</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayOpenSlip" ${actionState.canOpenSlip ? "" : "disabled"}>Desprendibles</button>
+    <button class="nm-pay-btn nm-pay-btn--compact" id="nmPayFullscreen" aria-pressed="${payrollUiState.fullscreen ? "true" : "false"}">${payrollUiState.fullscreen ? "Salir pantalla completa" : "Pantalla completa"}</button>
+    <details class="nm-pay-toolbar-more">
+      <summary class="nm-pay-btn nm-pay-btn--compact" aria-label="Mas acciones">...</summary>
+      <div class="nm-pay-toolbar-more__body">
+        <button type="button" class="nm-pay-row-menu__item" id="nmToggleAdvancedFilters">${payrollViewState.showAdvancedFilters ? "Ocultar filtros" : "Mas filtros"}</button>
+        ${isTH() ? '<button type="button" class="nm-pay-row-menu__item" data-open-create-period="+">+ Nuevo periodo</button>' : ""}
+        <button type="button" class="nm-pay-row-menu__item" id="nmPayCalculateAlt" ${actionState.canCalculate ? "" : `disabled title="${escapeHtml(calculateTitle)}"`}>${calculateLabel}</button>
+        <button type="button" class="nm-pay-row-menu__item" id="nmPayHistoryAlt" ${actionState.canManageGroup ? "" : `disabled title="${escapeHtml(historyTitle)}"`}>Historial</button>
+        <button type="button" class="nm-pay-row-menu__item" id="nmPayCloseAlt" ${actionState.canManageGroup && actionState.editable ? "" : `disabled title="${escapeHtml(closeDisabledTitle)}"`} title="${escapeHtml(closeDisabledTitle)}">Cerrar nomina</button>
+        <button type="button" class="nm-pay-row-menu__item" id="nmPayReopenAlt" ${actionState.canReopen ? "" : `disabled title="${escapeHtml(reopenTitle)}"`}>Reabrir nomina</button>
+        <button type="button" class="nm-pay-row-menu__item" id="nmFilterClear">Limpiar filtros</button>
+      </div>
+    </details>
+  </div>
+  <div class="nm-pay-toolbar-actions__side">${selectedItemIds.size ? `<span class="nm-pay-toolbar-chip">${selectedItemIds.size} seleccionados</span>` : ""}</div>
+</div>`;
+};
 
 render = function renderOperationalNomina() {
   const root = document.getElementById("nmPayRoot");
@@ -8129,7 +8486,7 @@ renderNominaPanel = function renderNominaPanelIntegral() {
     ]
     : [
       { label: "Empleados", value: totals.employees, meta: "Base visible del municipio o área", tone: "employees" },
-      { label: "Pendientes", value: totals.items_pending, meta: "Registros por revisar", tone: "pending" },
+      { label: "Pendientes", value: totals.items_pending, meta: "Pendientes de cálculo o revisión", tone: "pending" },
       { label: "Devengado", value: fmtCOP(totals.total_devengado), meta: "Total acumulado visible", tone: "earned" },
       { label: "Deducciones", value: fmtCOP(totals.total_deducciones), meta: "Descuentos y ajustes", tone: "deductions" },
       { label: "Neto", value: fmtCOP(totals.neto), meta: "Cierre estimado del período", tone: "net" },
@@ -8234,8 +8591,10 @@ renderGroupDetail = function renderGroupDetailOperationalLayout() {
   <div class="nm-pay-panel">
     <div class="nm-pay-panel__header">
       ${!canManageGroup ? `<div class="nm-pay-inline-warning">&#9888; Vista agrupada: seleccione un municipio o area puntual para calcular o cerrar.</div>` : ""}
+      ${canManageGroup && Number(group.pending_materialization || 0) > 0 ? `<div class="nm-pay-inline-warning">&#9888; Hay ${Number(group.pending_materialization || 0)} empleado(s) sin calcular en este grupo. Recalcule antes de cerrar.</div>` : ""}
     </div>
     <div class="${detailBodyClass}">
+      ${renderOperationalActionsBar()}
       ${activeDetailTab === "nomina"
         ? `<div class="nm-pay-tab-panel--table">${renderBulkActionBar(pageData.items)}${renderItemsTable(pageData.items)}${renderPagination(filteredItems.length, pageData.totalPages)}</div>`
         : activeDetailTab === "novedades"
@@ -8249,6 +8608,17 @@ renderGroupDetail = function renderGroupDetailOperationalLayout() {
 };
 
 function renderPayrollRowActionsMenu(item, { groupLocked = false, canCfgSalary = false } = {}) {
+  if (isPayrollPlaceholderItem(item)) {
+    return `
+<details class="nm-pay-row-menu">
+  <summary class="nm-pay-row-menu__trigger" aria-label="Abrir acciones del colaborador">Acciones</summary>
+  <div class="nm-pay-row-menu__body">
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="detail" data-row-item="${item.id}">Ver detalle</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="novelty" data-row-item="${item.id}" ${(activeScopeGroupIds.length !== 1 || isPayrollGroupClosedForRows()) ? "disabled" : ""}>Registrar novedad</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="cambio" data-row-item="${item.id}" ${(activeScopeGroupIds.length !== 1 || isPayrollGroupClosedForRows()) ? "disabled" : ""}>Cambio operativo</button>
+  </div>
+</details>`;
+  }
   const reviewed = Boolean(item.reviewed);
   const editable = !groupLocked && !reviewed;
   const canUnlock = reviewed && isTH();
@@ -8257,7 +8627,8 @@ function renderPayrollRowActionsMenu(item, { groupLocked = false, canCfgSalary =
   <summary class="nm-pay-row-menu__trigger" aria-label="Abrir acciones del colaborador">Acciones</summary>
   <div class="nm-pay-row-menu__body">
     <button type="button" class="nm-pay-row-menu__item" data-row-action="detail" data-row-item="${item.id}">Ver detalle</button>
-    <button type="button" class="nm-pay-row-menu__item" data-row-action="novelty" data-row-item="${item.id}" ${editable ? "" : "disabled"}>Editar novedades</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="novelty" data-row-item="${item.id}" ${editable ? "" : "disabled"}>Gestionar novedades</button>
+    <button type="button" class="nm-pay-row-menu__item" data-row-action="cambio" data-row-item="${item.id}" ${editable ? "" : "disabled"}>Cambio operativo</button>
     <button type="button" class="nm-pay-row-menu__item" data-row-action="payslip" data-row-item="${item.id}">Desprendible</button>
     <button type="button" class="nm-pay-row-menu__item" data-row-action="${reviewed ? "unreview" : "review"}" data-row-item="${item.id}" ${(reviewed && !canUnlock) || (!reviewed && groupLocked) ? "disabled" : ""}>${reviewed ? "Desbloquear" : "Revisar"}</button>
     ${canCfgSalary ? `<button type="button" class="nm-pay-row-menu__item" data-row-action="salary" data-row-item="${item.id}" data-salary-name="${escapeHtml(item.employee_name || "")}" data-salary-doc="${escapeHtml(item.document_number || "")}">Mas acciones</button>` : ""}
@@ -8788,11 +9159,14 @@ renderTurnosSection = function renderTurnosSectionOperational(turns) {
 };
 
 renderItemsTable = function renderItemsTableIntegral(items) {
-  const groupLocked = activeScopeGroupIds.length !== 1 || !isGroupEditable(activeGroupDetail?.group);
+  const scopeLocked = activeScopeGroupIds.length !== 1;
+  const groupClosed = isPayrollGroupClosedForRows();
+  const groupLocked = scopeLocked || groupClosed;
   const consolidated = isConsolidatedView();
   const canCfgSalary = consolidated && isCurrentUserAdmin();
   const hideMunicipalityColumn = payrollViewState.divisionKey === "OPERARIO" && String(payrollViewState.municipalityId || "ALL") !== "ALL";
-  const allIds = items.map((item) => item.id);
+  const actionableItems = items.filter((item) => !isPayrollPlaceholderItem(item));
+  const allIds = actionableItems.map((item) => item.id);
   const allCount = allIds.length;
   const allSelected = allCount > 0 && allIds.every((id) => selectedItemIds.has(id));
   const someSelected = !allSelected && allIds.some((id) => selectedItemIds.has(id));
@@ -8800,8 +9174,9 @@ renderItemsTable = function renderItemsTableIntegral(items) {
   const th = (label, key, cls = "") => `<th class="${cls}" data-sort-col="${key}" style="cursor:pointer">${label}${sortArrow(key)}</th>`;
   return `<div class="nm-pay-table-wrap nm-pay-table-wrap--dashboard"><table class="nm-pay-table nm-pay-table--operational"><thead><tr>${!groupLocked && allCount > 0 ? `<th class="nm-sel-col nm-pay-table__sticky-select"><input type="checkbox" id="nmSelAll" ${allSelected ? "checked" : ""} ${someSelected ? `style="opacity:.7"` : ""}></th>` : `<th class="nm-sel-col nm-pay-table__sticky-select"></th>`}${th("Empleado", "employee_name", "nm-pay-table__sticky-employee")}${th("Documento", "document_number")}${hideMunicipalityColumn ? "" : th("Municipio", "municipality_name")}${th("Categoría salarial", "salary_category")}${th("Días", "worked_days", "num")}${th("Devengado", "total_devengado", "num")}${th("Deducciones", "total_deducciones", "num")}${th("Neto", "neto_pagar", "num")}${th("Estado", "ui_state")}<th>Acciones</th></tr></thead><tbody>${items.map((rawItem) => {
     const item = decoratePayrollItem(rawItem);
+    const isPlaceholder = isPayrollPlaceholderItem(item);
     const reviewed = Boolean(item.reviewed);
-    const locked = groupLocked || reviewed;
+    const locked = groupClosed || reviewed;
     const isSelected = selectedItemIds.has(item.id);
     const tooltip = [
       item.operational_position || "",
@@ -8809,7 +9184,9 @@ renderItemsTable = function renderItemsTableIntegral(items) {
       item.institution_name || "",
       item.site_name || "",
     ].filter(Boolean).join(" · ");
-    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col nm-pay-table__sticky-select">${!groupLocked ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="nm-pay-table__sticky-employee"><div class="nm-pay-employee-cell" title="${escapeHtml(tooltip || item.employee_name || "-")}"><strong>${escapeHtml(item.employee_name || "-")}</strong></div></td><td>${escapeHtml(item.document_number || "-")}</td>${hideMunicipalityColumn ? "" : `<td>${escapeHtml(item.municipality_name || "-")}</td>`}<td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${escapeHtml(String(item.display_worked_days ?? item.worked_days ?? 30))}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><strong>${fmtCOP(item.neto_pagar)}</strong></td><td>${renderPayrollStatusBadge(item, locked && !reviewed)}</td><td class="nm-pay-actions-cell">${renderPayrollRowActionsMenu(item, { groupLocked, canCfgSalary })}</td></tr>`;
+    const placeholderNote = isPlaceholder ? `<span class="nm-pay-cell-note">Pendiente de calculo</span>` : "";
+    const workedDays = isPlaceholder ? "-" : String(item.display_worked_days ?? item.worked_days ?? 30);
+    return `<tr class="${reviewed ? "item-reviewed-row" : ""}${isSelected ? " nm-item-selected-row" : ""}"><td class="nm-sel-col nm-pay-table__sticky-select">${!groupLocked && !isPlaceholder ? `<input type="checkbox" class="nm-item-sel-cb" data-sel-item="${item.id}" ${isSelected ? "checked" : ""}>` : ""}</td><td class="nm-pay-table__sticky-employee"><div class="nm-pay-employee-cell" title="${escapeHtml(tooltip || item.employee_name || "-")}"><strong>${escapeHtml(item.employee_name || "-")}</strong>${placeholderNote}</div></td><td>${escapeHtml(item.document_number || "-")}</td>${hideMunicipalityColumn ? "" : `<td>${escapeHtml(item.municipality_name || "-")}</td>`}<td>${salaryCategoryBadge(item.salary_category)}</td><td class="num">${escapeHtml(workedDays)}</td><td class="num">${fmtCOP(item.total_devengado)}</td><td class="num">${fmtCOP(item.total_deducciones)}</td><td class="num"><strong>${fmtCOP(item.neto_pagar)}</strong></td><td>${renderPayrollStatusBadge(item, locked && !reviewed)}</td><td class="nm-pay-actions-cell">${renderPayrollRowActionsMenu(item, { groupLocked, canCfgSalary })}</td></tr>`;
   }).join("")}</tbody></table></div>`;
 };
 
@@ -8952,6 +9329,445 @@ renderTurnosSection = function renderTurnosSectionOperational(turns) {
 </div>`;
 };
 
+openNoveltyModal = function openNoveltyModalOperational(itemId) {
+  const item = getPayrollItemById(itemId);
+  if (!item) { showError("No se pudo cargar el empleado para registrar novedades."); return; }
+
+  const currentNovelties = getPayrollItemNovelties(itemId)
+    .slice()
+    .sort((a, b) => String(b.created_at || b.start_date || "").localeCompare(String(a.created_at || a.start_date || "")));
+  const createEndpoint = payrollNoveltyCreateEndpoint(item);
+  const cambiOEndpoint = payrollCambioOperativoEndpoint(item);
+  const canRecalculate = Boolean(activeGroupId && activeScopeGroupIds.length === 1 && isGroupEditable(activeGroupDetail?.group));
+  const isPendingEmployee = isPayrollPlaceholderItem(item);
+  const periodLabel = activePeriod?.label || "Periodo activo";
+
+  const ALL_TYPES_WITH_CO = [
+    ...SELECTABLE_NOVELTY_TYPES,
+    NOVELTY_TYPES.find((t) => t.code === "CAMBIO_OPERATIVO_COBERTURA"),
+  ].filter(Boolean);
+
+  const COMMON_CODES = new Set([
+    "PERMISOS_NO_REMUNERADOS","INCAPACIDAD_MEDICA","INCAPACIDAD_ACCIDENTE_LABORAL",
+    "SUSPENSION","LUTO","CALAMIDAD_FAMILIAR","FECHA_RETIRO","FECHA_INGRESO",
+    "LICENCIA_MATERNIDAD_PATERNIDAD","CITA_MEDICA","DIAS_NO_CLASE",
+  ]);
+
+  const novState = { selectedCode: "PERMISOS_NO_REMUNERADOS", draft: {}, saving: false, showAll: false };
+
+  let existingOverlay = document.getElementById("nmNovModalOverlay");
+  if (existingOverlay) existingOverlay.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "nm-nov-modal-overlay";
+  overlay.id = "nmNovModalOverlay";
+  document.body.appendChild(overlay);
+
+  function closeNovModal() {
+    const el = document.getElementById("nmNovModalOverlay");
+    if (el) el.remove();
+    document.removeEventListener("keydown", onEscKey);
+  }
+  function onEscKey(e) { if (e.key === "Escape") closeNovModal(); }
+  document.addEventListener("keydown", onEscKey);
+
+  function noveltyIcon(code) {
+    const icons = {
+      DIAS_NO_CLASE:"📅",CITA_MEDICA:"🩺",CITA_MEDICA_FAMILIAR:"👪",
+      INCAPACIDAD_MEDICA:"🛡️",INCAPACIDAD_ACCIDENTE_LABORAL:"⛑️",
+      CALAMIDAD_FAMILIAR:"❤️‍🩹",LUTO:"🕊️",PERMISOS_NO_REMUNERADOS:"✋",
+      CITACIONES_OFICIALES:"📋",LICENCIA_MATERNIDAD_PATERNIDAD:"🍼",
+      SUSPENSION:"⏸️",FECHA_INGRESO:"🟢",FECHA_RETIRO:"🔴",
+      CAMBIO_OPERATIVO_COBERTURA:"🔄",CORRECCION_SEGURIDAD_SOCIAL:"🔧",
+    };
+    return icons[code] || "📌";
+  }
+
+  function renderChips() {
+    const doc = item.document_number || item.employee_document || "—";
+    const cargo = item.operational_position || item.employee_position || "—";
+    const mun = item.municipality_name || item.municipality || "—";
+    const statusClass = isPendingEmployee ? "nm-nov-chip--pending" : "nm-nov-chip--calc";
+    const statusText = isPendingEmployee ? "Sin calcular" : "Calculado";
+    return `
+      <div class="nm-nov-chip"><span>Doc</span><strong>${escapeHtml(doc)}</strong></div>
+      <div class="nm-nov-chip ${statusClass}"><span>Estado</span><strong>${statusText}</strong></div>
+      <div class="nm-nov-chip"><span>Cargo</span><strong>${escapeHtml(cargo)}</strong></div>
+      <div class="nm-nov-chip"><span>Municipio</span><strong>${escapeHtml(mun)}</strong></div>
+      <div class="nm-nov-chip"><span>Período</span><strong>${escapeHtml(periodLabel)}</strong></div>
+    `;
+  }
+
+  function renderTypeList(filter) {
+    const q = (filter || "").trim().toLowerCase();
+    const visible = ALL_TYPES_WITH_CO.filter((t) =>
+      !q || t.name.toLowerCase().includes(q) || t.code.toLowerCase().includes(q)
+    );
+    const common = visible.filter((t) => COMMON_CODES.has(t.code));
+    const extra = visible.filter((t) => !COMMON_CODES.has(t.code));
+    const showAllNow = novState.showAll || !!q || extra.some((t) => t.code === novState.selectedCode);
+
+    function typeRow(t) {
+      const active = t.code === novState.selectedCode ? " is-active" : "";
+      return `<button class="nm-nov-type-row${active}" data-nov-code="${escapeHtml(t.code)}" type="button">
+        <span class="nm-nov-type-row__icon">${noveltyIcon(t.code)}</span>
+        <span class="nm-nov-type-row__name">${escapeHtml(t.name)}</span>
+      </button>`;
+    }
+
+    let html = "";
+    if (common.length) {
+      html += `<div class="nm-nov-type-group"><div class="nm-nov-type-group__title">Más comunes</div>${common.map(typeRow).join("")}</div>`;
+    }
+    if (extra.length) {
+      if (!showAllNow) {
+        html += `<button class="nm-nov-type-more" id="nmNovShowAll" type="button">+ Ver ${extra.length} tipos adicionales</button>`;
+      } else {
+        html += `<div class="nm-nov-type-group"><div class="nm-nov-type-group__title">Otros tipos</div>${extra.map(typeRow).join("")}</div>`;
+      }
+    }
+    if (!visible.length) {
+      html = `<div style="padding:16px;text-align:center;color:#94A3B8;font-size:12px">Sin resultados para "${escapeHtml(q)}"</div>`;
+    }
+    return html;
+  }
+
+  function renderImpactTags(code) {
+    const t = NOVELTY_TYPES.find((x) => x.code === code);
+    if (!t) return "";
+    const tags = [];
+    if (t.affects_salary) tags.push(`<span class="nm-nov-impact-tag nm-nov-impact-tag--warn">Afecta salario</span>`);
+    if (t.affects_transport) tags.push(`<span class="nm-nov-impact-tag">Afecta transporte</span>`);
+    if (t.affects_additional) tags.push(`<span class="nm-nov-impact-tag nm-nov-impact-tag--muted">Afecta adicional</span>`);
+    return tags.length ? `<div class="nm-nov-form-impact">${tags.join("")}</div>` : "";
+  }
+
+  function renderFormBody(code) {
+    if (!code) {
+      return `<div class="nm-nov-form-placeholder"><div>👈</div><p>Selecciona un tipo</p><span>Elige en la columna izquierda para ver el formulario</span></div>`;
+    }
+    const typeInfo = NOVELTY_TYPES.find((t) => t.code === code);
+    const d = novState.draft;
+    const impact = renderImpactTags(code);
+
+    const obsField = `<div class="nm-nov-form-grid nm-nov-form-grid--1"><div class="nm-nov-form-group"><label>Observaciones</label><textarea class="nm-nov-textarea" id="nmNovObs" placeholder="Observaciones opcionales...">${escapeHtml(d.observations || "")}</textarea></div></div>`;
+    const dateInput = (id, label, req, val) =>
+      `<div class="nm-nov-form-group"><label>${escapeHtml(label)}${req ? ' <span class="nm-req">*</span>' : ""}</label><input type="date" class="nm-nov-input" id="${id}" value="${escapeHtml(val||"")}"></div>`;
+    const numInput = (id, label, req, val, ph) =>
+      `<div class="nm-nov-form-group"><label>${escapeHtml(label)}${req ? ' <span class="nm-req">*</span>' : ""}</label><input type="number" class="nm-nov-input" id="${id}" value="${escapeHtml(String(val??``))}" placeholder="${escapeHtml(ph||"")}" min="0" step="0.5"></div>`;
+    const textInput = (id, label, req, val, ph) =>
+      `<div class="nm-nov-form-group"><label>${escapeHtml(label)}${req ? ' <span class="nm-req">*</span>' : ""}</label><input type="text" class="nm-nov-input" id="${id}" value="${escapeHtml(val||"")}" placeholder="${escapeHtml(ph||"")}"></div>`;
+
+    let formHtml = "";
+
+    if (code === "CAMBIO_OPERATIVO_COBERTURA") {
+      formHtml = `
+        <div class="nm-nov-info">⚠️ Registra un cambio de municipio, institución o sede durante el período.</div>
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${textInput("nmNovMunicipio","Municipio destino",true,d.municipality||"")}
+          ${textInput("nmNovInstitucion","Institución",false,d.institution||"")}
+        </div>
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${textInput("nmNovSede","Sede",false,d.sede||"")}
+          <div class="nm-nov-form-group"><label>Modalidad</label><select class="nm-nov-select" id="nmNovModalidad">
+            <option value="">— Seleccionar —</option>
+            ${["Presencial","Virtual","Híbrida","A distancia"].map((m)=>`<option value="${m}"${d.modality===m?" selected":""}>${m}</option>`).join("")}
+          </select></div>
+        </div>
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${dateInput("nmNovStartDate","Fecha inicio",true,d.start_date)}
+          ${dateInput("nmNovEndDate","Fecha fin",false,d.end_date)}
+        </div>
+        ${obsField}`;
+    } else if (code === "FECHA_RETIRO") {
+      formHtml = `
+        ${dateInput("nmNovDate","Fecha de retiro",true,d.novelty_date)}
+        <div class="nm-nov-form-group"><label>Motivo <span class="nm-req">*</span></label>
+          <select class="nm-nov-select" id="nmNovRetiroMotivo">
+            <option value="">— Seleccionar —</option>
+            ${[["renuncia","Renuncia voluntaria"],["disminucion_cupos","Disminución de cupos"],["justa_causa","Terminación con justa causa"],["vencimiento_contrato","Vencimiento de contrato"],["mutuo_acuerdo","Mutuo acuerdo"],["abandono_cargo","Abandono del cargo"],["otro","Otro"]].map(([v,l])=>`<option value="${v}"${d.retirement_reason===v?" selected":""}>${l}</option>`).join("")}
+          </select>
+        </div>
+        ${obsField}`;
+    } else if (code === "FECHA_INGRESO" || code === "CITA_MEDICA" || code === "CITA_MEDICA_FAMILIAR" || code === "CITACIONES_OFICIALES") {
+      formHtml = `
+        ${dateInput("nmNovDate",code==="FECHA_INGRESO"?"Fecha de ingreso":"Fecha",true,d.novelty_date||d.start_date)}
+        ${obsField}`;
+    } else if (code === "CORRECCION_SEGURIDAD_SOCIAL") {
+      formHtml = `
+        <div class="nm-nov-info">📌 Registra una corrección en los días de Seguridad Social del empleado.</div>
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${dateInput("nmNovStartDate","Fecha inicio",true,d.start_date)}
+          ${dateInput("nmNovEndDate","Fecha fin",true,d.end_date)}
+        </div>
+        ${numInput("nmNovDays","Días",true,d.days,"Nº días")}
+        ${obsField}`;
+    } else if (NOVELTY_RANGE_TYPES.has(code) || NOVELTY_BUSINESS_RANGE_TYPES.has(code)) {
+      const isBiz = NOVELTY_BUSINESS_RANGE_TYPES.has(code);
+      formHtml = `
+        ${code.startsWith("INCAPACIDAD") ? `<div class="nm-nov-note">📋 Recuerda adjuntar el soporte médico correspondiente.</div>` : ""}
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${dateInput("nmNovStartDate","Fecha inicio",true,d.start_date)}
+          ${dateInput("nmNovEndDate","Fecha fin",true,d.end_date)}
+        </div>
+        ${numInput("nmNovDays",isBiz?"Días hábiles":"Días",true,d.days,"Se calcula automático")}
+        ${obsField}`;
+    } else {
+      formHtml = `
+        ${NOVELTY_MULTI_PERIOD_TYPES.has(code) ? `<div class="nm-nov-info">📅 Esta novedad puede abarcar varios períodos.</div>` : ""}
+        <div class="nm-nov-form-grid nm-nov-form-grid--2">
+          ${dateInput("nmNovStartDate","Fecha inicio",true,d.start_date)}
+          ${dateInput("nmNovEndDate","Fecha fin",true,d.end_date)}
+        </div>
+        ${numInput("nmNovDays","Días",true,d.days,"Se calcula automático")}
+        ${obsField}`;
+    }
+
+    return `<div class="nm-nov-form-section">
+      <div class="nm-nov-form-top">
+        <h3>${noveltyIcon(code)} ${escapeHtml(typeInfo?.name || code)}</h3>
+        ${impact}
+      </div>
+      <div id="nmNovErrorBox" class="nm-nov-error-box"></div>
+      ${formHtml}
+    </div>`;
+  }
+
+  function renderHistory() {
+    if (!currentNovelties.length) {
+      return `<div class="nm-nov-hist-empty">Sin novedades registradas en este período</div>`;
+    }
+    return currentNovelties.map((nov) => {
+      const t = NOVELTY_TYPES.find((x) => x.code === nov.novelty_type);
+      const s = String(nov.start_date || nov.novelty_date || "").slice(0,10);
+      const e = String(nov.end_date || "").slice(0,10);
+      const dateStr = !s ? "Sin fecha" : (e && e !== s ? `${s} → ${e}` : s);
+      const d = nov.days ?? nov.days_count ?? "";
+      const daysStr = d !== "" && d !== null ? ` · ${d} día${d==1?"":"s"}` : "";
+      const isPending = !!nov.is_pending;
+      const canDel = !isPayrollGroupClosedForRows() && !nov.reviewed;
+      return `<div class="nm-nov-hist-row">
+        <div class="nm-nov-hist-row__info">
+          <strong>${noveltyIcon(nov.novelty_type)} ${escapeHtml(t?.name || nov.novelty_type)}</strong>
+          <span>${escapeHtml(dateStr)}${escapeHtml(daysStr)}${nov.observations ? ` · ${escapeHtml(String(nov.observations).slice(0,60))}` : ""}</span>
+        </div>
+        <span class="nm-nov-hist-badge${isPending?" nm-nov-hist-badge--pending":""}">${isPending?"Pendiente":"Calculada"}</span>
+        <span style="font-size:11px;color:#94A3B8">${String(nov.created_at||"").slice(0,10)}</span>
+        <div class="nm-nov-hist-actions">
+          <button class="nm-nov-hist-btn nm-nov-hist-btn--danger" data-del-nov="${nov.id}" ${canDel?"":"disabled"}>✕</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function buildModal() {
+    const histCount = currentNovelties.length;
+    return `<div class="nm-nov-modal" role="dialog" aria-modal="true">
+      <div class="nm-nov-modal__header">
+        <h2>Registrar novedad — ${escapeHtml(item.employee_name || "Empleado")}</h2>
+        <button class="nm-nov-close-btn" id="nmNovCloseBtn" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="nm-nov-chips">${renderChips()}</div>
+      <div class="nm-nov-layout">
+        <div class="nm-nov-col nm-nov-col--types">
+          <div class="nm-nov-col-head"><h4><span class="nm-nov-col-step">1</span> Tipo de novedad</h4></div>
+          <div class="nm-nov-type-search"><input type="text" id="nmNovTypeSearch" placeholder="🔍 Buscar tipo..."></div>
+          <div class="nm-nov-type-list" id="nmNovTypeList">${renderTypeList()}</div>
+        </div>
+        <div class="nm-nov-col nm-nov-col--form">
+          <div class="nm-nov-col-head"><h4><span class="nm-nov-col-step">2</span> Información de la novedad</h4></div>
+          <div class="nm-nov-form-scroll"><div id="nmNovFormBody">${renderFormBody(novState.selectedCode)}</div></div>
+        </div>
+      </div>
+      <div class="nm-nov-history">
+        <button class="nm-nov-hist-toggle" id="nmNovHistToggle" aria-expanded="false" type="button">
+          Novedades registradas del empleado
+          <span class="nm-nov-hist-count">${histCount}</span>
+          <span class="nm-nov-hist-arrow">▼</span>
+        </button>
+        <div class="nm-nov-hist-body" id="nmNovHistBody" hidden>${renderHistory()}</div>
+      </div>
+      <div class="nm-nov-footer">
+        <button class="nm-nov-footer-btn" id="nmNovCancelBtn" type="button">Cancelar</button>
+        <button class="nm-nov-footer-btn" id="nmNovClearBtn" type="button">Limpiar</button>
+        <div class="nm-nov-footer-spacer"></div>
+        <button class="nm-nov-footer-btn nm-nov-footer-btn--primary" id="nmNovSaveBtn" type="button">Guardar novedad</button>
+        ${canRecalculate ? `<button class="nm-nov-footer-btn nm-nov-footer-btn--primary" id="nmNovSaveRecalcBtn" type="button">Guardar y recalcular</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function readDraft() {
+    const code = novState.selectedCode;
+    novState.draft = {};
+    if (!code) return;
+    const G = (id) => document.getElementById(id);
+    if (code === "CAMBIO_OPERATIVO_COBERTURA") {
+      novState.draft = { municipality:G("nmNovMunicipio")?.value?.trim()||"", institution:G("nmNovInstitucion")?.value?.trim()||"", sede:G("nmNovSede")?.value?.trim()||"", modality:G("nmNovModalidad")?.value||"", start_date:G("nmNovStartDate")?.value||"", end_date:G("nmNovEndDate")?.value||"", observations:G("nmNovObs")?.value?.trim()||"" };
+    } else if (code === "FECHA_RETIRO") {
+      novState.draft = { novelty_date:G("nmNovDate")?.value||"", retirement_reason:G("nmNovRetiroMotivo")?.value||"", observations:G("nmNovObs")?.value?.trim()||"" };
+    } else if (code==="FECHA_INGRESO"||code==="CITA_MEDICA"||code==="CITA_MEDICA_FAMILIAR"||code==="CITACIONES_OFICIALES") {
+      novState.draft = { novelty_date:G("nmNovDate")?.value||"", observations:G("nmNovObs")?.value?.trim()||"" };
+    } else {
+      novState.draft = { start_date:G("nmNovStartDate")?.value||"", end_date:G("nmNovEndDate")?.value||"", days:G("nmNovDays")?.value||"", observations:G("nmNovObs")?.value?.trim()||"" };
+    }
+  }
+
+  function collectBody() {
+    readDraft();
+    const code = novState.selectedCode;
+    const d = novState.draft;
+    const errs = [];
+
+    if (code === "CAMBIO_OPERATIVO_COBERTURA") {
+      if (!d.municipality) errs.push("Municipio destino es requerido.");
+      if (!d.start_date) errs.push("Fecha de inicio es requerida.");
+      if (errs.length) return { errors: errs };
+      return { body: { municipality:d.municipality, institution:d.institution||undefined, sede:d.sede||undefined, modality:d.modality||undefined, start_date:d.start_date, end_date:d.end_date||undefined, observations:d.observations||undefined }, endpoint: cambiOEndpoint };
+    }
+
+    const isDateType = NOVELTY_DATE_TYPES.has(code)||code==="CITA_MEDICA"||code==="CITA_MEDICA_FAMILIAR"||code==="CITACIONES_OFICIALES";
+    if (isDateType) {
+      const date = d.novelty_date || d.start_date;
+      if (!date) errs.push("La fecha es requerida.");
+      if (code==="FECHA_RETIRO"&&!d.retirement_reason) errs.push("El motivo de retiro es requerido.");
+      if (errs.length) return { errors: errs };
+      const body = { novelty_type:code, novelty_date:date, observations:d.observations||undefined };
+      if (code==="FECHA_RETIRO") body.retirement_reason = d.retirement_reason;
+      return { body, endpoint: createEndpoint };
+    }
+
+    if (!d.start_date) errs.push("La fecha de inicio es requerida.");
+    if (!d.end_date) errs.push("La fecha de fin es requerida.");
+    if (!d.days||Number(d.days)<=0) errs.push("El número de días es requerido.");
+    if (errs.length) return { errors: errs };
+    return { body: { novelty_type:code, start_date:d.start_date, end_date:d.end_date, days:Number(d.days), observations:d.observations||undefined }, endpoint: createEndpoint };
+  }
+
+  function showModalError(msg) {
+    const el = document.getElementById("nmNovErrorBox");
+    if (!el) return;
+    el.className = "nm-nov-error-box is-visible";
+    el.textContent = "⚠️ " + msg;
+  }
+  function clearModalError() {
+    const el = document.getElementById("nmNovErrorBox");
+    if (el) { el.className = "nm-nov-error-box"; el.textContent = ""; }
+  }
+
+  async function saveNovModal(recalculate) {
+    if (novState.saving) return;
+    clearModalError();
+    const result = collectBody();
+    if (result.errors) { showModalError(result.errors.join(" ")); return; }
+    const { body, endpoint } = result;
+
+    console.log("[NOVELTY SAVE DEBUG]", { activeGroupId, payrollItemId:item.id, employeeId:item.employee_id, selectedType:novState.selectedCode, payload:body, endpoint });
+
+    novState.saving = true;
+    const saveBtn = document.getElementById("nmNovSaveBtn");
+    const recalcBtn = document.getElementById("nmNovSaveRecalcBtn");
+    if (saveBtn) { saveBtn.disabled=true; saveBtn.textContent="Guardando…"; }
+    if (recalcBtn) recalcBtn.disabled=true;
+    try {
+      await apiFetch(endpoint, { method:"POST", body:JSON.stringify(body) });
+      showSuccess("Novedad registrada correctamente.");
+      await reloadWorkArea();
+      if (recalculate && canRecalculate) {
+        try {
+          await apiFetch(`/payroll/groups/${activeGroupId}/calculate`, { method:"POST", body:JSON.stringify({ scope:"all" }) });
+          showSuccess("Nómina recalculada.");
+        } catch (calcErr) {
+          showError("Novedad guardada, pero falló el recálculo: " + calcErr.message);
+        }
+      }
+      closeNovModal();
+    } catch (err) {
+      console.error("[NOVELTY SAVE ERROR]", err);
+      showModalError(err.message || "Error al guardar la novedad.");
+      if (saveBtn) { saveBtn.disabled=false; saveBtn.textContent="Guardar novedad"; }
+      if (recalcBtn) recalcBtn.disabled=false;
+      novState.saving=false;
+    }
+  }
+
+  function wireFormEvents() {
+    const code = novState.selectedCode;
+    if (NOVELTY_RANGE_TYPES.has(code)||NOVELTY_BUSINESS_RANGE_TYPES.has(code)||NOVELTY_MULTI_PERIOD_TYPES.has(code)||code==="CORRECCION_SEGURIDAD_SOCIAL") {
+      wireDateAutocalc("nmNovStartDate","nmNovEndDate","nmNovDays");
+    }
+  }
+
+  function refreshTypeList(filter) {
+    const listEl = document.getElementById("nmNovTypeList");
+    if (listEl) listEl.innerHTML = renderTypeList(filter);
+    wireTypeRowEvents();
+  }
+  function refreshForm() {
+    const formEl = document.getElementById("nmNovFormBody");
+    if (formEl) formEl.innerHTML = renderFormBody(novState.selectedCode);
+    wireFormEvents();
+  }
+
+  function wireTypeRowEvents() {
+    document.getElementById("nmNovShowAll")?.addEventListener("click",()=>{
+      novState.showAll=true;
+      refreshTypeList(document.getElementById("nmNovTypeSearch")?.value||"");
+    });
+    document.querySelectorAll("[data-nov-code]").forEach((btn)=>{
+      btn.addEventListener("click",()=>{
+        readDraft();
+        novState.selectedCode=btn.dataset.novCode;
+        refreshTypeList(document.getElementById("nmNovTypeSearch")?.value||"");
+        refreshForm();
+      });
+    });
+  }
+
+  function wireAll() {
+    document.getElementById("nmNovCloseBtn")?.addEventListener("click",closeNovModal);
+    document.getElementById("nmNovCancelBtn")?.addEventListener("click",closeNovModal);
+    overlay.addEventListener("click",(e)=>{ if(e.target===overlay) closeNovModal(); });
+
+    document.getElementById("nmNovClearBtn")?.addEventListener("click",()=>{ novState.draft={}; refreshForm(); });
+    document.getElementById("nmNovSaveBtn")?.addEventListener("click",()=>saveNovModal(false));
+    document.getElementById("nmNovSaveRecalcBtn")?.addEventListener("click",()=>saveNovModal(true));
+
+    document.getElementById("nmNovHistToggle")?.addEventListener("click",()=>{
+      const t=document.getElementById("nmNovHistToggle");
+      const b=document.getElementById("nmNovHistBody");
+      const exp=t.getAttribute("aria-expanded")==="true";
+      t.setAttribute("aria-expanded",String(!exp));
+      if(b) b.hidden=exp;
+    });
+
+    document.querySelectorAll("[data-del-nov]").forEach((btn)=>{
+      btn.addEventListener("click",async()=>{
+        const novId=btn.dataset.delNov;
+        if(!novId||!confirm("¿Eliminar esta novedad?")) return;
+        btn.disabled=true;
+        try {
+          await apiFetch(`/payroll/novelties/${novId}`,{method:"DELETE"});
+          showSuccess("Novedad eliminada.");
+          await reloadWorkArea();
+          closeNovModal();
+        } catch(err) {
+          showError(err.message||"Error al eliminar la novedad.");
+          btn.disabled=false;
+        }
+      });
+    });
+
+    document.getElementById("nmNovTypeSearch")?.addEventListener("input",(e)=>{ refreshTypeList(e.target.value); });
+
+    wireTypeRowEvents();
+    wireFormEvents();
+  }
+
+  overlay.innerHTML = buildModal();
+  wireAll();
+
+};
+
 openExportModal = function openExportModalIntegral() {
   if (!activePeriod) return;
   const scope = activeScopeMeta || getCurrentScopeMeta();
@@ -9031,6 +9847,31 @@ wireStaticEvents = function wireStaticEventsIntegral() {
     payrollViewState.page = 1;
     render();
   });
+  document.getElementById("nmFilterApply")?.addEventListener("click", () => {
+    payrollViewState.appliedFilters = { ...payrollViewState.draftFilters };
+    payrollViewState.page = 1;
+    render();
+  });
+  document.getElementById("nmFilterClear")?.addEventListener("click", () => {
+    const baseFilters = {
+      municipality: "",
+      period: activePeriod?.label || "",
+      contract: String(contractId() || ""),
+      status: "",
+      cargo: "",
+      area: "",
+      name: "",
+      document: "",
+    };
+    payrollViewState.draftFilters = { ...baseFilters };
+    payrollViewState.appliedFilters = { ...baseFilters };
+    payrollViewState.page = 1;
+    render();
+  });
+  document.getElementById("nmToggleAdvancedFilters")?.addEventListener("click", () => {
+    payrollViewState.showAdvancedFilters = !payrollViewState.showAdvancedFilters;
+    render();
+  });
   document.querySelectorAll("[data-detail-tab]").forEach((btn) => btn.addEventListener("click", async () => {
     activeDetailTab = btn.dataset.detailTab || "nomina";
     if (activeDetailTab === "turnos" && activeGroupTurns === null) await loadGroupTurns();
@@ -9038,6 +9879,15 @@ wireStaticEvents = function wireStaticEventsIntegral() {
   }));
   document.getElementById("nmPayCalculate")?.addEventListener("click", calculateGroup);
   document.getElementById("nmPayExport")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayExportCurrent")?.addEventListener("click", openExportModal);
+  document.getElementById("nmPayExportPeriod")?.addEventListener("click", async () => {
+    if (!activePeriod) { showError("Seleccione un periodo para exportar."); return; }
+    try {
+      await downloadPayrollExport(`/payroll/periods/${activePeriod.id}/full-export`, `nomina-periodo-${activePeriod.id}.xlsx`);
+    } catch (err) {
+      showError(err.message || "No se pudo exportar el periodo completo.");
+    }
+  });
   document.getElementById("nmTurnExportSummary")?.addEventListener("click", openExportModal);
   document.getElementById("nmTurnGenerateCharges")?.addEventListener("click", openTurnSummaryChargeAccount);
   document.getElementById("nmTurnReviewNovelties")?.addEventListener("click", () => {
@@ -9048,11 +9898,15 @@ wireStaticEvents = function wireStaticEventsIntegral() {
   document.getElementById("nmPayFullscreen")?.addEventListener("click", () => {
     togglePayrollFullscreen();
   });
+  document.getElementById("nmPayCalculateAlt")?.addEventListener("click", calculateGroup);
   document.getElementById("nmPayExportBottom")?.addEventListener("click", openExportModal);
   document.getElementById("nmPayExportPdf")?.addEventListener("click", exportSelectedPayslipPdf);
   document.getElementById("nmPayClose")?.addEventListener("click", closeAndSendGroup);
+  document.getElementById("nmPayCloseAlt")?.addEventListener("click", closeAndSendGroup);
   document.getElementById("nmPayReopen")?.addEventListener("click", openReopenModal);
+  document.getElementById("nmPayReopenAlt")?.addEventListener("click", openReopenModal);
   document.getElementById("nmPayHistory")?.addEventListener("click", openHistoryModal);
+  document.getElementById("nmPayHistoryAlt")?.addEventListener("click", openHistoryModal);
   document.getElementById("nmPagePrev")?.addEventListener("click", () => { payrollViewState.page = Math.max(1, payrollViewState.page - 1); render(); });
   document.getElementById("nmPageNext")?.addEventListener("click", () => { payrollViewState.page += 1; render(); });
   document.querySelectorAll("[data-sort-col]").forEach((th) => th.addEventListener("click", () => {
@@ -9068,7 +9922,7 @@ wireStaticEvents = function wireStaticEventsIntegral() {
     render();
   }));
   document.getElementById("nmSelAll")?.addEventListener("change", (e) => {
-    const items = getPagedPayrollItems(getFilteredPayrollItems()).items;
+    const items = getPagedPayrollItems(getFilteredPayrollItems()).items.filter((item) => !isPayrollPlaceholderItem(item));
     items.forEach((item) => { if (e.target.checked) selectedItemIds.add(item.id); else selectedItemIds.delete(item.id); });
     render();
   });
@@ -9083,6 +9937,10 @@ wireStaticEvents = function wireStaticEventsIntegral() {
     }
     if (action === "novelty") {
       openNoveltyModal(itemId);
+      return;
+    }
+    if (action === "cambio") {
+      openCambioOperativoModal(itemId);
       return;
     }
     if (action === "payslip") {

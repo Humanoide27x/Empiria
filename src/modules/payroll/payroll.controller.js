@@ -131,6 +131,50 @@ async function handleCambioOperativo(req, res, url) {
   )(req, res, url);
 }
 
+async function handleGroupEmployeeNovelties(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const groupId = parseNumericPart(url.pathname, 2);
+  const employeeId = parseNumericPart(url.pathname, 4);
+  if (!groupId || !employeeId) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo o empleado invalido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.REGISTER,
+    async (innerReq, innerRes, _innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.createNoveltyForGroupEmployee(groupId, employeeId, body, user.id);
+        sendJson(innerRes, 201, { ok: true, data, message: "Novedad registrada correctamente" });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
+async function handleGroupEmployeeCambioOperativo(req, res, url) {
+  if (req.method !== "POST") { sendMethodNotAllowed(res); return; }
+  const groupId = parseNumericPart(url.pathname, 2);
+  const employeeId = parseNumericPart(url.pathname, 4);
+  if (!groupId || !employeeId) {
+    sendJson(res, 400, { ok: false, message: "ID de grupo o empleado invalido" }); return;
+  }
+  return withModuleProtection(
+    MODULES.PAYROLL,
+    ACTIONS.UPDATE,
+    async (innerReq, innerRes, _innerUrl, user) => {
+      try {
+        const body = await readJsonBody(innerReq);
+        const data = await operational.createCambioOperativoForGroupEmployee(groupId, employeeId, body, user.id);
+        sendJson(innerRes, 201, { ok: true, data, message: "Cambio operativo registrado" });
+      } catch (err) {
+        sendJson(innerRes, err.httpStatus || 400, { ok: false, message: err.message });
+      }
+    }
+  )(req, res, url);
+}
+
 // ── Edición bancaria de cobertura externa (sin desbloquear nómina) ───────────
 async function handleTurnCoverBankInfo(req, res, url) {
   if (req.method !== "PATCH") { sendMethodNotAllowed(res); return; }
@@ -1344,7 +1388,7 @@ function buildGroupXlsx(options) {
       n(item.base_salary), n(item.transport_allowance), otros, n(calc.internal_cover_value), n(item.total_devengado),
       n(calc.deduccion_salud), n(calc.deduccion_pension), n(calc.turn_cover_discount), n(item.total_deducciones),
       n(item.novelty_count), n(calc.salary_discount), n(calc.transport_discount),
-      n(item.neto_pagar), motivoRetiro, reqReemplazo, reemplazo, item.reviewed ? "Sí" : "No",
+      n(item.neto_pagar), motivoRetiro, reqReemplazo, reemplazo, item.is_placeholder ? "Pendiente de cálculo" : item.reviewed ? "Sí" : "No",
     ];
   });
 
@@ -2343,7 +2387,7 @@ function buildPeriodFullXlsx({ periodLabel, items, novelties, turns = [], totals
       nn(item.base_salary), nn(item.transport_allowance), otrosItem(item), nn(calc.internal_cover_value), nn(item.total_devengado),
       nn(calc.deduccion_salud), nn(calc.deduccion_pension), nn(item.total_deducciones),
       nn(item.novelty_count), nn(calc.salary_discount), nn(calc.transport_discount),
-      nn(item.neto_pagar), item.reviewed ? "Sí" : "No",
+      nn(item.neto_pagar), item.is_placeholder ? "Pendiente de cálculo" : item.reviewed ? "Sí" : "No",
     ];
   });
   const nomTotal = [
@@ -2630,6 +2674,7 @@ module.exports = {
   handleOperationalGroupById,
   handleOperationalGroupCalculate,
   handleOperationalItemNovelties,
+  handleGroupEmployeeNovelties,
   handleOperationalNoveltyPatch,
   handleOperationalNoveltyReviewed,
   handleOperationalNoveltyCover,
@@ -2641,6 +2686,7 @@ module.exports = {
   handleTurnCoverBankInfo,
   handleChargeAccountHtml,
   handleCambioOperativo,
+  handleGroupEmployeeCambioOperativo,
   // Nuevo (036)
   handleItemReviewed,
   handleDeleteNovelty,

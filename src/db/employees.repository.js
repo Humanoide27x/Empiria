@@ -1019,8 +1019,8 @@ async function createEmployee(data) {
       siteId,
       data.modality || data.modalidad || "",
       data.eps || "",
-      data.fondo_pensiones || data.pensionFund || data.pension_fund || "",
-      data.caja_compensacion || data.compensationBox || "COFREM",
+      data.pensionFund || data.pension_fund || data.fondo_pensiones || "",
+      data.compensationBox || data.caja_compensacion || "COFREM",
       data.arl || "SURA",
       safeDate(data.fecha_real_vinculacion_arl || data.arlVinculationDate),
       safeDate(data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date),
@@ -1065,6 +1065,21 @@ async function updateEmployee(id, data, auditMeta = {}) {
   data = Object.fromEntries(
     Object.entries(data || {}).filter(([, value]) => value !== undefined)
   );
+
+  // Capturar ID y nombre de municipio del payload ANTES del merge con existing.
+  // Después de { ...existing, ...data }, campos como data.municipality / data.municipio
+  // provienen del registro existente (via mapEmployee) y no del payload, lo que causaba
+  // que un municipalityId vacío en el payload resolviera al municipio viejo por nombre.
+  const premergePayloadMunicipalityId = firstNonEmpty(
+    data.municipalityId,
+    data.municipality_id,
+    data.municipio_id
+  );
+  const premergePayloadMunicipalityName = firstDefined(
+    data.municipalityName,
+    data.municipality_name
+  );
+
   data = { ...existing, ...data };
 
   const fullName = buildFullName(data);
@@ -1076,26 +1091,14 @@ async function updateEmployee(id, data, auditMeta = {}) {
     modality: existing.modality || "",
   };
 
-  const municipalityInput = firstNonEmpty(
-    data.municipalityId,
-    data.municipality_id,
-    data.municipio_id,
-    data.municipality,
-    data.municipio
-  );
   let municipalityId = current.municipality_id || null;
   try {
-    if (municipalityInput) {
-      // After { ...existing, ...data }, existing.municipalityName/municipality_name/municipality
-      // are still in data when the payload didn't include them. Passing a stale name alongside
-      // a new ID causes resolveMunicipalityRecord to throw a false conflict (ID=GRANADA,
-      // name=EL CASTILLO). Use name ONLY when there is no explicit numeric ID in the payload.
-      const resolveById = firstNonEmpty(data.municipalityId, data.municipality_id, data.municipio_id);
+    if (premergePayloadMunicipalityId || premergePayloadMunicipalityName) {
       const municipalityRecord = await resolveMunicipalityRecord({
-        municipalityId: resolveById || undefined,
-        municipalityName: resolveById
+        municipalityId: premergePayloadMunicipalityId || undefined,
+        municipalityName: premergePayloadMunicipalityId
           ? undefined
-          : firstDefined(data.municipalityName, data.municipality_name, data.municipality, data.municipio),
+          : premergePayloadMunicipalityName,
       });
       municipalityId = municipalityRecord?.id || null;
     }
@@ -1229,8 +1232,8 @@ async function updateEmployee(id, data, auditMeta = {}) {
         ? firstDefined(data.educationalModality, data.modality, data.modalidad) || ""
         : current.modality || "",
       data.eps || "",
-      data.fondo_pensiones || data.pensionFund || data.pension_fund || "",
-      data.caja_compensacion || data.compensationBox || "COFREM",
+      data.pensionFund || data.pension_fund || data.fondo_pensiones || "",
+      data.compensationBox || data.caja_compensacion || "COFREM",
       data.arl || "SURA",
       safeDate(data.fecha_real_vinculacion_arl || data.arlVinculationDate),
       safeDate(data.fecha_inicio_cobertura || data.coverageStartDate || data.coverage_start_date),

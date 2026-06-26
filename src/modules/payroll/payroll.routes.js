@@ -22,6 +22,7 @@ const {
   handleOperationalGroupById,
   handleOperationalGroupCalculate,
   handleOperationalItemNovelties,
+  handleGroupEmployeeNovelties,
   handleOperationalNoveltyPatch,
   handleOperationalNoveltyReviewed,
   handleOperationalNoveltyCover,
@@ -32,6 +33,7 @@ const {
   handleTurnCoverBankInfo,
   handleChargeAccountHtml,
   handleCambioOperativo,
+  handleGroupEmployeeCambioOperativo,
   handleItemReviewed,
   handleDeleteNovelty,
   handleGroupExport,
@@ -137,6 +139,12 @@ async function handlePayrollRoutes(req, res, url) {
   }
   if (/^\/payroll\/groups\/\d+\/calculate$/.test(pathname)) {
     await handleOperationalGroupCalculate(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/employees\/\d+\/cambio-operativo$/.test(pathname)) {
+    await handleGroupEmployeeCambioOperativo(req, res, url); return true;
+  }
+  if (/^\/payroll\/groups\/\d+\/employees\/\d+\/novelties$/.test(pathname)) {
+    await handleGroupEmployeeNovelties(req, res, url); return true;
   }
   if (/^\/payroll\/items\/\d+\/novelties$/.test(pathname)) {
     await handleOperationalItemNovelties(req, res, url); return true;

@@ -148,7 +148,9 @@ app.use(express.static(PUBLIC_DIR, {
       res.setHeader("Cache-Control", "no-store");
     } else if (/\.(css|js|mjs)$/.test(filePath)) {
       // URL incluye ?v=HASH → cache 1 año + immutable (se invalida en cada deploy)
-      res.setHeader("Cache-Control", IS_PROD
+      // Sin ?v=HASH → no-cache (imports estáticos dentro de módulos ES no llevan versión)
+      const hasVersion = IS_PROD && !!(res.req && res.req.query && res.req.query.v);
+      res.setHeader("Cache-Control", hasVersion
         ? "public, max-age=31536000, immutable"
         : "no-cache");
     } else if (/\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot)$/.test(filePath)) {
